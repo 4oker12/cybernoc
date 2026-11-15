@@ -1,0 +1,34 @@
+# Runtime evidence and private data
+cases/
+run/
+home/
+*.har
+*.pcap
+*.pcapng
+*.log
+*.sqlite
+*.db
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Credentials and local configuration
+.env
+.env.*
+*.pem
+*.key
+id_ed25519*
+*secret*
+*token*
+*credential*
+
+# Generated environments and caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.cache/
+models/
