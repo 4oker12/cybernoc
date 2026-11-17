@@ -321,7 +321,8 @@ def poll_once(sender=_post_json, now=None):
             event = delivery_event(report, sub)
             eid = event["eventId"]
             entry = ledger.get(eid, {})
-            if entry.get("accepted") or entry.get("attempts", 0) >= MAX_ATTEMPTS:
+            if (entry.get("accepted") or entry.get("attempts", 0) >= MAX_ATTEMPTS or
+                entry.get("next_attempt_at", 0) > current):
                 continue
             attempted += 1
             body = _json_bytes(event)
@@ -333,8 +334,10 @@ def poll_once(sender=_post_json, now=None):
                 success = 200 <= status_code < 300
             except (OSError, ValueError, TimeoutError, http.client.HTTPException):
                 pass
-            entry = {"attempts": entry.get("attempts", 0) + 1,
-                     "accepted": success, "http_status": status_code}
+            attempts = entry.get("attempts", 0) + 1
+            entry = {"attempts": attempts, "accepted": success,
+                     "http_status": status_code,
+                     "next_attempt_at": current + min(900, 30 * (2 ** (attempts - 1)))}
             if status_code in (410, 413):
                 entry["attempts"] = MAX_ATTEMPTS
             ledger[eid] = entry
@@ -353,12 +356,18 @@ def main():
         raise PermissionError("Events must run as non-root cybernova user")
     command = sys.argv[1] if len(sys.argv) > 1 else ""
     if command == "poll":
-        while True:
+        STORE.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with (STORE / ".worker.lock").open("a+") as worker_lock:
             try:
-                poll_once()
-            except Exception as exc:
-                print(json.dumps({"event_worker_error": type(exc).__name__}), flush=True)
-            time.sleep(30)
+                fcntl.flock(worker_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError("Another Cybernova event worker is already running") from None
+            while True:
+                try:
+                    poll_once()
+                except Exception as exc:
+                    print(json.dumps({"event_worker_error": type(exc).__name__}), flush=True)
+                time.sleep(30)
     else:
         params = json.load(sys.stdin)
         if command == "list":
