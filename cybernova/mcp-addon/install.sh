@@ -18,13 +18,15 @@ echo "=== 1. VERIFY SOURCES ==="
 test -f "$ORIGINAL" && test -x "$PY" && test -f "$PROFILE"
 test -f "$SRC/registry.py" && test -f "$SRC/deployment_ops.py"
 test -f "$SRC/addon_server.py" && test -f "$SRC/tests/test_deployment.py"
+test -f "$SRC/events_core.py" && test -f "$SRC/events_bridge.py"
+test -f "$SRC/tests/test_events.py"
 test -f /workspace/cybernova-updater/config.json
 test -L /workspace/cybernova-agent
 id cybernova >/dev/null
 
 echo "=== 2. TEST ADDON (ISOLATED) ==="
-(cd "$SRC" && /venv/main/bin/python -m unittest discover -s tests -v)
-/venv/main/bin/python -m py_compile "$SRC/registry.py" "$SRC/deployment_ops.py" "$SRC/addon_server.py"
+(cd "$SRC" && "$PY" -m unittest discover -s tests -v)
+"$PY" -m py_compile "$SRC/registry.py" "$SRC/deployment_ops.py" "$SRC/addon_server.py" "$SRC/events_core.py" "$SRC/events_bridge.py"
 "$PY" -c 'import mcp; print("MCP SDK OK")'
 
 if [[ "$MODE" == "--check" ]]; then echo "CHECK OK, tunnel untouched"; exit 0; fi
@@ -40,6 +42,8 @@ install -d -m 0755 "$DEST"
 install -m 0644 "$SRC/registry.py" "$DEST/registry.py"
 install -m 0644 "$SRC/deployment_ops.py" "$DEST/deployment_ops.py"
 install -m 0644 "$SRC/addon_server.py" "$DEST/addon_server.py"
+install -m 0644 "$SRC/events_core.py" "$DEST/events_core.py"
+install -m 0644 "$SRC/events_bridge.py" "$DEST/events_bridge.py"
 
 echo "=== 4. VERIFY ORIGINAL SERVER + ADDON ==="
 "$PY" - <<'PYCODE'
@@ -47,7 +51,10 @@ import sys
 sys.path.insert(0,"/workspace/cybernova-mcp-addon")
 from addon_server import load_server
 mcp=load_server()
-print("ORIGINAL MCP AND NEW TOOLS REGISTERED",type(mcp).__name__)
+ll = mcp._lowlevel_server
+required = ("server/discover","events/list","events/subscribe","events/unsubscribe")
+assert all(ll.get_request_handler(method) is not None for method in required)
+print("ORIGINAL MCP AND EVENTS RPC REGISTERED",type(mcp).__name__)
 PYCODE
 
 echo "=== 5. VERIFY EXISTING TUNNEL ==="
@@ -115,3 +122,18 @@ else
     ' >> /workspace/cybersec-tunnel.log 2>&1 < /dev/null &
     exit 1
 fi
+
+echo "=== 9. START EVENT DELIVERY WORKER ==="
+install -d -m 0700 -o cybernova -g cybernova /workspace/cybernova-updater/events
+if ! pgrep -u cybernova -f "^/venv/main/bin/python /workspace/cybernova-mcp-addon/events_core.py poll$" >/dev/null; then
+    runuser -u cybernova -- sh -c 'nohup /venv/main/bin/python /workspace/cybernova-mcp-addon/events_core.py poll >> /workspace/cybernova-updater/events/worker.log 2>&1 < /dev/null &'
+fi
+if command -v crontab >/dev/null 2>&1; then
+    CURRENT="$(crontab -u cybernova -l 2>/dev/null || true)"
+    if ! printf "%s\n" "$CURRENT" | grep -q "CYBERNOVA_EVENTS_WORKER_RESTART"; then
+        { printf "%s\n" "$CURRENT"; printf "%s\n" "@reboot /venv/main/bin/python /workspace/cybernova-mcp-addon/events_core.py poll >> /workspace/cybernova-updater/events/worker.log 2>&1 # CYBERNOVA_EVENTS_WORKER_RESTART"; } | crontab -u cybernova -
+    fi
+fi
+sleep 1
+pgrep -u cybernova -af "events_core.py poll" || { echo "Event worker did not start"; exit 1; }
+echo "MCP EVENTS BACKEND STARTED — now rescan the ChatGPT plugin events."
