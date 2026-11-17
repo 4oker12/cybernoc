@@ -293,7 +293,7 @@ class Deployer:
         before = self._test(stage)
         # Durable state lives outside release directories; installed agent expects BASE/jobs.
         data_root = self.cfg.work / 'data'
-        for persistent in ('jobs', 'operations'):
+        for persistent in ('jobs', 'operations', 'history'):
             location = data_root / persistent
             if not location.is_dir() or location.is_symlink():
                 raise RuntimeError(f'Persistent state directory missing: {persistent}')

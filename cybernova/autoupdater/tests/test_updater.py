@@ -53,7 +53,7 @@ class WatcherTests(unittest.TestCase):
         root = Path(self.tmp.name)
         self.work = root/'work'
         self.work.mkdir()
-        for n in ('jobs','operations'):(self.work/'data'/n).mkdir(parents=True)
+        for n in ('jobs','operations','history'):(self.work/'data'/n).mkdir(parents=True)
         self.active = root/'agent'
         self.legacy = self.work/'legacy'
         self.legacy.mkdir()
@@ -258,7 +258,7 @@ class AdditionalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             root=Path(t);work=root/'work';work.mkdir()
             active=root/'agent';legacy=work/'legacy';legacy.mkdir()
-            for n in ('jobs','operations'):(work/'data'/n).mkdir(parents=True)
+            for n in ('jobs','operations','history'):(work/'data'/n).mkdir(parents=True)
             (work/'current').symlink_to(legacy)
             active.symlink_to(work/'current')
             cfg=core.Settings(work,active,root/'id',root/'known')
@@ -318,7 +318,7 @@ class GitWatcherEndToEndTests(unittest.TestCase):
             git('add','.',cwd=seed);git('commit','-m','baseline',cwd=seed)
             git('push','origin','HEAD:cybernova-autodeploy',cwd=seed)
             work=root/'work';work.mkdir()
-            for n in ('jobs','operations'): (work/'data'/n).mkdir(parents=True)
+            for n in ('jobs','operations','history'): (work/'data'/n).mkdir(parents=True)
             legacy=work/'legacy';legacy.mkdir()
             (work/'current').symlink_to(legacy)
             active=root/'agent';active.symlink_to(work/'current')

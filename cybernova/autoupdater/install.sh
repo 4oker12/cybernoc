@@ -15,7 +15,7 @@ PYTHONPATH="$SRC" PYTHONPATH="$SRC" /venv/main/bin/python -m unittest discover -
 if ! id "$USER_NAME" >/dev/null 2>&1; then
     useradd --system --create-home --home-dir "$WORK" --shell /usr/sbin/nologin "$USER_NAME"
 fi
-install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$WORK" "$SECRETS" "$WORK/releases" "$WORK/reports" "$WORK/data" "$WORK/data/jobs" "$WORK/data/operations"
+install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$WORK" "$SECRETS" "$WORK/releases" "$WORK/reports" "$WORK/data" "$WORK/data/jobs" "$WORK/data/operations" "$WORK/data/history"
 if [[ -e "$ACTIVE" && ! -L "$ACTIVE" ]]; then
     [[ -d "$ACTIVE" ]] || { echo 'Active agent must be a directory' >&2; exit 1; }
     [[ ! -e "$WORK/current" && ! -L "$WORK/current" ]] || { echo 'Existing pointer but legacy agent not enrolled; manual review' >&2; exit 1; }
@@ -37,7 +37,7 @@ for p in pathlib.Path(sys.argv[1]).glob('*/state.json'):
 PYCODE
     fi
     mv -- "$ACTIVE" "$WORK/legacy-agent"
-    for state_dir in jobs operations; do
+    for state_dir in jobs operations history; do
         if [[ -d "$WORK/legacy-agent/$state_dir" && ! -L "$WORK/legacy-agent/$state_dir" ]]; then
             # Do not replace a previously migrated persistent folder.
             if [[ -n "$(ls -A "$WORK/data/$state_dir")" ]]; then
