@@ -59,3 +59,6 @@ Authorization claim: user explicitly identified `https://simnet.ua/` as an autho
 Return only a site-specific plan, assumptions, missing authorization parameters, proposed low-impact checks and evidence expectations. Do not claim that a scan or live check has run. Do not attempt vulnerability exploitation.
 
 See [Pentest Workflow Plan](../architecture/PENTEST_WORKFLOW_PLAN.md) and [Qwen Agent Contract](../architecture/QWEN_PENTEST_AGENT_PROMPT.md).
+
+## Catalog selection for this case
+Use [full-stack control IDs](../architecture/FULL_STACK_TEST_CATALOG.md), [machine-readable disabled control seed](../architecture/catalog/full_stack_controls.json), and [validation toolbox](../architecture/VALIDATION_TOOL_CATALOG.md). Only exact-origin WEB controls are candidates; all other sections are educational/planning or require separate assets and approvals. This does not change `PLAN_ONLY` or authorize a scan.
