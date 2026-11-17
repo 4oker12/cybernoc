@@ -50,7 +50,17 @@ mcp=load_server()
 print("ORIGINAL MCP AND NEW TOOLS REGISTERED",type(mcp).__name__)
 PYCODE
 
-echo "=== 5. SAVE AND UPDATE TUNNEL PROFILE ==="
+echo "=== 5. VERIFY EXISTING TUNNEL ==="
+test -s "$KEYFILE" || { echo "AUTH FILE MISSING: existing tunnel left untouched"; exit 1; }
+test -x "$TUNNEL"
+COUNT="$(pgrep -xc tunnel-client || true)"
+if [[ "$COUNT" != "1" ]]; then
+    echo "EXPECTED ONE TUNNEL PROCESS; FOUND $COUNT. Existing tunnel left untouched."
+    exit 1
+fi
+OLDPID="$(pgrep -x tunnel-client)"
+
+echo "=== 6. SAVE AND UPDATE TUNNEL PROFILE ==="
 /venv/main/bin/python - "$PROFILE" <<'PYCODE'
 import os, pathlib, sys, shutil
 profile=pathlib.Path(sys.argv[1])
@@ -73,32 +83,35 @@ else:
     print("PROFILE UPDATED; BACKUP:",backup)
 PYCODE
 
-echo "=== 6. RESTART SECURE TUNNEL ==="
-test -s "$KEYFILE" || { echo "AUTH FILE MISSING: profile changed, existing tunnel still running"; exit 1; }
-test -x "$TUNNEL"
-COUNT="$(pgrep -xc tunnel-client || true)"
-if [[ "$COUNT" != "1" ]]; then
-    echo "EXPECTED ONE TUNNEL PROCESS; FOUND $COUNT. Do not restart automatically."
-    exit 1
-fi
-OLDPID="$(pgrep -x tunnel-client)"
+echo "=== 7. RESTART SECURE TUNNEL ==="
 kill -TERM "$OLDPID"
 for i in $(seq 1 30); do
     if ! kill -0 "$OLDPID" 2>/dev/null; then break; fi
     sleep 0.2
 done
+if kill -0 "$OLDPID" 2>/dev/null; then
+    echo "OLD TUNNEL DID NOT STOP; refusing to start a second one."
+    exit 1
+fi
 nohup bash -c '
     export CONTROL_PLANE_API_KEY="$(cat /root/.config/tunnel-client/runtime-api-key)"
     exec /usr/local/bin/tunnel-client run --profile cybersec-vast
 ' >> /workspace/cybersec-tunnel.log 2>&1 < /dev/null &
 sleep 4
 
-echo "=== 7. HEALTH ==="
+echo "=== 8. HEALTH ==="
 pgrep -ax tunnel-client || true
-curl -fsS --max-time 5 http://127.0.0.1:18280/healthz || {
+if curl -fsS --max-time 5 http://127.0.0.1:18280/healthz; then
     echo
-    echo "Tunnel health failed; restore profile from .before-addon if needed."
+    echo "MCP ADDON ACTIVE — refresh ChatGPT plugin metadata."
+else
+    echo "New tunnel failed health; restoring prior profile and restarting prior server."
+    kill -TERM "$(pgrep -x tunnel-client || true)" 2>/dev/null || true
+    sleep 2
+    cp "$PROFILE.before-addon" "$PROFILE"
+    nohup bash -c '
+        export CONTROL_PLANE_API_KEY="$(cat /root/.config/tunnel-client/runtime-api-key)"
+        exec /usr/local/bin/tunnel-client run --profile cybersec-vast
+    ' >> /workspace/cybersec-tunnel.log 2>&1 < /dev/null &
     exit 1
-}
-echo
-echo "MCP ADDON ACTIVE — refresh ChatGPT plugin metadata."
+fi
