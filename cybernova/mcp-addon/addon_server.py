@@ -26,6 +26,8 @@ def load_server():
         raise RuntimeError("Original MCP server has no compatible mcp object")
     from registry import register
     register(server)
+    from events_bridge import register as register_events
+    register_events(server)
     return server
 
 if __name__=="__main__":
