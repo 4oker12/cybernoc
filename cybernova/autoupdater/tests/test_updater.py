@@ -175,6 +175,8 @@ class WatcherTests(unittest.TestCase):
 
     def test_local_report_sanitizes_obvious_secrets(self):
         self.assertNotIn('12345',core.Reporter.sanitize('token=12345'))
+        self.assertNotIn('abcde',core.Reporter.sanitize('Authorization: Bearer abcde'))
+        self.assertNotIn('secretBODY',core.Reporter.sanitize('-----BEGIN OPENSSH PRIVATE KEY-----\nsecretBODY\n-----END OPENSSH PRIVATE KEY-----'))
 
     def test_repeated_run_does_not_deploy(self):
         self.test_first_real_commit_starts_24h_session_and_applies()
@@ -300,3 +302,44 @@ class AdditionalTests(unittest.TestCase):
             env=core.GitBackend(cfg)._environment()
             self.assertIn("'",env['GIT_SSH_COMMAND'])
             self.assertNotIn('GITHUB_TOKEN',env)
+
+class GitWatcherEndToEndTests(unittest.TestCase):
+    def test_real_git_commit_then_failed_commit_stops_without_activation(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t); bare=root/'remote.git'; seed=root/'seed'
+            git('init','--bare','--initial-branch=cybernova-autodeploy',str(bare))
+            git('clone',str(bare),str(seed))
+            git('config','user.name','Cybernova Test',cwd=seed)
+            git('config','user.email','robot@example.invalid',cwd=seed)
+            source=seed/'cybernova'/'v10'
+            (source/'tests').mkdir(parents=True)
+            (source/'agent.py').write_text('print("baseline")\n')
+            (source/'tests'/'test_ok.py').write_text('import unittest\nclass T(unittest.TestCase):\n def test_ok(self): self.assertTrue(1)\n')
+            git('add','.',cwd=seed);git('commit','-m','baseline',cwd=seed)
+            git('push','origin','HEAD:cybernova-autodeploy',cwd=seed)
+            work=root/'work';work.mkdir()
+            for n in ('jobs','operations'): (work/'data'/n).mkdir(parents=True)
+            legacy=work/'legacy';legacy.mkdir()
+            (work/'current').symlink_to(legacy)
+            active=root/'agent';active.symlink_to(work/'current')
+            cfg=core.Settings(work,active,root/'key',root/'known')
+            backend=core.GitBackend(cfg)
+            when=[1000.]
+            local_env={'HOME':str(root),'PATH':os.environ['PATH']}
+            with patch.object(core,'URL',str(bare)),patch.object(backend,'_environment',return_value=local_env):
+                watcher=core.Watcher(cfg,git=backend,clock=lambda:when[0])
+                self.assertEqual(watcher.tick()['status'],'waiting')
+                (source/'agent.py').write_text('print("working")\n')
+                git('add','.',cwd=seed);git('commit','-m','working',cwd=seed)
+                git('push','origin','HEAD:cybernova-autodeploy',cwd=seed)
+                when[0]=1050
+                self.assertEqual(watcher.tick()['status'],'active')
+                self.assertEqual((active/'agent.py').read_text(),'print("working")\n')
+                (source/'tests'/'test_ok.py').write_text('import unittest\nclass T(unittest.TestCase):\n def test_ok(self): self.fail("intentional")\n')
+                git('add','.',cwd=seed);git('commit','-m','broken',cwd=seed)
+                git('push','origin','HEAD:cybernova-autodeploy',cwd=seed)
+                when[0]=1100
+                state=watcher.tick()
+                self.assertEqual(state['status'],'stopped_error')
+                self.assertEqual((active/'agent.py').read_text(),'print("working")\n')
+                self.assertEqual(len(list((work/'reports').glob('*.json'))),2)

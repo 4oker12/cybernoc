@@ -326,9 +326,17 @@ class Reporter:
 
     @staticmethod
     def sanitize(value: str) -> str:
-        value = re.sub(r'(?i)(token|secret|password|api.key|authorization)\s*[:=]\s*\S+',
+        # Best-effort log masking. Never intentionally collect full environment dumps.
+        value = re.sub(r'(?i)(authorization\s*:\s*bearer\s+)\S+',
+                       r'\1[REDACTED]', value)
+        value = re.sub(r'(?i)(token|secret|password|api[_-]?key)\s*[:=]\s*\S+',
                        r'\1=[REDACTED]', value)
         value = re.sub(r'gh[pousr]_[a-zA-Z0-9_]{20,}', '[REDACTED]', value)
+        value = re.sub(r'sk-(?:proj-)?[a-zA-Z0-9_-]{10,}', 'sk-[REDACTED]', value)
+        value = re.sub(r'hf_[A-Za-z0-9]{15,}', 'hf_[REDACTED]', value)
+        value = re.sub(r'-----BEGIN (?:OPENSSH |RSA |EC |DSA |ENCRYPTED )?PRIVATE KEY-----.*?'
+                       r'-----END (?:OPENSSH |RSA |EC |DSA |ENCRYPTED )?PRIVATE KEY-----',
+                       '[PRIVATE KEY REDACTED]', value, flags=re.S)
         return value[:6000]
 
     def publish(self, report: dict) -> dict:
