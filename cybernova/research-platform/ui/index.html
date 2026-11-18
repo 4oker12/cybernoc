@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="cybernova-csrf" content="__CSRF_TOKEN__">
+  <title>Cybernova Research Console</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Навигация Cybernova">
+      <div class="brand">
+        <div class="brand-icon" aria-hidden="true">C</div>
+        <div><div class="brand-title">CYBERNOVA</div><div class="brand-subtitle">RESEARCH LAB / v0.1</div></div>
+      </div>
+      <div class="sidebar-section-title">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+      <nav class="navigation" aria-label="Разделы">
+        <button class="nav-button is-current" type="button" data-nav="overview"><span class="nav-symbol">▦</span>Обзор</button>
+        <button class="nav-button" type="button" data-nav="tools"><span class="nav-symbol">⌘</span>Инструменты</button>
+        <button class="nav-button" type="button" data-nav="cases"><span class="nav-symbol">◎</span>Гипотезы и факты</button>
+        <button class="nav-button" type="button" data-nav="report"><span class="nav-symbol">≡</span>Отчёт</button>
+      </nav>
+      <div class="sidebar-section-title spaced">АКТИВНЫЙ ПРОФИЛЬ</div>
+      <div class="project-mini">
+        <div class="project-mini-head"><span class="project-dot"></span><span id="projectMini">Не загружен</span></div>
+        <span class="small-label" id="projectMiniState">Проверяем доступ...</span>
+      </div>
+      <div class="sidebar-foot">
+        <div class="sidebar-foot-flag">LOCAL / READ ONLY BY DEFAULT</div>
+        <p>Сетевые сканеры не запускаются из этой консоли. Вызовы только через реализованные безопасные инструменты.</p>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div class="topbar-path">Лаборатория <span>/</span> <strong id="pageBreadcrumb">Обзор</strong></div>
+        <div class="topbar-actions">
+          <span class="connection-status"><i class="dot"></i><span id="serviceLabel">Соединение...</span></span>
+          <span class="mode-tag">OFFLINE-FIRST</span>
+        </div>
+      </header>
+      <main id="mainContent">
+        <section id="view-overview" class="page-view">
+          <div class="page-intro">
+            <div class="eyebrow">CONTROL CENTER / OVERVIEW</div>
+            <h1>Лаборатория исследований</h1>
+            <p>Цель → архитектура → гипотеза → проверка → доказательство → исправление.</p>
+          </div>
+          <div class="metrics" aria-label="Показатели лаборатории">
+            <div class="metric"><div class="metric-label">Готово офлайн-инструментов</div><div class="metric-value" id="metricReady">—</div><div class="metric-detail">Реально исполняемые обработчики</div></div>
+            <div class="metric"><div class="metric-label">В общем реестре</div><div class="metric-value" id="metricCatalog">—</div><div class="metric-detail">Включая проектируемые</div></div>
+            <div class="metric"><div class="metric-label">Записи исследования</div><div class="metric-value" id="metricFindings">—</div><div class="metric-detail">Факты, гипотезы, ревью</div></div>
+          </div>
+          <div class="split">
+            <section class="panel">
+              <div class="panel-heading"><div><div class="eyebrow">ENGAGEMENT</div><h2>Текущая область</h2></div><span class="status warning" id="scopeBadge">DRAFT</span></div>
+              <p class="muted" id="projectName">Профиль исследования загружается.</p>
+              <div class="assets" id="assetRows"></div>
+              <p class="panel-note">Активы в перечне не становятся автоматически разрешёнными целями. Проверки требуют отдельного допуска.</p>
+            </section>
+            <section class="panel">
+              <div class="panel-heading"><div><div class="eyebrow">RESEARCH WORKFLOW</div><h2>Как работает Qwen</h2></div></div>
+              <ol class="workflow">
+                <li><strong>Наблюдение</strong><span>Факт с источником, без догадок</span></li>
+                <li><strong>Модель</strong><span>Маршруты, роли, доверенные границы</span></li>
+                <li><strong>Гипотеза</strong><span>Что может нарушиться и почему</span></li>
+                <li><strong>Проверка</strong><span>Минимальная разрешённая операция</span></li>
+                <li><strong>Доказательство</strong><span>Артефакт, SHA-256, альтернативные объяснения</span></li>
+                <li><strong>Исправление</strong><span>Первопричина, регрессия, повторная проверка</span></li>
+              </ol>
+            </section>
+          </div>
+          <div class="panel next-action">
+            <div><div class="eyebrow">РЕКОМЕНДУЕМЫЙ ПЕРВЫЙ ШАГ</div><h2>Сформировать план исследования</h2><p class="muted">Создай рабочую последовательность. Она покажет границы допуска, а не запустит сканирование.</p></div>
+            <button id="quickPlan" class="primary-button" type="button">Открыть планировщик <span>→</span></button>
+          </div>
+        </section>
+        <section id="view-tools" class="page-view is-hidden">
+          <div class="page-intro compact">
+            <div class="eyebrow">CAPABILITY REGISTRY / TOOL RUNNER</div>
+            <h1>Инструменты</h1>
+            <p>Выбирай действие по назначению. Названия не зависят от исследуемого сайта.</p>
+          </div>
+          <div class="tools-layout">
+            <div class="tool-list-panel">
+              <label class="input-label" for="toolSearch">Поиск инструмента</label>
+              <input id="toolSearch" class="search-input" type="search" placeholder="Название или задача..." autocomplete="off">
+              <div class="filter-group" aria-label="Фильтр готовности">
+                <button data-filter="ready" class="filter active" type="button">Работают</button>
+                <button data-filter="all" class="filter" type="button">Все</button>
+                <button data-filter="planned" class="filter" type="button">В разработке</button>
+              </div>
+              <div id="toolList" class="tool-list" aria-live="polite"></div>
+            </div>
+            <div class="tool-runner panel">
+              <div class="eyebrow">SELECTED TOOL</div>
+              <h2 id="activeToolName">Выбери инструмент</h2>
+              <div class="tool-code" id="activeToolCode">—</div>
+              <p class="muted" id="activeToolDescription">Список возможностей загружается.</p>
+              <div class="tool-context"><span class="status ready" id="toolMode">OFFLINE</span><span id="toolContextText">Без доступа к внешним целям</span></div>
+              <form id="toolForm" autocomplete="off"><div id="toolFields"></div><button class="primary-button" id="runTool" type="submit">Выполнить проверку <span>→</span></button></form>
+              <div class="result-heading"><h3>Результат</h3><button id="copyOutput" class="quiet-button" type="button">Копировать JSON</button></div>
+              <div id="resultState" class="result-state">Пока нет результатов. Выбери инструмент и заполни параметры.</div>
+              <pre id="resultOutput" class="result-output" tabindex="0" aria-live="polite"></pre>
+            </div>
+          </div>
+        </section>
+        <section id="view-cases" class="page-view is-hidden">
+          <div class="page-intro compact"><div class="eyebrow">CASE MANAGEMENT</div><h1>Гипотезы и факты</h1><p>Наблюдение не равно уязвимости. Для подтверждения нужен проверенный артефакт.</p></div>
+          <div class="cases-top"><button id="newFinding" class="primary-button" type="button">Добавить гипотезу <span>+</span></button><button id="refreshCases" class="secondary-button" type="button">Обновить</button></div>
+          <div class="panel cases-panel"><div class="panel-heading"><h2>Реестр наблюдений</h2><span id="casesCount" class="status neutral">0 записей</span></div><div id="caseItems" class="case-items"></div></div>
+          <div class="panel events-panel"><div class="panel-heading"><h2>Журнал действий</h2></div><div id="eventItems" class="event-items"></div></div>
+        </section>
+        <section id="view-report" class="page-view is-hidden">
+          <div class="page-intro compact"><div class="eyebrow">EVIDENCE-BACKED REPORT</div><h1>Отчёт</h1><p>Формируется только из сохранённых записей. Непроверенные гипотезы остаются непроверенными.</p></div>
+          <div class="report-actions"><button id="refreshReport" class="primary-button" type="button">Сформировать отчёт</button><button id="copyReport" class="secondary-button" type="button">Копировать Markdown</button></div>
+          <div class="panel"><pre id="reportOutput" class="report-output">Отчёт ещё не сформирован.</pre></div>
+        </section>
+      </main>
+    </div>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
