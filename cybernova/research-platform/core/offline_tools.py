@@ -166,7 +166,7 @@ def _static(args,ctx):
                             "os.system","subprocess.Popen","subprocess.run"}:
                 observations.append({"line":node.lineno,"kind":"dangerous_api_indicator",
                     "symbol":fullname,"confidence":"low","note":"Requires context and dataflow verification"})
-            if fullname in {"execute","executemany"}:
+            if (fullname in {"execute","executemany"} or fullname.endswith(".execute") or fullname.endswith(".executemany")):
                 if node.args and isinstance(node.args[0],ast.BinOp):
                     observations.append({"line":node.lineno,"kind":"dynamic_sql_candidate",
                         "symbol":fullname,"confidence":"low","note":"Check parameterized SQL usage"})
@@ -357,7 +357,24 @@ def _dispatch(name,args,ctx):
     if name=="plan_build":return _build_plan(args,ctx)
     if name=="plan_validate":
         steps=_json_input(args,"steps",30000)
-        return policy.validate_plan(ctx["engagement"],ctx["catalog"],steps)
+        # The generic catalog contains planned/remote statuses; only handlers in
+        # this local runtime are executable. Do not treat a remote MCP tool as
+        # locally callable because its authorization policy would permit it.
+        shadow={"tools":[dict(item) for item in ctx["catalog"].get("tools",[])]}
+        names={item["name"] for item in shadow["tools"]}
+        for item in shadow["tools"]:
+            if item["name"] in SPECS:
+                item["status"]="deployed_mcp"
+                item["mode"]="offline"
+        for tool_name in SPECS:
+            if tool_name not in names:
+                shadow["tools"].append({"name":tool_name,"mode":"offline","status":"deployed_mcp"})
+        review=policy.validate_plan(ctx["engagement"],shadow,steps)
+        for step in review.get("steps",[]):
+            if step.get("tool") not in SPECS:
+                step.update({"allowed":False,"reason":"not_available_in_this_runtime"})
+        review["ok"]=all(step["allowed"] for step in review.get("steps",[]))
+        return review
     if name=="asset_inventory":return _assets(args,ctx)
     if name=="threat_model_build":return _threat(args,ctx)
     if name=="ip_network_summary":return _ip(args,ctx)
