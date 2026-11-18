@@ -28,6 +28,7 @@ try:
     from .domain_intelligence import PARSERS, DomainError
     from .domain_tools import DOMAIN_TOOLS
     from .scoped_network_tools import SCOPED_TOOLS
+    from .lab_scanners import SCANNER_TOOLS, inventory
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL
     from followups import generate_followups
@@ -37,6 +38,7 @@ except ImportError:
     from domain_intelligence import PARSERS, DomainError
     from domain_tools import DOMAIN_TOOLS
     from scoped_network_tools import SCOPED_TOOLS
+    from lab_scanners import SCANNER_TOOLS, inventory
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -161,7 +163,7 @@ def status():
         mcp_ok = True
     except Exception:
         remote_tools, mcp_ok = [], False
-    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS]
+    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS]
     return {
         "model": MODEL,
         "ollama_ready": _ollama_health(),
@@ -173,6 +175,7 @@ def status():
         "http_get": "available_for_preconfigured_mcp_hosts_only",
         "traffic_intelligence": "offline_multi_domain_analysis",
         "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
+        "lab_scanners": inventory(),
         "import_kinds": ["har", "javascript"] + sorted(PARSERS),
         "mode": "loopback_only",
         "version": "0.1.0",
