@@ -54,12 +54,13 @@ class TrafficToolClient:
         self.artifacts = artifacts
 
     def initialize(self) -> list[dict]:
+        from .domain_tools import DOMAIN_TOOLS
         try:
             remote = self.upstream.initialize()
         except Exception:
             # Offline artifact reasoning remains possible if remote MCP is down.
             remote = []
-        return remote + LOCAL_TOOLS
+        return remote + LOCAL_TOOLS + DOMAIN_TOOLS
 
     def _reports(self) -> list[dict]:
         return list(self.artifacts.values())[:MAX_ARTIFACTS]
@@ -72,6 +73,12 @@ class TrafficToolClient:
         return self.artifacts[artifact_id]
 
     def call(self, name: str, args: dict) -> tuple[dict, bool]:
+        from .domain_tools import DOMAIN_NAMES, domain_call
+        if name in DOMAIN_NAMES:
+            try:
+                return {"ok": True, **domain_call(name, args, self.artifacts)}, False
+            except (ValueError, TypeError, KeyError) as exc:
+                return {"ok": False, "error": str(exc)[:180]}, True
         if name not in LOCAL_NAMES:
             return self.upstream.call(name, args)
         try:
