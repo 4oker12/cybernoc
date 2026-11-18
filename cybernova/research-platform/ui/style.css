@@ -126,3 +126,13 @@ textarea.field-input{min-height:112px;resize:vertical;font-family:ui-monospace,M
 @media (max-width:1200px){main{padding:32px 27px 70px}.tools-layout{grid-template-columns:minmax(260px,.9fr) minmax(320px,1.1fr)}.sidebar{width:226px;flex-basis:226px}.topbar{padding:0 27px}}
 @media (max-width:950px){.sidebar{width:74px;flex-basis:74px;padding:20px 8px}.brand{padding:0 8px 28px}.brand-title,.brand-subtitle,.sidebar-section-title,.nav-button:not(.is-current),.project-mini,.sidebar-foot{display:none}.navigation .nav-button{font-size:0;justify-content:center;padding:13px 8px}.navigation .nav-button.is-current{font-size:0}.nav-symbol{font-size:21px}.split{grid-template-columns:1fr}.tools-layout{grid-template-columns:1fr}.tool-runner{position:static}.tool-list{max-height:370px}.topbar{height:68px}}
 @media (max-width:620px){.shell{display:block}.sidebar{height:58px;min-height:58px;position:static;width:100%;display:flex;flex-direction:row;align-items:center;padding:7px 12px;border-right:0;border-bottom:1px solid var(--border)}.brand{padding:0;margin-right:auto}.brand-icon{height:34px;width:34px}.navigation{display:flex;flex-direction:row;gap:1px}.navigation .nav-button,.navigation .nav-button.is-current{display:flex;font-size:0;padding:8px;width:41px;height:40px}.nav-symbol{font-size:20px}.topbar{height:55px;padding:0 16px}.topbar-path{font-size:10px}.mode-tag{display:none}.connection-status{padding:6px 9px;font-size:10px}main{padding:25px 15px 65px}.page-intro{margin-bottom:20px}.page-intro h1{font-size:26px}.page-intro p{font-size:12px}.metrics{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.metric{padding:14px 11px}.metric-value{font-size:28px}.metric-label{font-size:10px;min-height:31px}.metric-detail{font-size:9px}.panel{padding:18px}.next-action{flex-direction:column;align-items:stretch}.tools-layout{display:flex;flex-direction:column}.tool-list-panel,.tool-runner{width:100%}.tool-list{max-height:250px}.tool-runner{position:static}.event-entry{grid-template-columns:1fr 1fr}.event-entry span:nth-child(3){display:none}}
+
+/* Local Qwen research workbench */
+.agent-layout{display:grid;grid-template-columns:minmax(300px,.9fr) minmax(380px,1.1fr);gap:18px;align-items:start}
+.agent-task #agentForm{display:flex;flex-direction:column;gap:14px;margin-top:22px}
+.agent-task #agentForm .panel-note{margin:0 0 5px}
+.agent-task #agentForm .primary-button{align-self:flex-start}
+.agent-response{min-height:420px}
+#agentAnswer{font-size:13px;white-space:pre-wrap;word-wrap:break-word;line-height:1.65;min-height:115px}
+#agentReceipts{max-height:48vh}
+@media(max-width:1050px){.agent-layout{grid-template-columns:1fr}}
