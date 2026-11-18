@@ -1,0 +1,23 @@
+name: Cybernova Panel CI
+on:
+  pull_request:
+    paths:
+      - 'cybernova/control-panel/**'
+      - '.github/workflows/cybernova-panel-ci.yml'
+  workflow_dispatch:
+jobs:
+  test-panel:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate compilation
+        run: python -m py_compile server.py ring.py
+        working-directory: cybernova/control-panel
+      - name: Run panel unit tests
+        run: python -m unittest discover -s tests -v
+        working-directory: cybernova/control-panel

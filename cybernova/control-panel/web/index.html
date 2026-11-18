@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark"><title>Cybernova | Event Ring Control</title>
+  <link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-symbol"><span></span><span></span><span></span></span><div><b>CYBERNOVA</b><small>CONTROL SYSTEM / V0.1</small></div></div>
+    <div class="side-label">WORKSPACE</div>
+    <nav class="nav" aria-label="Навигация">
+      <a class="nav-link active" href="#overview"><span class="nav-ico">◎</span> Центр управления</a>
+      <a class="nav-link" href="#sessions"><span class="nav-ico">▤</span> Сессии Qwen</a>
+      <a class="nav-link" href="#events"><span class="nav-ico">≋</span> Журнал событий</a>
+      <a class="nav-link" href="#agent"><span class="nav-ico">◈</span> Агент v0.7</a>
+    </nav>
+    <div class="side-label side-label-second">РЕЖИМ РАБОТЫ</div>
+    <div class="mode-stack"><span class="mode-dot"></span><div><b>LOCAL LAB</b><small>Внешние цели заблокированы</small></div></div>
+    <div class="sidebar-bottom">
+      <div class="side-card"><div class="side-card-title">Событийное кольцо</div><div class="side-card-text">Узлы наблюдают состояния. Автоматический запуск ChatGPT пока отключён.</div><div class="build">BUILD 0.1.0 <span>•</span> OBSERVABILITY FIRST</div></div>
+      <div class="copyright">CYBERNOVA / PRIVATE CONSOLE</div>
+    </div>
+  </aside>
+  <main class="main" id="overview">
+    <header class="topbar"><div class="breadcrumbs"><span>CYBERNOVA</span><span class="crumb-sep">/</span><b>Центр управления</b></div><div class="top-right"><span class="sync" id="syncStamp">Нет данных</span><span class="conn" id="connection"><i></i> ПОДКЛЮЧЕНИЕ</span><button class="icon-btn" id="refresh" title="Обновить данные" aria-label="Обновить">↻</button></div></header>
+    <section class="intro">
+      <div><div class="eyebrow"><span class="eyebrow-dash"></span> ИНТЕЛЛЕКТУАЛЬНАЯ СИСТЕМА ИССЛЕДОВАНИЙ</div><h1>Центр управления <span>Cybernova</span></h1><p>Единый контур: от постановки задачи до проверенных результатов. Без лишних запусков и потерянного контекста.</p></div>
+      <div class="head-buttons"><button class="btn btn-ghost" id="copySummary">Скопировать сводку <span>↗</span></button><button class="btn btn-primary" id="startSession" disabled><span class="start-symbol">▶</span> Запустить лабораторию</button></div>
+    </section>
+    <div id="alert" class="alert" role="status" hidden></div>
+    <section class="stats" aria-label="Основные показатели">
+      <div class="metric"><div class="metric-head">СЕССИЙ В ЖУРНАЛЕ <span class="metric-icon">◉</span></div><div class="metric-value" id="statSessions">—</div><div class="metric-foot">Последние доступные записи</div></div>
+      <div class="metric"><div class="metric-head">УСПЕШНЫХ СЕССИЙ <span class="metric-icon mint">✓</span></div><div class="metric-value" id="statPassed">—</div><div class="metric-foot"><span class="mini-green-dot"></span> Локальная проверка</div></div>
+      <div class="metric"><div class="metric-head">ОШИБОК СЕССИЙ <span class="metric-icon amber">!</span></div><div class="metric-value" id="statFailed">—</div><div class="metric-foot">Только доступные записи</div></div>
+      <div class="metric"><div class="metric-head">ДВИЖОК QWEN <span class="metric-icon">◇</span></div><div class="metric-value metric-label" id="statQwen">НЕИЗВЕСТНО</div><div class="metric-foot">Ollama / GPU</div></div>
+    </section>
+    <section class="content-grid">
+      <article class="panel ring-panel">
+        <div class="section-head"><div><div class="panel-kicker">АРХИТЕКТУРА</div><h2>Cybernova Event Ring</h2><div class="panel-sub">Статусы узлов и передача результатов</div></div><span class="pill pill-outline" id="ringMode">ОЖИДАНИЕ</span></div>
+        <div class="ring-wrap" aria-label="Семь узлов событийного кольца">
+          <div class="ring-backdrop"></div>
+          <svg class="ring-svg" viewBox="0 0 600 600" aria-hidden="true"><defs><linearGradient id="ringGradient" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#30b6d4"/><stop offset="55%" stop-color="#4876c1"/><stop offset="100%" stop-color="#8e77cd"/></linearGradient><marker id="ringArrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8z" fill="#507ba5"/></marker></defs><circle cx="300" cy="300" r="215" fill="none" stroke="#193348" stroke-width="1.6" stroke-dasharray="3 8"/><circle cx="300" cy="300" r="166" fill="none" stroke="#14364c" stroke-width="1"/><path d="M310 86 A215 215 0 0 1 503 368" fill="none" stroke="url(#ringGradient)" stroke-width="2" marker-end="url(#ringArrow)" opacity=".7"/><path d="M505 390 A215 215 0 0 1 168 472" fill="none" stroke="url(#ringGradient)" stroke-width="2" marker-end="url(#ringArrow)" opacity=".7"/><path d="M150 460 A215 215 0 0 1 272 87" fill="none" stroke="url(#ringGradient)" stroke-width="2" marker-end="url(#ringArrow)" opacity=".7"/></svg>
+          <div class="ring-center"><div class="ring-core-mark"><i></i><i></i><i></i></div><div class="ring-core-title">CYBERNOVA</div><div class="ring-core-sub">EVENT RING</div><div class="ring-core-divider"></div><div class="ring-core-state"><span></span><span id="coreState">ОЖИДАНИЕ ДАННЫХ</span></div></div>
+          <div class="ring-nodes" id="ringNodes"></div>
+        </div>
+        <div class="ring-legend"><span><i class="legend-dot green"></i> Работает / готов</span><span><i class="legend-dot blue"></i> Внешний этап</span><span><i class="legend-dot grey"></i> Требует действия</span></div>
+      </article>
+      <article class="panel right-panel"><div class="section-head"><div><div class="panel-kicker">МОНИТОРИНГ</div><h2>Участники системы</h2><div class="panel-sub">Что происходит сейчас</div></div><span class="live-indicator"><span></span> LIVE STATUS</span></div>
+        <div class="participants"><div class="participant"><div class="p-avatar gpt">✳</div><div class="p-main"><div class="p-title">ChatGPT <span class="p-meta">ОРКЕСТРАТОР</span></div><div class="p-desc">Анализ, стратегия, выбор следующего пакета</div></div><span class="participant-status neutral">Внешний чат</span></div><div class="participant"><div class="p-avatar qwen">Q</div><div class="p-main"><div class="p-title">Qwen 30B <span class="p-meta">ИСПОЛНИТЕЛЬ</span></div><div class="p-desc" id="qwenDescription">Ожидание данных от Ollama</div></div><span class="participant-status" id="qwenBadge">—</span></div><div class="participant"><div class="p-avatar sys">◇</div><div class="p-main"><div class="p-title">Session Control <span class="p-meta">ДИСПЕТЧЕР</span></div><div class="p-desc" id="sessionDescription">Мониторинг сессий</div></div><span class="participant-status" id="sessionBadge">—</span></div><div class="participant"><div class="p-avatar obs">◎</div><div class="p-main"><div class="p-title">Observer <span class="p-meta">НАБЛЮДАТЕЛЬ</span></div><div class="p-desc">Отчёты, статусы и факты выполнения</div></div><span class="participant-status neutral">Чтение</span></div></div>
+        <div class="rule"></div><div class="section-mini-head"><h3>Текущий контур</h3><span id="flowType">LOCAL LAB ONLY</span></div>
+        <div class="flow-mini"><div class="flow-line"><span class="flow-number">01</span><span>Ручной вызов / ChatGPT</span><span class="flow-chip">Внешнее событие</span></div><div class="flow-line"><span class="flow-number">02</span><span>Session Control → Qwen</span><span class="flow-chip blue-text">Запуск по команде</span></div><div class="flow-line"><span class="flow-number">03</span><span>Tools → Evidence</span><span class="flow-chip green-text">Сбор фактов</span></div><div class="flow-line"><span class="flow-number">04</span><span>Возврат к ChatGPT</span><span class="flow-chip">Пока вручную</span></div></div>
+        <div class="info-bar"><span>i</span><p>Автоматическое пробуждение обычного чата пока не поддерживается панелью. Здесь отображаются только наблюдаемые данные.</p></div>
+      </article>
+    </section>
+    <section class="bottom-grid">
+      <article class="panel list-panel" id="sessions"><div class="section-head"><div><div class="panel-kicker">ИСПОЛНЕНИЕ</div><h2>Исследовательские сессии</h2></div><span class="pill" id="sessionCount">0 записей</span></div><div class="session-list" id="sessionList"><p class="empty">Ожидание данных…</p></div></article>
+      <article class="panel list-panel" id="events"><div class="section-head"><div><div class="panel-kicker">ТЕЛЕМЕТРИЯ</div><h2>Журнал событий</h2></div><span class="pill">OBSERVABILITY</span></div><div class="event-list" id="eventList"><p class="empty">Ожидание данных…</p></div></article>
+    </section>
+    <section class="panel agent-panel" id="agent"><div class="section-head"><div><div class="panel-kicker">ДИАГНОСТИКА</div><h2>Агент разработки</h2><div class="panel-sub">Отдельный от Session Control исполнитель</div></div><span class="pill" id="agentState">—</span></div><div class="agent-strip"><div><span class="agent-caption">ПОСЛЕДНЯЯ ЗАДАЧА</span><b id="agentTask">Нет данных</b></div><div><span class="agent-caption">ТЕКУЩИЙ ЭТАП</span><b id="agentStep">—</b></div><div class="agent-error"><span class="agent-caption">ПОСЛЕДНЯЯ ОШИБКА</span><b id="agentError">—</b></div></div></section>
+    <footer><span>CYBERNOVA <i>◈</i> PRIVATE SYSTEM</span><span id="footTime">Данные ещё не загружены</span><span>V0.1.0 / NO EXTERNAL SCANS</span></footer>
+  </main>
+</div>
+<div class="auth-overlay" id="authOverlay" hidden><div class="auth-modal"><div class="auth-icon">◈</div><h2>Доступ к Cybernova</h2><p>Введите локальный токен из защищённого файла пользователя Vast. Он нужен только для подключения к API панели.</p><form id="authForm"><label for="tokenInput">ACCESS TOKEN</label><input id="tokenInput" type="password" autocomplete="off" spellcheck="false" required placeholder="Локальный токен"><button class="btn btn-primary" type="submit">Подключиться</button></form><div class="auth-help" id="authHelp">Панель слушает только 127.0.0.1; внешний доступ требует SSH-туннеля.</div></div></div>
+</body></html>
