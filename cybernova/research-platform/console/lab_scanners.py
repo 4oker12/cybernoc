@@ -22,7 +22,10 @@ import time
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
-from .traffic_tools import _definition
+try:
+    from .traffic_tools import _definition
+except ImportError:
+    from traffic_tools import _definition
 
 LAB_ROOT = Path(os.environ.get("CYBERNOVA_LAB_ROOT", "/workspace/cybernova-lab")).resolve()
 POLICY = Path(os.environ.get(
