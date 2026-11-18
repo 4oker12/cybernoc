@@ -2,6 +2,45 @@
 
 Отдельный интерфейс для локальной Qwen и существующего MCP gateway: список диалогов слева, переписка по центру, поле ввода снизу, результаты инструментов и предлагаемые Qwen следующие вопросы под ответом.
 
+## Текущий реализованный инструментарий
+
+В собственном чате Cybernova регистрируется **38 вызываемых функций** при доступном
+исходном MCP: 6 действующих удалённых MCP, 8 обработчиков HAR/JS, 13
+междоменных исследовательских функций, 2 ограниченные DNS/TLS-проверки,
+8 адаптеров реальных сканеров и 1 инструмент их инвентаризации.
+
+- **Web/API:** HAR, JS, OpenAPI, endpoint/method/field-name map, cookie flags,
+  auth metadata, API graph, coverage и BOLA/IDOR/business-logic hypotheses.
+- **Network/ISP:** классический PCAP IPv4/Ethernet/VLAN/TCP/UDP/ARP,
+  pseudonymous flows, сетевые логи и признаки DNS/DHCP/RADIUS/PON/TLS.
+- **Server/software:** Python AST, reverse proxy/SSH/K8s/Docker configs,
+  npm/requirements/CycloneDX/SPDX inventory, TLS transcript.
+- **Evidence:** SHA-256, исходные артефакты удаляются после извлечения
+  метаданных, hypothesis-vs-verified states, интегральный офлайн-отчёт.
+- **Lab scanners:** Nmap, Nuclei, ZAP Baseline, Nikto, testssl.sh, ffuf,
+  Semgrep и Trivy. Реализованы argv-компоновка, валидатор lab scope, вызов
+  бинарника, разбор результатов и карточка одноразового разрешения.
+  **Бинарники не считаются установленными, пока окружение этого не подтвердит.**
+
+Сканерные инструменты предназначены **только для изолированной лаборатории**.
+Политика по умолчанию выключена, целевых IP нет; стандартные веб-домены или
+провайдерское оборудование не могут автоматически оказаться лабораторной целью.
+
+Подготовка лаборатории, поставка движков, профили и ограничения:
+см. LAB_SCANNERS.md. Это отдельный шаг от интеграции адаптеров в GitHub.
+
+Загрузка файлов прямо в чат: HAR, JavaScript, OpenAPI JSON, логи, конфиги,
+Python, зависимости/SBOM, TLS текст и classic PCAP. Qwen самостоятельно
+вызывает traffic_* и research_* инструменты, не исполняя исходный код и
+не повторяя перехваченные HTTP-запросы.
+
+**Ограничения:** JavaScript анализируется лексически, Python статически,
+PCAP пока только classic Ethernet/IPv4 (не pcapng/IPv6), зависимости не
+сопоставляются с актуальными CVE, а по одной HAR-сессии нельзя подтвердить
+доступ к чужим данным или дефект платежной транзакции. Полноценные DAST,
+CodeQL/Joern, Zeek/Suricata и интеграция прочих кандидатов из каталога
+по-прежнему требуют отдельных адаптеров.
+
 ## Схема
 
     Браузер (SSH port-forward)
@@ -9,7 +48,7 @@
       → Ollama 127.0.0.1:11434 / cybernova-security:30b
       → tool_calls Qwen (native или строго валидированный JSON)
       → MCP 127.0.0.1:18792/mcp
-      → все инструменты, фактически объявленные MCP через tools/list
+      → 6 исходных MCP + 32 локальных и лабораторных адаптера
 
 Open WebUI и MCPO не требуются. Нет платного API или прямого shell от модели. Полный набор 87 возможностей ещё не подключён.
 
@@ -34,7 +73,7 @@ Open WebUI и MCPO не требуются. Нет платного API или �
     python3 -m venv /workspace/cybernova-chat-venv
     /workspace/cybernova-chat-venv/bin/pip install -r console/requirements.txt
     /workspace/cybernova-chat-venv/bin/python -m unittest discover -s tests -v
-    /workspace/cybernova-chat-venv/bin/python console/server.py
+    /workspace/cybernova-chat-venv/bin/python -m console.server
 
 Сервер поднимется по адресу http://127.0.0.1:18794 на Vast.
 
@@ -51,4 +90,4 @@ Open WebUI и MCPO не требуются. Нет платного API или �
     node --check console/static/app.js
     python3 -m compileall -q console
 
-Acceptance: /api/status показывает реальный Ollama и MCP с категориями AUTO/ASK; Qwen видит весь динамический MCP tools/list, самостоятельно выбирает ip_network_summary для 192.0.2.7/24 и показывает MCP receipt; новый инструмент формирует запрос на одноразовое разрешение и не исполняется до него; scope-запрет не обходится; под ответом появляются тематические вопросы; ошибки исполнения видны пользователю.
+Acceptance: /api/status показывает реальный Ollama, MCP, подготовленные адаптеры и категории AUTO/ASK/MISSING; Qwen видит весь динамический MCP tools/list, самостоятельно выбирает ip_network_summary для 192.0.2.7/24 и показывает MCP receipt; новый инструмент формирует запрос на одноразовое разрешение и не исполняется до него; scope-запрет не обходится; под ответом появляются тематические вопросы; ошибки исполнения видны пользователю.
