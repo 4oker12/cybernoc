@@ -153,6 +153,31 @@ class AgentTests(unittest.TestCase):
         self.assertIn("MCP unavailable",out["answer"])
         self.assertEqual(out["events"][0]["type"],"mcp_error")
 
+    def test_automatic_tools_are_default_and_optional(self):
+        mcp = FakeMCP()
+        lm = FakeOllama([
+            {"role": "assistant", "content": "Объясню без инструментов."},
+            {"role": "assistant", "content": '{"calls":[]}'},
+        ])
+        out = Agent(lm, lambda:mcp).run([], "Просто объясни термин")
+        self.assertEqual(out["tool_calls"], 0)
+        self.assertEqual(out["selected_by"], "none")
+        self.assertEqual(mcp.calls, [])
+        self.assertEqual(len(lm.prompts), 2)
+        self.assertIn("http_get", [t["function"]["name"] for t in lm.prompts[0][1]])
+        self.assertEqual(out["answer"], "Объясню без инструментов.")
+
+    def test_always_offers_http_but_denies_out_of_scope(self):
+        mcp = FakeMCP()
+        lm = FakeOllama([
+            calls(("http_get", {"url": "https://evil.example.net/"})),
+            {"role": "assistant", "content": "Запрос не выполнен"},
+        ])
+        out = Agent(lm, lambda:mcp).run([], "Проверь evil.example.net")
+        self.assertEqual(out["events"][0]["result"]["error"],
+                         "http_target_outside_gateway_scope")
+        self.assertNotIn("http_get", [name for name, _ in mcp.calls])
+
     def test_empty_and_long_user_prompt_rejected(self):
         with self.assertRaises(ValueError):Agent(FakeOllama([]),lambda:FakeMCP()).run([]," ")
         with self.assertRaises(ValueError):Agent(FakeOllama([]),lambda:FakeMCP()).run([],"a"*10001)
