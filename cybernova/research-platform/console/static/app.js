@@ -275,7 +275,7 @@ async function send(){
     busy(false);$("messageInput").focus();toBottom();
   }
 }
-function renderTools(tools,automatic=[]){
+function renderTools(tools,automatic=[],availableScanners=[]){
   const container=$("toolList");
   container.replaceChildren();
   $("toolCount").textContent=String(tools.length);
@@ -284,12 +284,18 @@ function renderTools(tools,automatic=[]){
     return;
   }
   const allowed=new Set(automatic);
+  const availability=new Map((Array.isArray(availableScanners)?availableScanners:[])
+    .filter(x=>x&&typeof x.tool==="string")
+    .map(x=>[x.tool,!!x.installed]));
   for(const name of tools){
     const row=node("div","tool-item");
     const label=node("code","",name);
     label.title=descriptions[name]||"Подключённый MCP-инструмент";
-    const indicator=node("span","tool-access",allowed.has(name)?"AUTO":"ASK");
-    indicator.title=allowed.has(name)?"Qwen может запустить без подтверждения":
+    const missing=availability.has(name)&&!availability.get(name);
+    const indicator=node("span","tool-access"+(missing?" tool-missing":""),
+      missing?"MISSING":allowed.has(name)?"AUTO":"ASK");
+    indicator.title=missing?"Сканер не установлен в текущем окружении":
+      allowed.has(name)?"Qwen может запустить без подтверждения":
       "Qwen может выбрать; для исполнения потребуется подтверждение";
     row.append(label,indicator);
     container.append(row);
@@ -307,7 +313,7 @@ async function status(){
     $("backendDot").className="dot "+(ready?"ok":"bad");
     $("backendStatus").textContent=ready?"Qwen и MCP подключены":
       info.ollama_ready?"Qwen подключена · MCP недоступен":"Проверь Ollama";
-    renderTools(Array.isArray(info.tools)?info.tools:[],info.auto_executable||[]);
+    renderTools(Array.isArray(info.tools)?info.tools:[],info.auto_executable||[],info.lab_scanners?.engines||[]);
   }catch(_){
     $("backendDot").className="dot bad";
     $("backendStatus").textContent="Нет подключения к серверу";
