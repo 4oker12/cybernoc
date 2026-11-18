@@ -2,93 +2,82 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0b1016">
-  <meta name="robots" content="noindex, nofollow">
-  <title>Cybernova Console · Qwen Research Agent</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#212121">
+  <title>Cybernova — Чат с Qwen</title>
   <link rel="stylesheet" href="/static/styles.css">
   <script defer src="/static/app.js"></script>
 </head>
 <body>
-  <div class="workspace">
-    <aside class="sidebar">
-      <a href="/" class="brand" aria-label="Cybernova Console">
-        <span class="brandmark" aria-hidden="true"><span></span></span>
-        <span class="brandtext">CYBER<span>NOVA</span><small>RESEARCH LAB / CONSOLE</small></span>
-      </a>
-      <div class="workspace-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
-      <nav class="navigation" aria-label="Разделы">
-        <button type="button" class="nav-item active" id="navChat"><span class="nav-symbol">◈</span> Чат с исследователем <span class="nav-shortcut">01</span></button>
-        <button type="button" class="nav-item" id="navTools"><span class="nav-symbol">⌘</span> Инструменты <span class="nav-shortcut">02</span></button>
-      </nav>
-      <div class="sidebar-section">
-        <div class="workspace-label">КОНТЕКСТ ЗАДАЧИ</div>
-        <div class="scope-info"><span class="subtle">Текущая сессия</span><strong id="sessionLabel">Новый диалог</strong><span class="subtle">До 6 вызовов на сообщение</span></div>
-        <button type="button" class="new-session" id="newSession"><span aria-hidden="true">＋</span> Новый диалог</button>
-      </div>
-      <div class="sidebar-bottom">
-        <div class="status-indicator"><span class="pulse" id="backendDot"></span><div><strong id="backendStatus">Проверяем подключение</strong><small>Vast GPU · Local-only</small></div></div>
-        <p class="footer-mini">V0.1 · Управляемый режим<br>Без произвольного shell</p>
-      </div>
-    </aside>
+<div class="app">
+  <aside class="sidebar" id="sidebar" aria-label="Диалоги">
+    <div class="sidebar-head">
+      <div class="brand"><span class="brand-icon" aria-hidden="true">◈</span> Cybernova</div>
+      <button type="button" id="newSession" class="sidebar-action"><span aria-hidden="true">＋</span> Новый чат</button>
+    </div>
+    <div class="sidebar-label">Ваши диалоги</div>
+    <button class="session-item active" type="button" id="sessionItem">Новый диалог</button>
+    <div class="sidebar-bottom">
+      <div class="connection"><span id="backendDot" class="dot"></span><span id="backendStatus">Проверяем подключение…</span></div>
+      <div class="side-note">Локальная Qwen · Vast.ai</div>
+    </div>
+  </aside>
 
-    <main class="main">
-      <header class="topbar">
-        <div class="breadcrumbs"><span>Cybernova</span><span class="crumb-separator">/</span><strong>Исследователь</strong></div>
-        <div class="topbar-right"><span class="model-pill"><span class="model-orbit"></span><span id="modelName">Qwen3-Coder 30B</span></span><span class="privacy-pill">LOCAL / SSH</span></div>
-      </header>
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <button type="button" id="menuToggle" class="icon-button mobile-menu" aria-label="Показать меню">☰</button>
+        <div class="model-title">Cybernova <span id="modelName">Qwen3-Coder 30B</span></div>
+      </div>
+      <div class="topbar-right">
+        <span class="connection-label"><span id="ollamaState">…</span> · <span id="mcpState">…</span></span>
+        <button type="button" id="navTools" class="header-button">Инструменты <span id="toolCount">0</span></button>
+      </div>
+    </header>
 
-      <section class="conversation" aria-label="Диалог">
-        <div id="messages" class="messages">
-          <div class="welcome" id="welcome">
-            <div class="welcome-emblem"><span class="emblem-core">◈</span><span class="emblem-ring"></span></div>
-            <div class="eyebrow">CYBERNOVA RESEARCH AGENT</div>
-            <h1>Исследование начинается<br>с <em>правильного вопроса.</em></h1>
-            <p>Локальная модель Qwen, реальные MCP-инструменты и проверяемые результаты. Без автоматического сканирования сторонних систем.</p>
-            <div class="suggestions">
-              <button type="button" class="suggestion" data-prompt="Проверь реальный статус MCP и перечисли доступные инструменты. Используй gateway_status."><span>01</span><strong>Проверить инфраструктуру</strong><small>Состояние MCP и доступные функции</small></button>
-              <button type="button" class="suggestion" data-prompt="Проверь ip_network_summary для 192.0.2.7/24. Объясни результат и число адресов."><span>02</span><strong>Исследовать подсеть</strong><small>Учебный CIDR без сетевых запросов</small></button>
-              <button type="button" class="suggestion" data-prompt="Проверь статический Python-пример через python_static_review: def greet(name): return 'Hello, '+name."><span>03</span><strong>Проверить Python-код</strong><small>Офлайн-анализ без выполнения</small></button>
-              <button type="button" class="suggestion" data-prompt="Проверь состояние локального интерфейса через local_webui_health, используй реальный вызов MCP."><span>04</span><strong>Диагностика WebUI</strong><small>Локальная проверка состояния</small></button>
-            </div>
+    <section class="conversation" aria-label="Чат">
+      <div id="messages" class="messages">
+        <div class="welcome" id="welcome">
+          <div class="welcome-logo" aria-hidden="true">◈</div>
+          <h1>Чем займёмся?</h1>
+          <p>Общайтесь с Qwen. Для диагностики она может вызывать разрешённые MCP-инструменты и показывать реальные результаты.</p>
+          <div class="suggestions">
+            <button type="button" data-prompt="Вызови gateway_status и расскажи, какие инструменты доступны." class="suggestion">Какие инструменты доступны?</button>
+            <button type="button" data-prompt="Вызови ip_network_summary для 192.0.2.7/24 и объясни результат." class="suggestion">Разобрать учебную подсеть</button>
           </div>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section class="composer-wrap" aria-label="Отправка сообщения">
-        <div class="composer">
-          <label class="sr-only" for="messageInput">Задание для Qwen</label>
-          <textarea id="messageInput" rows="2" maxlength="10000" placeholder="Сформулируйте задачу для Cybernova…" spellcheck="true"></textarea>
-          <div class="composer-tools">
-            <div class="options">
-              <label class="switch-option"><input type="checkbox" id="forceTools" checked><span class="check-ui"></span>Реальные инструменты</label>
-              <label class="switch-option high-risk" title="Только GET к хостам, заранее разрешённым в MCP"><input type="checkbox" id="publicGet"><span class="check-ui"></span>Публичный GET</label>
-              <span class="option-hint">GET выключен по умолчанию</span>
-            </div>
-            <button type="button" id="sendButton" class="send-button" aria-label="Отправить задание"><span>Отправить</span><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <section class="composer-area" aria-label="Ввод сообщения">
+      <div class="composer">
+        <label class="sr-only" for="messageInput">Сообщение для Qwen</label>
+        <textarea id="messageInput" rows="2" maxlength="10000" placeholder="Спросите что-нибудь или задайте задачу…"></textarea>
+        <div class="composer-bottom">
+          <div class="options">
+            <label class="option" title="Разрешить Qwen выбирать из доступных офлайн-инструментов">
+              <input type="checkbox" id="forceTools" checked> Инструменты
+            </label>
+            <label class="option" title="Разрешить до трёх одиночных GET к точно разрешённым хостам; выключается после сообщения">
+              <input type="checkbox" id="publicGet"> Публичный GET
+            </label>
           </div>
+          <button type="button" id="sendButton" class="send-button" aria-label="Отправить">↑</button>
         </div>
-        <div class="composer-footer"><span>Enter — отправить · Shift+Enter — новая строка</span><span id="sendStatus" role="status">Готов к запросу</span></div>
-      </section>
-    </main>
+      </div>
+      <div class="composer-meta"><span>Enter — отправить · Shift+Enter — новая строка</span><span id="sendStatus" role="status">Готов</span></div>
+    </section>
+  </main>
 
-    <aside class="inspector" id="inspector" aria-label="Панель диагностики">
-      <div class="inspector-header"><div><small>INSPECTOR</small><h2>Исполнение</h2></div><button type="button" id="refreshStatus" class="icon-button" title="Обновить статус" aria-label="Обновить статус">↻</button></div>
-      <div class="inspector-section">
-        <div class="section-header"><h3>Подключения</h3><span class="meta">LIVE</span></div>
-        <div class="service"><span class="service-icon">◉</span><span><strong>Ollama / Qwen</strong><small>Локальная LLM</small></span><span class="service-state" id="ollamaState">…</span></div>
-        <div class="service"><span class="service-icon">◎</span><span><strong>Cybernova MCP</strong><small>Инструментальный шлюз</small></span><span class="service-state" id="mcpState">…</span></div>
-      </div>
-      <div class="inspector-section" id="toolSection">
-        <div class="section-header"><h3>Инструменты</h3><span class="meta" id="toolCount">0</span></div>
-        <div class="tool-list" id="toolList"><span class="muted">Получение перечня…</span></div>
-      </div>
-      <div class="inspector-section recent-section">
-        <div class="section-header"><h3>Последний запуск</h3><span class="meta" id="runCount">—</span></div>
-        <div class="run-list" id="runList"><p class="empty-run">Инструменты ещё не вызывались. Их фактические результаты появятся здесь.</p></div>
-      </div>
-      <div class="inspector-note"><span>⛨</span><p>Qwen выбирает инструменты. Каждый вызов дополнительно проверяется контроллером. Обнаруженные сайты автоматически не добавляются в область аудита.</p></div>
-    </aside>
-  </div>
+  <aside class="inspector" id="inspector" aria-label="Инструменты" hidden>
+    <div class="inspector-header"><strong>Инструменты</strong><button type="button" id="navChat" class="icon-button" aria-label="Закрыть">×</button></div>
+    <p class="inspector-note">Фактические инструменты MCP. Программы из будущего арсенала здесь не отображаются до подключения.</p>
+    <button type="button" id="refreshStatus" class="refresh-button">↻ Проверить подключение</button>
+    <div class="tool-list" id="toolList"><span class="muted">Проверяем MCP…</span></div>
+    <div class="inspector-header recent"><strong>Последний запуск</strong><span id="runCount">—</span></div>
+    <div class="run-list" id="runList"><p class="muted">Пока нет вызовов.</p></div>
+  </aside>
+</div>
 </body>
 </html>
