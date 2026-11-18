@@ -14,3 +14,7 @@
 .followup-question:hover,.followup-question:focus-visible{background:#313131;border-color:#91bfae;outline:none}
 .followup-question:disabled{opacity:.4}
 @media(max-width:680px){.followup-box{margin-left:0}.followup-question{font-size:11px}}
+
+/* MCP tools are always available; Qwen chooses, no user checkbox. */
+.auto-tools-label{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:#b8c5bd;user-select:none}
+.auto-tools-dot{display:inline-block;width:7px;height:7px;background:#86d9aa;border-radius:50%;box-shadow:0 0 0 3px #86d9aa16}
