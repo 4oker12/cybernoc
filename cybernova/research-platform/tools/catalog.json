@@ -51,8 +51,8 @@
       "name": "plan_build",
       "family": "control",
       "mode": "offline",
-      "engine": "Cybernova core",
-      "status": "planned_adapter",
+      "engine": "Cybernova offline research/workflow modules",
+      "status": "implemented_offline_not_deployed",
       "description": "План исследований из гипотез и разрешённых инструментов"
     },
     {
@@ -139,8 +139,8 @@
       "name": "asset_inventory",
       "family": "discovery",
       "mode": "passive_public",
-      "engine": "DNS/CT/Amass/subfinder/archives",
-      "status": "planned_adapter",
+      "engine": "Cybernova offline research/workflow modules",
+      "status": "implemented_offline_not_deployed",
       "description": "Сведение активов и отделение кандидатов от подтверждённого scope"
     },
     {
@@ -678,6 +678,38 @@
       "engine": "Planned generic adapter",
       "status": "planned_adapter",
       "description": "Offline review of captured HTTP request/response and HAR; interactive proxy is a separately authorized operator task"
+    },
+    {
+      "name": "entity_disambiguation",
+      "family": "discovery",
+      "mode": "offline",
+      "engine": "Cybernova offline research.py",
+      "status": "implemented_offline_not_deployed",
+      "description": "Offline source-tagged company-name/domain disambiguation without implicit ownership/authorization"
+    },
+    {
+      "name": "threat_intelligence_review",
+      "family": "discovery",
+      "mode": "offline",
+      "engine": "Cybernova offline research.py",
+      "status": "implemented_offline_not_deployed",
+      "description": "Offline normalization of supplied CT/domain-typosquat/history/IOC claims; suspected is not proven malicious"
+    },
+    {
+      "name": "attack_path_model",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova offline research.py",
+      "status": "implemented_offline_not_deployed",
+      "description": "Offline hypothesis dependency graph with separately verified links, no exploit execution"
+    },
+    {
+      "name": "security_posture_summary",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova offline research.py",
+      "status": "implemented_offline_not_deployed",
+      "description": "Coverage, verified severity, confidence axes; never a fake 100-point security grade"
     }
   ]
 }
