@@ -1,0 +1,4 @@
+{
+  "description": "Authorized public hostnames for Cybernova read-only HTTP observations. Add future approved sites here without changing the http_get implementation.",
+  "allowed_hosts": ["simnet.ua"]
+}
