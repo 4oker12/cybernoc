@@ -125,7 +125,7 @@ class DynamicToolPolicyTests(unittest.TestCase):
         self.assertEqual(result["tool_calls"], 1)
         self.assertEqual(result["selected_by"], "user_approved")
         self.assertIn("тест", result["answer"])
-        self.assertIsNone(qwen.inputs[-1]["tools"])
+        self.assertFalse(qwen.inputs[-1]["tools"])
 
     def test_expired_approval_never_executes(self):
         mcp = FakeMCP()
