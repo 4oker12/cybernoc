@@ -34,6 +34,21 @@ From an isolated checkout with Python 3.12 and no special dependencies:
 
 Passing tests must be verified from actual CI or a local run. Code committed does not mean deployed.
 
+## One-command Vast quickstart (in separate checked-out branch)
+The safe quickstart runs the offline tests, checks configuration, starts a NEW tmux session named cybernova-research and verifies the local API. It does not touch the original WebUI/Ollama/MCP sessions.
+
+    bash scripts/start.sh
+
+To enable the local Qwen tool-calling endpoint for this NEW session:
+
+    CYBERNOVA_LLM_ENABLED=1 bash scripts/start.sh
+
+If the session is already running, the script does NOT alter it; stop only that session and start again if you need to switch the model flag.
+
+    bash scripts/stop.sh
+
+To access from a Windows laptop use authenticated SSH local port forwarding for 18794. The UI must stay bound to 127.0.0.1 on Vast. Do not use public unauthenticated Cloudflare tunnels.
+
 ## Launch dedicated Research Console
     cd cybernova/research-platform
     python3 app.py
