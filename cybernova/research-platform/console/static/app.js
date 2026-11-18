@@ -1,209 +1,195 @@
 "use strict";
-/* Cybernova local console: plain DOM only, no remote scripts, no HTML from models. */
-const $ = id => document.getElementById(id);
-const state = {sessionId: null, running: false, turns: 0};
-const knownTools = {
-  gateway_status:"Состояние шлюза",
-  local_webui_health:"Диагностика WebUI",
-  http_get:"Публичный HTTP GET",
-  http_header_review:"Анализ заголовков",
-  ip_network_summary:"Анализ CIDR",
-  python_static_review:"Статический анализ Python"
+/* Cybernova: local ChatGPT-like chat UI. No external JS, no model HTML. */
+const $=id=>document.getElementById(id);
+const state={sessionId:null,running:false,turns:0};
+const descriptions={
+  gateway_status:"Шлюз MCP",
+  local_webui_health:"Проверка интерфейса",
+  http_get:"Публичный GET",
+  http_header_review:"Анализ HTTP-заголовков",
+  ip_network_summary:"Расчёт подсети",
+  python_static_review:"Анализ Python",
 };
-
-function el(tag, className, text){
-  const node=document.createElement(tag);
-  if(className)node.className=className;
-  if(text!==undefined)node.textContent=text;
-  return node;
+const node=(tag,cls,txt)=>{
+  const n=document.createElement(tag);
+  if(cls)n.className=cls;
+  if(txt!==undefined)n.textContent=txt;
+  return n;
+};
+function toBottom(){
+  const scroller=document.querySelector(".conversation");
+  scroller.scrollTop=scroller.scrollHeight;
 }
-function scrollBottom(){
-  const c=document.querySelector(".conversation");
-  c.scrollTop=c.scrollHeight;
-}
-function renderMessage(who, content, pending=false){
-  const wrap=el("article","chat-msg "+(who==="user"?"from-user":"from-agent")+(pending?" working":""));
-  const meta=el("div","message-meta");
-  const avatar=el("span","avatar "+(who==="user"?"user":""),who==="user"?"U":"◈");
-  const author=el("span","",who==="user"?"Вы":"CYBERNOVA / QWEN");
-  meta.append(avatar,author);
-  const body=el("div","message-body",content);
+function renderMessage(role,content,pending=false){
+  const wrap=node("article","chat-msg "+(role==="user"?"from-user":"from-agent")+(pending?" working":""));
+  const meta=node("div","message-meta");
+  meta.append(node("span","avatar "+(role==="user"?"user":""),role==="user"?"U":"◈"),
+              node("span","",role==="user"?"Вы":"Cybernova"));
+  const body=node("div","message-body",content);
   wrap.append(meta,body);
-  $("messages").append(wrap);
-  scrollBottom();
+  $("messages").append(wrap);toBottom();
   return {wrap,body};
 }
-function showEvents(events, toolCount, selectedBy){
-  const list=$("runList");list.replaceChildren();
-  $("runCount").textContent=toolCount?String(toolCount)+" вызовов":"0 вызовов";
+function makeToolDetails(event){
+  const d=node("details","");
+  const sum=node("summary","",event.name||event.type||"Событие");
+  if(event.is_error)sum.textContent+=" · Ошибка";
+  d.append(sum,node("pre","",JSON.stringify({
+    input:event.arguments||{},
+    result:event.result||event.message||{},
+  },null,2)));
+  return d;
+}
+function showEvents(events,count,mode,reply){
+  const inspector=$("runList");
+  inspector.replaceChildren();
+  $("runCount").textContent=count?count+" вызовов":"Нет вызовов";
   if(!events || !events.length){
-    list.append(el("p","empty-run","Модель ответила без вызова инструментов. Отчёт сформирован из доступного контекста."));
+    inspector.append(node("p","muted","На этом шаге инструментов не было."));
     return;
   }
-  for(const item of events){
-    const details=el("details","run-entry");
-    const title=el("summary",item.is_error?"failed":"");
-    title.append(el("span","",item.name || item.type || "diagnostic"));
-    const code=el("span","",item.type==="tool_result"?(item.is_error?"ERROR":"CALLED"):"EVENT");
-    title.append(code);
-    const data={arguments:item.arguments||{},result:item.result||item.message||{},selected_by:selectedBy||"none"};
-    const pre=el("pre","",JSON.stringify(data,null,2));
-    details.append(title,pre);list.append(details);
+  let inline=null;
+  if(reply)inline=node("div","inline-tools");
+  for(const e of events){
+    const item=makeToolDetails(e);
+    inspector.append(item);
+    if(inline)inline.append(makeToolDetails(e));
+  }
+  if(inline)reply.wrap.append(inline);
+  if(reply && count){
+    const receipt=node("div","tool-receipt");
+    receipt.append(node("strong","",count+" реальных вызовов MCP"),
+      node("span","",mode==="native"?"· выбраны Qwen (native tools)":
+        mode==="qwen_json_fallback"?"· план выбрала Qwen": "· выбран контроллером"));
+    reply.wrap.insertBefore(receipt,inline);
   }
 }
-function receipt(message, count, selectedBy){
-  if(!count)return;
-  const row=el("div","tool-receipt");
-  row.append(el("strong","",String(count)+" реальных вызовов MCP"));
-  row.append(el("span",""," · выбор: "+(selectedBy==="native"?"Qwen tool_calls":selectedBy==="qwen_json_fallback"?"Qwen JSON plan":selectedBy)));
-  message.wrap.append(row);
+function busy(on){
+  state.running=on;
+  $("sendButton").disabled=on;
+  $("messageInput").disabled=on;
+  $("forceTools").disabled=on;
+  $("publicGet").disabled=on;
+  $("newSession").disabled=on;
+  $("sendStatus").textContent=on?"Qwen выполняет запрос…":"Готов";
 }
-function setBusy(value){
-  state.running=value;
-  $("sendButton").disabled=value;
-  $("messageInput").disabled=value;
-  $("forceTools").disabled=value;
-  $("publicGet").disabled=value;
-  $("sendStatus").textContent=value?"Запрос выполняется…":"Готов к запросу";
-}
-async function api(path,payload){
-  const res=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),cache:"no-store"});
+async function requestJson(path,data){
+  const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify(data),cache:"no-store"});
   let body;
-  try{body=await res.json();}catch(_){throw new Error("Сервер вернул не-JSON ответ ("+res.status+")");}
-  if(!res.ok)throw new Error(typeof body.detail==="string"?body.detail:"HTTP "+res.status);
+  try{body=await response.json();}catch(_){throw Error("Некорректный ответ сервера: "+response.status);}
+  if(!response.ok)throw Error(body.detail||"HTTP "+response.status);
   return body;
 }
 async function send(){
   const text=$("messageInput").value.trim();
-  if(!text || state.running)return;
-  if($("welcome"))$("welcome").remove();
+  if(!text||state.running)return;
+  $("welcome")?.remove();
   const publicGet=$("publicGet").checked;
   const forceTools=$("forceTools").checked;
-  if(publicGet){
-    // Explicit, one-turn opt in. No future turn inherits HTTP access.
-    $("publicGet").checked=false;
-  }
+  $("publicGet").checked=false;
   renderMessage("user",text);
   $("messageInput").value="";
-  const pending=renderMessage("assistant","Qwen анализирует запрос",true);
-  const started=performance.now();
-  setBusy(true);
-  const dots=setInterval(()=>{
-    const seconds=Math.round((performance.now()-started)/1000);
-    pending.body.textContent="Qwen анализирует запрос · "+seconds+" сек.";
-  },1000);
+  const pending=renderMessage("assistant","Qwen формирует ответ…",true);
+  busy(true);
   try{
-    const result=await api("/api/chat",{
-      session_id:state.sessionId,
-      message:text,
-      public_get:publicGet,
-      force_tools:forceTools
+    const result=await requestJson("/api/chat",{
+      session_id:state.sessionId,message:text,public_get:publicGet,force_tools:forceTools,
     });
     state.sessionId=result.session_id;
     state.turns=result.turn||state.turns+1;
     pending.wrap.classList.remove("working");
-    pending.body.textContent=result.answer || "(Пустой ответ модели)";
-    receipt(pending,result.tool_calls,result.selected_by);
-    showEvents(result.events,result.tool_calls,result.selected_by);
-    $("sessionLabel").textContent="Диалог · "+state.turns+" запросов";
+    pending.body.textContent=result.answer||"Ответ модели пуст.";
+    showEvents(result.events,result.tool_calls,result.selected_by,pending);
+    if(state.turns===1){
+      const label=text.length>32?text.substring(0,31)+"…":text;
+      $("sessionItem").textContent=label;
+    }
     $("sendStatus").textContent=result.tool_calls?
-      String(result.tool_calls)+" вызовов MCP":"Ответ без инструментов";
-  }catch(err){
+      result.tool_calls+" вызовов MCP":"Ответ без инструментов";
+  }catch(exc){
     pending.wrap.classList.remove("working");
-    pending.body.textContent="Ошибка запроса: "+(err.message||String(err));
+    pending.body.textContent="Ошибка: "+String(exc.message||exc);
     $("sendStatus").textContent="Ошибка подключения";
   }finally{
-    clearInterval(dots);
-    setBusy(false);
-    $("messageInput").focus();
-    scrollBottom();
+    busy(false);$("messageInput").focus();toBottom();
   }
 }
-function renderTools(names){
-  const list=$("toolList");list.replaceChildren();
-  $("toolCount").textContent=String(names.length);
-  if(!names.length){
-    list.append(el("span","muted","MCP недоступен или tools/list пуст."));
+function renderTools(tools){
+  const container=$("toolList");
+  container.replaceChildren();
+  $("toolCount").textContent=String(tools.length);
+  if(!tools.length){
+    container.append(node("p","muted","MCP сейчас недоступен."));
     return;
   }
-  for(const name of names){
-    const item=el("div","tool-item");
-    const label=el("code","",name);
-    label.title=knownTools[name]||"Неизвестный инструмент — не разрешён агенту";
-    item.append(label,el("span","tool-dot"));
-    list.append(item);
+  for(const name of tools){
+    const row=node("div","tool-item");
+    const label=node("code","",name);
+    label.title=descriptions[name]||"Неизвестный инструмент";
+    row.append(label,node("span","tool-dot"));
+    container.append(row);
   }
 }
-async function updateStatus(){
+async function status(){
   try{
-    const res=await fetch("/api/status",{cache:"no-store"});
-    if(!res.ok)throw new Error("HTTP "+res.status);
-    const st=await res.json();
-    $("modelName").textContent=st.model||"Qwen";
-    $("ollamaState").textContent=st.ollama_ready?"ONLINE":"OFFLINE";
-    $("mcpState").textContent=st.mcp_ready?"ONLINE":"OFFLINE";
-    $("ollamaState").className="service-state "+(st.ollama_ready?"ok":"bad");
-    $("mcpState").className="service-state "+(st.mcp_ready?"ok":"bad");
-    const ok=st.ollama_ready && st.mcp_ready;
-    $("backendStatus").textContent=ok?"Модель и MCP доступны":
-       st.ollama_ready?"Модель доступна · MCP недоступен":"Проверить Ollama";
-    $("backendDot").className="pulse "+(ok?"ok":"bad");
-    renderTools(Array.isArray(st.tools)?st.tools:[]);
-  }catch(err){
-    $("backendStatus").textContent="Сервер недоступен";
-    $("backendDot").className="pulse bad";
-    $("ollamaState").textContent="—";
-    $("mcpState").textContent="—";
+    const response=await fetch("/api/status",{cache:"no-store"});
+    if(!response.ok)throw Error("HTTP "+response.status);
+    const info=await response.json();
+    const ready=!!info.ollama_ready&&!!info.mcp_ready;
+    $("modelName").textContent=info.model||"Qwen";
+    $("ollamaState").textContent=info.ollama_ready?"Qwen подключена":"Qwen недоступна";
+    $("mcpState").textContent=info.mcp_ready?"MCP подключён":"MCP недоступен";
+    $("backendDot").className="dot "+(ready?"ok":"bad");
+    $("backendStatus").textContent=ready?"Qwen и MCP подключены":
+      info.ollama_ready?"Qwen подключена · MCP недоступен":"Проверь Ollama";
+    renderTools(Array.isArray(info.tools)?info.tools:[]);
+  }catch(_){
+    $("backendDot").className="dot bad";
+    $("backendStatus").textContent="Нет подключения к серверу";
+    $("ollamaState").textContent="Qwen недоступна";
+    $("mcpState").textContent="MCP недоступен";
     renderTools([]);
   }
 }
-async function resetSession(){
+async function reset(){
   if(state.running)return;
   if(state.sessionId){
-    try{await api("/api/reset",{session_id:state.sessionId});}
-    catch(err){$("sendStatus").textContent="Не удалось сбросить сессию";return;}
+    try{await requestJson("/api/reset",{session_id:state.sessionId});}
+    catch(exc){$("sendStatus").textContent="Ошибка сброса сессии";return;}
   }
-  state.sessionId=null;state.turns=0;
-  $("sessionLabel").textContent="Новый диалог";
-  $("messages").replaceChildren();
-  $("messages").append(buildWelcome());
+  state.sessionId=null;
+  state.turns=0;
+  $("sessionItem").textContent="Новый диалог";
+  $("messages").replaceChildren(window.cybernovaWelcome.cloneNode(true));
   showEvents([],0,"none");
   $("messageInput").value="";
   $("publicGet").checked=false;
+  $("sidebar").classList.remove("open");
+  $("sendStatus").textContent="Готов";
 }
-function buildWelcome(){
-  // Re-using the initial welcome node keeps the same greeting without
-  // interpreting untrusted model HTML. It's cached on startup.
-  const template=window.cybernovaWelcomeTemplate;
-  return template.cloneNode(true);
+function toolsPanel(show){
+  $("inspector").hidden= !show;
+  if(show)status();
 }
-function bindSuggestions(){
-  $("messages").addEventListener("click",event=>{
-    const button=event.target.closest("[data-prompt]");
-    if(!button)return;
-    $("messageInput").value=button.dataset.prompt;
-    send();
-  });
-}
-function setInspectorVisible(visible){
-  document.body.classList.toggle("show-inspector",visible);
-  $("navTools").classList.toggle("active",visible);
-  $("navChat").classList.toggle("active",!visible);
-  if(visible)updateStatus();
-}
-function initialize(){
-  window.cybernovaWelcomeTemplate=$("welcome").cloneNode(true);
+function init(){
+  window.cybernovaWelcome=$("welcome").cloneNode(true);
   $("sendButton").addEventListener("click",send);
-  $("messageInput").addEventListener("keydown",event=>{
-    if(event.key==="Enter"&&!event.shiftKey){
-      event.preventDefault();send();
+  $("messageInput").addEventListener("keydown",e=>{
+    if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}
+  });
+  $("newSession").addEventListener("click",reset);
+  $("refreshStatus").addEventListener("click",status);
+  $("navTools").addEventListener("click",()=>toolsPanel($("inspector").hidden));
+  $("navChat").addEventListener("click",()=>toolsPanel(false));
+  $("menuToggle").addEventListener("click",()=>$("sidebar").classList.toggle("open"));
+  $("sessionItem").addEventListener("click",()=>$("sidebar").classList.remove("open"));
+  $("messages").addEventListener("click",e=>{
+    const sample=e.target.closest("[data-prompt]");
+    if(sample&&!state.running){
+      $("messageInput").value=sample.dataset.prompt;send();
     }
   });
-  $("newSession").addEventListener("click",resetSession);
-  $("refreshStatus").addEventListener("click",updateStatus);
-  $("navTools").addEventListener("click",()=>setInspectorVisible(true));
-  $("navChat").addEventListener("click",()=>setInspectorVisible(false));
-  bindSuggestions();
-  updateStatus();
+  status();
 }
-document.addEventListener("DOMContentLoaded",initialize);
+document.addEventListener("DOMContentLoaded",init);
