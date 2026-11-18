@@ -1,0 +1,7 @@
+rules:
+  - id: cybernova-python-eval-review
+    languages: [python]
+    message: "Dynamic evaluation call; check provenance and reachability."
+    severity: WARNING
+    patterns:
+      - pattern: eval(...)
