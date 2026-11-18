@@ -4,7 +4,7 @@
 
 ## Project documents
 - PLAN.md — full authorized SIMNET Web/API audit methodology, scope and milestones.
-- ARSENAL.md — 107 engine candidates mapped to 83 host-neutral capabilities.
+- ARSENAL.md — 107 engine candidates mapped to 85 host-neutral capabilities.
 - prompts/RESEARCHER_SYSTEM.md — Qwen research rules, anti-hallucination and stop conditions.
 - prompts/AUDIT_PROTOCOL.md — phase-by-phase evidence-first procedure.
 
@@ -16,7 +16,7 @@
 - core/evidence.py — SHA-256 and redaction.
 - core/storage.py — SQLite findings and minimal audit events.
 - ui/index.html, ui/style.css, ui/app.js — NOC-style research console.
-- tools/catalog.json — 83 generic tool names and status per tool.
+- tools/catalog.json — 85 generic tool names and status per tool.
 - engines/manifest.json — 107 engine candidates, NOT installed.
 - profiles/simnet.example.json — DRAFT, all assets out of scope by default.
 - tests/ — unit and localhost HTTP integration.
