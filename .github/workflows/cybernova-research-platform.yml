@@ -49,7 +49,7 @@ jobs:
           c=json.load(open('/tmp/cybernova-catalog-check.json'))
           a=json.load(open('/tmp/cybernova-engine-inventory.json'))
           e=json.load(open('/tmp/cybernova-engagement-check.json'))
-          assert c['valid'] and c['count']==83, c
+          assert c['valid'] and c['count']==85, c
           assert a['selected']==107, a['selected']
           assert not e['approved'], e
           assert all(not row['execution_enabled'] for row in a['engines'])
