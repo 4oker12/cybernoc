@@ -32,7 +32,7 @@ jobs:
         run: |
           python cybernova/research-platform/cli.py catalog > /tmp/cybernova-catalog-check.json
           python cybernova/research-platform/cli.py engagement > /tmp/cybernova-engagement-check.json
-          python cybernova/research-platform/install_arsenal.py --profile inventory > /tmp/cybernova-engine-inventory.json
+          python cybernova/research-platform/install_arsenal.py --profile all > /tmp/cybernova-engine-inventory.json
           python cybernova/research-platform/install_arsenal.py --profile baseline > /tmp/cybernova-install-dry-run.json
           python cybernova/research-platform/cli.py workflow > /tmp/cybernova-wak-workflow.json
       - name: Assert catalog sizes and default-closed state
