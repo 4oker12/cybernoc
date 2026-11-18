@@ -64,6 +64,33 @@ function showEvents(events,count,mode,reply){
     reply.wrap.insertBefore(receipt,inline);
   }
 }
+function renderFollowups(reply, questions){
+  if(!Array.isArray(questions)||!questions.length)return;
+  const box=node("div","followup-box");
+  box.append(node("div","followup-label","Продолжить по теме"));
+  const options=node("div","followup-questions");
+  for(const text of questions.slice(0,3)){
+    if(typeof text!=="string"||text.length>160)continue;
+    const button=node("button","followup-question",text);
+    button.type="button";
+    button.dataset.prompt=text;
+    options.append(button);
+  }
+  box.append(options);
+  reply.wrap.append(box);
+  toBottom();
+}
+async function loadFollowups(sid,turn,reply){
+  try{
+    const result=await requestJson("/api/followups",{session_id:sid,turn:turn});
+    // Ignore late completions after a new message or session reset.
+    if(state.sessionId!==sid||state.turns!==turn||!reply.wrap.isConnected)return;
+    if(result.source!=="qwen"||result.turn!==turn)return;
+    renderFollowups(reply,result.questions);
+  }catch(_){
+    // Suggestions are optional; a timeout must not affect the chat.
+  }
+}
 function busy(on){
   state.running=on;
   $("sendButton").disabled=on;
@@ -101,6 +128,8 @@ async function send(){
     pending.wrap.classList.remove("working");
     pending.body.textContent=result.answer||"Ответ модели пуст.";
     showEvents(result.events,result.tool_calls,result.selected_by,pending);
+    // Generate contextual next questions independently; do not delay Qwen reply.
+    void loadFollowups(result.session_id,result.turn,pending);
     if(state.turns===1){
       const label=text.length>32?text.substring(0,31)+"…":text;
       $("sessionItem").textContent=label;
