@@ -34,8 +34,6 @@ def build_state(*, project_path=None, catalog_path=None, db_path=None):
             "csrf_token":secrets.token_urlsafe(32),"boot_time":time.time()}
 
 def make_handler(state, *, port):
-    allowed_hosts={f"127.0.0.1:{port}",f"localhost:{port}"}
-
     class Handler(BaseHTTPRequestHandler):
         server_version="Cybernova-Research/0.1"
         sys_version=""
@@ -72,7 +70,7 @@ def make_handler(state, *, port):
             self.wfile.write(data)
 
         def _safe_host(self):
-            return self.headers.get("Host","").lower() in allowed_hosts
+            return self.headers.get("Host","").lower() in {f"127.0.0.1:{self.server.server_port}",f"localhost:{self.server.server_port}"}
 
         def do_GET(self):
             if not self._safe_host():
@@ -123,7 +121,7 @@ def make_handler(state, *, port):
             if urlsplit(self.path).path!="/api/run":
                 return self.send_json({"ok":False,"error":"not_found"},404)
             origin=self.headers.get("Origin")
-            if origin and origin not in {f"http://{x}" for x in allowed_hosts}:
+            if origin and origin not in {f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}:
                 return self.send_json({"ok":False,"error":"cross_origin_denied"},403)
             if not secrets.compare_digest(
                 self.headers.get("X-Cybernova-CSRF",""),state["csrf_token"]):
@@ -136,6 +134,7 @@ def make_handler(state, *, port):
                 n=-1
             if n<=0 or n>MAX_POST_BYTES:
                 return self.send_json({"ok":False,"error":"invalid_body_size"},413)
+            payload=None
             try:
                 payload=json.loads(self.rfile.read(n))
                 if not isinstance(payload,dict):
@@ -144,7 +143,7 @@ def make_handler(state, *, port):
                 args=payload.get("arguments",{})
                 result=dispatch_tool(name,args,state)
             except (ValueError,ToolError) as ex:
-                if isinstance(payload if "payload" in locals() else None,dict):
+                if isinstance(payload,dict):
                     name=payload.get("tool")
                 else:
                     name=None
