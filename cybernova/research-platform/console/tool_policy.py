@@ -176,11 +176,17 @@ def safe_preview(args: dict) -> dict:
     return scrub("", args)
 
 
-def action_description(name: str, reason: str, args: dict) -> dict:
+def action_description(
+    name: str, reason: str, args: dict,
+    *, objective: str = "", description: str = "",
+) -> dict:
+    """Human-readable tool request; all fields are observations, not consent."""
     return {
         "tool": name,
-        "purpose": "Qwen запрашивает инструмент для текущей исследовательской задачи",
+        "purpose": ("Задача пользователя: " + objective[:280])
+                   if objective else "Qwen запрашивает инструмент для текущей задачи",
         "reason": reason,
+        "tool_description": description[:240],
         "arguments": safe_preview(args),
         "execution": "not_started",
         "approval": "required",
