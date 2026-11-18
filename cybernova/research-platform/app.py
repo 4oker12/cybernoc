@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 from core.offline_tools import SPECS, GROUPS, ToolError, dispatch_tool
 from core.policy import read_json
 from core.storage import CaseStore
+from core.agent_loop import OllamaClient, run_research
 
 ROOT = Path(__file__).resolve().parent
 MAX_POST_BYTES = 65536
@@ -26,12 +27,13 @@ STATIC = {"/":("ui/index.html","text/html; charset=utf-8"),
           "/assets/app.js":("ui/app.js","text/javascript; charset=utf-8"),
           "/assets/style.css":("ui/style.css","text/css; charset=utf-8")}
 
-def build_state(*, project_path=None, catalog_path=None, db_path=None):
+def build_state(*, project_path=None, catalog_path=None, db_path=None, agent_enabled=False, model='cybernova-security:30b'):
     project=read_json(project_path or ROOT/"profiles/simnet.example.json")
     catalog=read_json(catalog_path or ROOT/"tools/catalog.json")
     store=CaseStore(db_path or ROOT/"state/cybernova.db")
     return {"engagement":project,"catalog":catalog,"store":store,
-            "csrf_token":secrets.token_urlsafe(32),"boot_time":time.time()}
+            "csrf_token":secrets.token_urlsafe(32),"boot_time":time.time(),
+            "agent_enabled":bool(agent_enabled),"model":model}
 
 def make_handler(state, *, port):
     class Handler(BaseHTTPRequestHandler):
@@ -86,7 +88,10 @@ def make_handler(state, *, port):
                 self.wfile.write(content)
                 return
             if path=="/api/status":
-                return self.send_json(dispatch_tool("gateway_status",{},state))
+                result=dispatch_tool("gateway_status",{},state)
+                result["result"]["agent_enabled"]=state["agent_enabled"]
+                result["result"]["model"]=state["model"] if state["agent_enabled"] else "disabled"
+                return self.send_json(result)
             if path=="/api/tools":
                 full={t["name"]:t for t in state["catalog"].get("tools",[])
                       if isinstance(t,dict) and "name" in t}
@@ -118,8 +123,11 @@ def make_handler(state, *, port):
         def do_POST(self):
             if not self._safe_host():
                 return self.send_json({"ok":False,"error":"invalid_host"},403)
-            if urlsplit(self.path).path!="/api/run":
+            endpoint=urlsplit(self.path).path
+            if endpoint not in ("/api/run","/api/agent"):
                 return self.send_json({"ok":False,"error":"not_found"},404)
+            if endpoint=="/api/agent" and not state["agent_enabled"]:
+                return self.send_json({"ok":False,"error":"local_model_disabled"},403)
             origin=self.headers.get("Origin")
             if origin and origin not in {f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}:
                 return self.send_json({"ok":False,"error":"cross_origin_denied"},403)
@@ -139,18 +147,28 @@ def make_handler(state, *, port):
                 payload=json.loads(self.rfile.read(n))
                 if not isinstance(payload,dict):
                     raise ValueError("object required")
-                name=payload.get("tool")
-                args=payload.get("arguments",{})
-                result=dispatch_tool(name,args,state)
+                if endpoint=="/api/agent":
+                    question=payload.get("question")
+                    if not isinstance(question,str) or not 5<=len(question)<=3000:
+                        raise ValueError("question length invalid")
+                    result=run_research(question,OllamaClient(state["model"]),state,max_turns=4)
+                    name="agent_research"
+                else:
+                    name=payload.get("tool")
+                    args=payload.get("arguments",{})
+                    result=dispatch_tool(name,args,state)
             except (ValueError,ToolError) as ex:
                 if isinstance(payload,dict):
                     name=payload.get("tool")
                 else:
                     name=None
-                if isinstance(name,str) and name in SPECS:
+                if isinstance(name,str) and (name in SPECS or name=="agent_research"):
                     state["store"].log(name,"rejected")
                 return self.send_json({"ok":False,"error":str(ex)[:180]},400)
             except Exception:
+                if endpoint=="/api/agent":
+                    state["store"].log("agent_research","failed")
+                    return self.send_json({"ok":False,"error":"local_model_unavailable_or_failed"},502)
                 return self.send_json({"ok":False,"error":"internal_error"},500)
             state["store"].log(name,"completed")
             return self.send_json(result)
@@ -165,15 +183,20 @@ def main():
     parser.add_argument("--catalog",type=Path,default=ROOT/"tools/catalog.json")
     parser.add_argument("--db",type=Path,default=ROOT/"state/cybernova.db")
     parser.add_argument("--check",action="store_true",help="Load project and catalog without starting server")
+    parser.add_argument("--enable-local-llm",action="store_true",
+                        help="Enable local Ollama agent; exposes only read-only offline tools")
+    parser.add_argument("--model",default="cybernova-security:30b")
     args=parser.parse_args()
     if not 1024<=args.port<=65535:
         parser.error("Port must be 1024..65535")
     args.db.parent.mkdir(parents=True,exist_ok=True)
-    state=build_state(project_path=args.project,catalog_path=args.catalog,db_path=args.db)
+    state=build_state(project_path=args.project,catalog_path=args.catalog,db_path=args.db,
+                      agent_enabled=args.enable_local_llm,model=args.model)
     if args.check:
         print(json.dumps({"ok":True,"ready_offline":len(SPECS),
           "manifest_capabilities":len(state["catalog"].get("tools",[])),
-          "project_status":state["engagement"].get("status")},ensure_ascii=False))
+          "project_status":state["engagement"].get("status"),
+          "local_llm_enabled":state["agent_enabled"]},ensure_ascii=False))
         return
     server=ThreadingHTTPServer(("127.0.0.1",args.port),make_handler(state,port=args.port))
     server.daemon_threads=True
