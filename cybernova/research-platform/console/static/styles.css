@@ -42,3 +42,5 @@
 .upload-button:hover{background:#4a4a4a}
 #uploadStatus{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%}
 @media(max-width:680px){.composer-left{gap:9px}.upload-button{font-size:11px;padding:6px 8px}#uploadStatus{max-width:78%}}
+
+.tool-access.tool-missing{color:#d8a1a1;border-color:#785454;background:#382727}
