@@ -6,6 +6,7 @@ read with a cursor. No subscriber or ChatGPT wake is executed here.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from pathlib import Path
 import os
 import sqlite3
@@ -47,10 +48,17 @@ class Observer:
         if os.name == 'posix':
             os.chmod(self.dbfile, 0o600)
 
+    @contextmanager
     def _db(self):
+        # `with sqlite3.connect(...)` commits but does NOT close the connection.
+        # Observer polls indefinitely; close each connection to avoid FD leaks.
         db = sqlite3.connect(str(self.dbfile), timeout=5)
-        db.execute('PRAGMA busy_timeout=5000')
-        return db
+        try:
+            db.execute('PRAGMA busy_timeout=5000')
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def collect(self, paths: Paths):
         """Collect at most one event per observed terminal transition, idempotently."""
