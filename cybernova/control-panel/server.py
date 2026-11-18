@@ -10,10 +10,12 @@ import hmac
 import json
 import os
 import secrets
+import threading
 import sys
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 from ring import Paths, snapshot, start_local_baseline
+from observer import Observer, run_observer
 
 HERE = Path(__file__).resolve().parent
 WEB = HERE / 'web'
@@ -89,10 +91,25 @@ class PanelHandler(BaseHTTPRequestHandler):
             return self.wfile.write(data)
         if not self._auth():
             return self._json({'ok': False, 'error':'unauthorized'}, 401)
+        if path == '/api/observer/events':
+            if self.server.observer is None:
+                return self._json({'ok':False,'error':'observer_unavailable'},503)
+            query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+            values = query.get('after', ['0'])
+            if set(query) - {'after'} or len(values)!=1 or not values[0].isdigit() or len(values[0])>18:
+                return self._json({'ok':False,'error':'invalid_cursor'},400)
+            return self._json(self.server.observer.read(after=int(values[0]),limit=50))
         if path == '/api/status':
             data = snapshot(self.server.paths, demo=self.server.demo)
             data['capabilities'] = {'local_session_start':self.server.enable_start and not self.server.demo,
-                                    'automatic_chat_wake':False,'external_scanning':False}
+                                    'automatic_chat_wake':False,'external_scanning':False,
+                                    'observer_events':self.server.observer is not None}
+            if self.server.observer is not None:
+                feed = self.server.observer.read(after=0, limit=50)
+                data['observer'] = {'latest_seq':feed['latest_seq'], 'events':feed['events'][-10:]}
+                meta = [{'time':e['time'],'type':e['kind']+'.'+e['state'], 'source':'observer','id':e['id']}
+                        for e in feed['events'][-10:]]
+                data['events'] = sorted(data.get('events', [])+meta,key=lambda e:e['time'],reverse=True)[:30]
             return self._json(data)
         return self._json({'ok': False, 'error':'not_found'}, 404)
 
@@ -119,12 +136,13 @@ class PanelHandler(BaseHTTPRequestHandler):
 
 class PanelServer(ThreadingHTTPServer):
     daemon_threads = True
-    def __init__(self, address, token, paths, demo=False, enable_start=False):
+    def __init__(self, address, token, paths, demo=False, enable_start=False, observer=None):
         super().__init__(address, PanelHandler)
         self.token=token
         self.paths=paths
         self.demo=demo
         self.enable_start=enable_start
+        self.observer=observer
 
 
 def main(argv=None):
@@ -134,6 +152,7 @@ def main(argv=None):
     parser.add_argument('--enable-start', action='store_true', help='Allow ONLY fixed offline Qwen baseline')
     parser.add_argument('--init-token', action='store_true', help='Generate private token file once')
     parser.add_argument('--token-file', type=Path, default=DEFAULT_TOKEN_FILE)
+    parser.add_argument('--observer-dir', type=Path, default=Path.home()/'.local/share/cybernova-panel')
     args = parser.parse_args(argv)
     if args.init_token:
         try:
@@ -149,19 +168,27 @@ def main(argv=None):
         parser.error('Run LIVE panel as unprivileged cybernova user, not root')
     try:
         token = 'demo' if args.demo else read_token(args.token_file)
+        observer = None if args.demo else Observer(args.observer_dir)
         server = PanelServer(('127.0.0.1',args.port), token, Paths(), demo=args.demo,
-                             enable_start=args.enable_start)
+                             enable_start=args.enable_start, observer=observer)
     except (OSError, ValueError) as exc:
         print('Panel startup failed:', type(exc).__name__, str(exc)[:120], file=sys.stderr)
         return 2
     print(f'Cybernova Panel v0.1 — http://127.0.0.1:{args.port}/')
     print('Mode:', 'DEMO (not real)' if args.demo else 'LIVE local only')
     print('Start local session:', 'enabled' if args.enable_start and not args.demo else 'disabled')
+    stop=threading.Event()
+    watcher=None
+    if observer is not None:
+        watcher=threading.Thread(target=run_observer,args=(observer,server.paths,stop),daemon=True)
+        watcher.start()
     try:
         server.serve_forever(poll_interval=0.3)
     except KeyboardInterrupt:
         pass
     finally:
+        stop.set()
+        if watcher is not None: watcher.join(timeout=5)
         server.server_close()
     return 0
 

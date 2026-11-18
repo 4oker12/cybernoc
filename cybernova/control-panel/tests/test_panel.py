@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import ring, server
+import ring, server, observer
 
 class ReadModelTests(unittest.TestCase):
     def setUp(self):
@@ -112,6 +112,15 @@ class APITests(unittest.TestCase):
     def test_start_disabled_by_default(self):
         self.server.enable_start=False
         self.assertEqual(self.fetch('/api/session/start','z'*50,'POST',f'http://127.0.0.1:{self.port}',b'{}')[0],403)
+    def test_observer_api_requires_token_and_valid_cursor(self):
+        self.server.observer=observer.Observer(Path(self.tmp.name)/'observer')
+        self.assertEqual(self.fetch('/api/observer/events')[0],401)
+        self.assertEqual(self.fetch('/api/observer/events?after=-1','z'*50)[0],400)
+        self.assertEqual(self.fetch('/api/observer/events?after=3&extra=1','z'*50)[0],400)
+        code,body=self.fetch('/api/observer/events?after=0','z'*50)
+        self.assertEqual(code,200)
+        self.assertEqual(json.loads(body)['events'],[])
+
     def test_sensitive_headers(self):
         req=Request(f'http://127.0.0.1:{self.port}/')
         with urlopen(req,timeout=3) as r:
@@ -120,3 +129,72 @@ class APITests(unittest.TestCase):
             self.assertIn("script-src 'self'",r.headers['Content-Security-Policy'])
 
 if __name__=='__main__':unittest.main()
+
+class ObserverTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root=Path(self.tmp.name)
+        self.paths=ring.Paths(root/'updater',root/'agent')
+        (self.paths.updater/'sessions').mkdir(parents=True)
+        (self.paths.agent/'jobs').mkdir(parents=True)
+        self.directory=root/'private'
+        self.monitor=observer.Observer(self.directory)
+
+    def session(self, sid, state='running'):
+        folder=self.paths.updater/'sessions'/sid
+        folder.mkdir(exist_ok=True)
+        (folder/'session.json').write_text(json.dumps({'session_id':sid,'started_at':100}))
+        result=folder/'result.json'
+        if state!='running':
+            result.write_text(json.dumps({'state':state,'passed':state=='completed'}))
+        elif result.exists():
+            result.unlink()
+
+    def job(self, jid, state='running'):
+        folder=self.paths.agent/'jobs'/jid
+        folder.mkdir(exist_ok=True)
+        (folder/'state.json').write_text(json.dumps({'job_id':jid,'status':state,'updated_at':'2026-11-18T06:02:00Z','secret':'private text'}))
+
+    def test_bootstrap_is_silent_and_terminal_transition_is_once(self):
+        sid='a'*32
+        self.session(sid,'running')
+        self.assertEqual(self.monitor.collect(self.paths)['new_events'],0)
+        self.session(sid,'completed')
+        self.assertEqual(self.monitor.collect(self.paths)['new_events'],1)
+        self.assertEqual(self.monitor.collect(self.paths)['new_events'],0)
+        event=self.monitor.read()['events'][0]
+        self.assertEqual((event['seq'],event['kind'],event['state']),(1,'session','completed'))
+        self.assertNotIn('secret',str(event))
+        self.assertEqual(observer.Observer(self.directory).read()['latest_seq'],1)
+
+    def test_new_fast_completed_session_is_not_missed(self):
+        self.monitor.collect(self.paths)
+        self.session('f'*32,'completed')
+        self.assertEqual(self.monitor.collect(self.paths)['new_events'],1)
+        self.assertEqual(self.monitor.read()['events'][0]['id'],'f'*32)
+
+    def test_preexisting_terminal_session_is_not_replayed(self):
+        self.session('a'*32,'completed')
+        self.monitor.collect(self.paths)
+        self.assertEqual(self.monitor.read()['events'],[])
+
+    def test_agent_transitions_and_cursor(self):
+        jid='a'*16
+        self.job(jid,'running')
+        self.monitor.collect(self.paths)
+        self.job(jid,'failed')
+        self.monitor.collect(self.paths)
+        self.job('b'*16,'needs_human')
+        self.monitor.collect(self.paths)
+        events=self.monitor.read()['events']
+        self.assertEqual([x['state'] for x in events],['failed','needs_human'])
+        self.assertEqual(len(self.monitor.read(after=1)['events']),1)
+        self.assertEqual(self.monitor.read(after=2)['events'],[])
+        with self.assertRaises(ValueError):self.monitor.read(after=-1)
+        with self.assertRaises(ValueError):self.monitor.read(after=True)
+
+    def test_directory_permissions(self):
+        if os.name=='posix':
+            self.assertEqual(os.stat(self.directory).st_mode & 0o777,0o700)
+            self.assertEqual(os.stat(self.monitor.dbfile).st_mode & 0o777,0o600)

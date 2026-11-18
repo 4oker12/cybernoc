@@ -7,6 +7,7 @@ A real, **local-only** control console for Cybernova on Vast. Python 3 standard 
 - Seven-node ring: Trigger → ChatGPT → Session Control → Qwen → Tools → Observer → Decision.
 - Shows actual local sessions (bounded), agent jobs, error statuses, allowlisted event metadata, Ollama model status and updater state.
 - Auto refresh every five seconds; data is explicitly marked `LIVE` or `DEMO`.
+- Durable Observer tracks **new** completion/error/needs-human state transitions for Qwen sessions and agent jobs, with monotonically numbered, deduplicated metadata-only events. It does **not** automatically send ChatGPT messages or execute actions.
 - Copy a status summary for the ordinary ChatGPT conversation.
 - Optional protected **Start Local Baseline** action calls exactly the preinstalled fixed `session_ops.py start` preset. No arbitrary commands, external targets, URLs, file paths or project names accepted from browser.
 - UI blocks duplicate session starts; the session runner itself enforces a lock and one active session.
@@ -46,6 +47,8 @@ The panel binds **only 127.0.0.1** on Vast. From Windows, open a local tunnel us
 - UI uses DOM `textContent` for untrusted data (no HTML interpolation for logs).
 - No real-time ChatGPT activity tracking; ordinary ChatGPT cannot be 'woken' server-side by this panel. ChatGPT is labeled external/manual. Event Ring is a visualization and a foundation for future transitions, not an already running self-driving loop.
 - The `--enable-start` option is a permitted on-host administrative action; user must explicitly run the panel with it. Panel never circumvents the original terminal approval feature.
+- The private Observer database (`--observer-dir`, default under the server user home) stores only event types, session/job IDs, timestamp and status; not raw model outputs. On first start, prior jobs/sessions are baselined silently so historical failures do not falsely trigger new events.
+- `GET /api/observer/events?after=SEQ` is token-protected, cursor-paginated (50 events), and suitable for a future authenticated Windows subscriber. **It does not itself wake ChatGPT.**
 - Session report data are a limited view, not the complete raw evidence ledger.
 - Operational status is best-effort: direct on-host reads can be blocked by filesystem permissions or missing optional components, which appear as empty/unknown rather than fabricated success.
 
