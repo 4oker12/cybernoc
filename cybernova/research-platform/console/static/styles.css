@@ -18,3 +18,20 @@
 /* MCP tools are always available; Qwen chooses, no user checkbox. */
 .auto-tools-label{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:#b8c5bd;user-select:none}
 .auto-tools-dot{display:inline-block;width:7px;height:7px;background:#86d9aa;border-radius:50%;box-shadow:0 0 0 3px #86d9aa16}
+
+/* Qwen-selected tool request requiring explicit one-time authorization. */
+.approval-card{margin:14px 0 12px 35px;border:1px solid #776142;border-radius:12px;background:#302b22;padding:16px;max-width:650px}
+.approval-title{font-size:12px;font-weight:700;color:#f2d4a8;margin-bottom:6px}
+.approval-tool{font-size:13px;font-family:ui-monospace,Consolas,monospace;color:#f4f4f4;font-weight:600}
+.approval-reason{font-size:12px;line-height:1.75;color:#d1c5af;margin:9px 0}
+.approval-args{margin:8px 0 12px;padding:9px;border:1px solid #544936;border-radius:8px;background:#25231d;white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto;font-size:11px;color:#e3d6be}
+.approval-buttons{display:flex;flex-wrap:wrap;gap:8px}
+.approval-yes,.approval-no{padding:9px 12px;border-radius:8px;font-size:11px;cursor:pointer;border:1px solid #7f725c}
+.approval-yes{color:#14271f;background:#a7d8ba;border-color:#a7d8ba;font-weight:700}
+.approval-no{color:#e8d9c6;background:transparent}
+.approval-state{margin-top:9px;color:#bed8c4;font-size:11px}
+.approval-error{margin-top:9px;color:#f4a7a7;font-size:11px}
+.scope-notice{border-color:#544f49;background:#2a2825}
+.tool-access{margin-left:auto;font-size:10px;border:1px solid #58705e;color:#a9d8b5;padding:1px 6px;border-radius:6px;flex-shrink:0}
+.tool-item:has(.tool-access) .tool-dot{display:none}
+@media(max-width:680px){.approval-card{margin-left:0}}
