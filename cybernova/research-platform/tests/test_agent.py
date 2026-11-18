@@ -90,9 +90,9 @@ class AgentTests(unittest.TestCase):
 
     def test_run_limits_are_enforced(self):
         client=FakeClient([{"role":"assistant","tool_calls":[{"function":{
-                 "name":"plan_build","arguments":{}}]}},
+                 "name":"plan_build","arguments":{}}]},
                  {"role":"assistant","tool_calls":[{"function":{
-                 "name":"plan_build","arguments":{}}]}}])
+                 "name":"plan_build","arguments":{}}]}])
         res=run_research("Дай несколько этапов изучения системы",client,self.state,max_turns=2)
         self.assertFalse(res["ok"])
         self.assertEqual(res["state"],"model_turn_budget_exhausted")
