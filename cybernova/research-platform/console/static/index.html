@@ -55,13 +55,17 @@
         <label class="sr-only" for="messageInput">Сообщение для Qwen</label>
         <textarea id="messageInput" rows="2" maxlength="10000" placeholder="Спросите что-нибудь или задайте задачу…"></textarea>
         <div class="composer-bottom">
-          <div class="auto-tools-label" title="Qwen самостоятельно выбирает инструменты. Сетевые запросы допускаются только к ранее разрешённым хостам MCP.">
+          <div class="composer-left">
+            <label for="artifactFile" class="upload-button" title="Импорт HAR, JS, OpenAPI, логов, конфигураций, Python, зависимостей, TLS или PCAP. Файл обрабатывается локально.">＋ Файл</label>
+            <input id="artifactFile" class="sr-only" type="file" accept=".har,.js,.py,.json,.log,.txt,.conf,.cfg,.ini,.yaml,.yml,.env,.pcap,.cap,.pem,.crt,.lock,.mod,.toml">
+            <div class="auto-tools-label" title="Qwen самостоятельно выбирает инструменты. Сетевые запросы допускаются только к ранее разрешённым хостам MCP.">
             <span class="auto-tools-dot" aria-hidden="true"></span> MCP автоматически
+          </div>
           </div>
           <button type="button" id="sendButton" class="send-button" aria-label="Отправить">↑</button>
         </div>
       </div>
-      <div class="composer-meta"><span>Enter — отправить · Shift+Enter — новая строка</span><span id="sendStatus" role="status">Готов</span></div>
+      <div class="composer-meta"><span id="uploadStatus">Импорт локальных артефактов · Enter — отправить</span><span id="sendStatus" role="status">Готов</span></div>
     </section>
   </main>
 
