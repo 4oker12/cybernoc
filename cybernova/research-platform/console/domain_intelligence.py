@@ -185,6 +185,20 @@ def analyze_config(text: str) -> dict:
                             "Matched configuration lines and secrets are never returned"]}
 
 
+def _static_call_name(node) -> str | None:
+    """Only dotted identifiers; never unparse literals or secret source text."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    parts.reverse()
+    name = ".".join(parts)
+    return name if len(name) <= 100 and all(SAFE_NAME.fullmatch(x) for x in parts) else None
+
+
 def analyze_python(text: str) -> dict:
     raw, sha = _load_text(text)
     try:
@@ -205,11 +219,8 @@ def analyze_python(text: str) -> dict:
                           "line": node.lineno, "async": isinstance(node, ast.AsyncFunctionDef),
                           "arguments": len(node.args.args)})
         elif isinstance(node, ast.Call):
-            try:
-                name = ast.unparse(node.func)
-            except (ValueError, RecursionError):
-                continue
-            if len(name) > 110:
+            name = _static_call_name(node.func)
+            if not name:
                 continue
             calls[name] += 1
             for kind, candidates in PY_CALLS.items():
