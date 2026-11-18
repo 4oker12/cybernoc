@@ -20,8 +20,10 @@ from pydantic import BaseModel, Field
 
 try:
     from .agent import Agent, MCPClient, MODEL, OLLAMA_URL
+    from .followups import generate_followups
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL
+    from followups import generate_followups
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -74,6 +76,12 @@ class ResetRequest(BaseModel):
     session_id: str | None = None
 
 
+class FollowupsRequest(BaseModel):
+    session_id: str = Field(min_length=16, max_length=100)
+    turn: int = Field(ge=1)
+
+
+
 def _session(session_id: str | None) -> tuple[str, dict]:
     now = time.monotonic()
     with sessions_lock:
@@ -86,7 +94,8 @@ def _session(session_id: str | None) -> tuple[str, dict]:
             sessions.move_to_end(session_id)
             return session_id, session
         key = secrets.token_urlsafe(24)
-        session = {"last": now, "history": [], "lock": RLock(), "turns": 0}
+        session = {"last": now, "history": [], "lock": RLock(), "turns": 0,
+                   "followups_turn": None, "followups": []}
         sessions[key] = session
         while len(sessions) > MAX_SESSIONS:
             sessions.popitem(last=False)
@@ -159,6 +168,38 @@ def chat(payload: ChatRequest):
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
     return {"session_id": sid, "turn": state["turns"], **outcome}
+
+
+@app.post("/api/followups")
+def followups(payload: FollowupsRequest):
+    """Suggest questions based on this session's last real Qwen reply.
+
+    Inference is separate from /api/chat, so the main answer appears first.
+    No tools, network target access, execution, or changes to permissions.
+    """
+    with sessions_lock:
+        state = sessions.get(payload.session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    with state["lock"]:
+        if state["turns"] != payload.turn:
+            raise HTTPException(status_code=409, detail="stale_turn")
+        if state.get("followups_turn") == payload.turn:
+            return {"turn": payload.turn, "questions": state["followups"],
+                    "source": "qwen", "cached": True}
+        history = [dict(item) for item in state["history"][-6:]]
+    try:
+        questions = generate_followups(history)
+    except Exception:
+        # Suggestions are optional: never break chat or invent fallback text.
+        return {"turn": payload.turn, "questions": [], "source": "unavailable"}
+    with state["lock"]:
+        if state["turns"] != payload.turn:
+            raise HTTPException(status_code=409, detail="stale_turn")
+        state["followups_turn"] = payload.turn
+        state["followups"] = questions
+    return {"turn": payload.turn, "questions": questions, "source": "qwen",
+            "cached": False}
 
 
 @app.post("/api/reset")
