@@ -48,6 +48,17 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(p["selected"],107)
         self.assertFalse(any(x["execution_enabled"] for x in p["engines"]))
 
+    def test_inventory_detects_existing_non_pdtm_binary(self):
+        def mock_which(name):
+            return "/usr/bin/nmap" if name=="nmap" else None
+        with patch.object(install_arsenal, "discover_binary",side_effect=mock_which):
+            p=install_arsenal.build_plan("inventory",M)
+        nmap=next(x for x in p["engines"] if x["engine"]=="nmap")
+        shodan=next(x for x in p["engines"] if x["engine"]=="Shodan")
+        self.assertEqual(nmap["detected_executable"],"/usr/bin/nmap")
+        self.assertIsNone(shodan["detected_executable"])
+        self.assertFalse(nmap["execution_enabled"])
+
     def test_unknown_profile_rejected(self):
         with self.assertRaises(ValueError):
             install_arsenal.build_plan("attack-simnet", M)
