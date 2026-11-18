@@ -238,8 +238,8 @@ def _plan(tool, args, policy, work):
                    "--metrics", "off", "--timeout", "10",
                    "--max-target-bytes", "1000000", str(project)]
     elif tool == "lab_trivy":
-        command = [binary, "fs", "--skip-db-update", "--scanners",
-                   "vuln,misconfig", "--format", "json", str(project)]
+        command = [binary, "fs", "--skip-db-update", "--offline-scan",
+                   "--scanners", "vuln,misconfig", "--format", "json", str(project)]
     else:
         raise ScannerError("unimplemented_engine")
     return {
@@ -368,8 +368,13 @@ def run_scanner(tool: str, args: dict, *, policy_path=POLICY,
             "command_profile": "pinned_read_only_lab_profile",
             "exit_code": process.returncode,
             "elapsed_seconds": round(time.monotonic()-started, 2),
+            "evidence_sha256": hashlib.sha256(data if data else output.encode()).hexdigest(),
             "result": summary,
-            "scanner_completed": process.returncode in (0, 1, 2),
+            # ZAP packaged scans use 0=pass, 1=warnings, 2=fail;
+            # other engines signal execution failures with nonzero codes.
+            "scanner_completed": process.returncode in (
+                (0, 1, 2) if tool == "lab_zap_baseline" else (0,)
+            ),
             "limitations": [
                 "Only the operator-configured lab target/project was used as the initial input",
                 "Network isolation must be enforced externally; env attestation is not a firewall",
