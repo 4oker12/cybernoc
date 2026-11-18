@@ -1,39 +1,36 @@
-# Cybernova Lab MCP gateway — v0.2
+# Cybernova Tools — generic HTTP inspection gateway v0.3
 
-Read-only MCP Streamable HTTP service on Vast, at loopback `127.0.0.1:18792`, using preinstalled Open WebUI virtual environment.
+The gateway exposes six generic MCP tools over Streamable HTTP at 127.0.0.1:18792.
 
-## Tools
-
-| MCP tool | Access |
+| Tool name | Function |
 | --- | --- |
-| `gateway_status` | Read tool inventory and limitations |
-| `python_static_review` | Offline AST-based Python review |
-| `http_header_review` | Offline inspection of pasted HTTP headers |
-| `ip_network_summary` | Offline network arithmetic |
-| `local_webui_health` | Fixed localhost GET to Open WebUI |
-| `simnet_public_page` | One live GET to fixed, allowlisted public simnet.ua pages |
+| gateway_status | Capabilities and current authorized website hostnames |
+| http_get | One real HTTP(S) GET for an authorized public URL |
+| http_header_review | Offline inspection of HTTP headers |
+| python_static_review | Offline AST analysis of pasted Python |
+| ip_network_summary | Offline CIDR arithmetic |
+| local_webui_health | Fixed localhost health probe |
 
-The last tool is **not** named `web_get`. It accepts a page key such as `{"page":"home"}`, not an arbitrary URL. It uses a minimum 5-second cooldown, 8-second timeout, TLS validation, no redirects, no cookies or login, no query strings and no request bodies. HTTP status, selected headers, title and sample internal paths can be returned; not page content or session secrets. No vulnerability exploitation or bulk discovery.
+**Website names do not appear in tool names or in http_client.py.** Set the authorized hostnames in scope.json, initially containing simnet.ua. For a future authorized website, add its exact hostname there. The tool code stays unchanged. Scope config is read for each request, so no restart is required to update an approved list.
 
-## Deploy and tests
+## HTTP boundaries
 
-`PYTHONPATH=cybernova/qwen-webui/mcp-gateway python3 -m unittest discover -s cybernova/qwen-webui/mcp-gateway/tests`
+HTTP GET only; 5s rate limit per process; 8s timeout; HTTPS validation; DNS addresses must all be public; connection pinned to a validated address; no proxies; no redirects; no custom headers/cookies/credentials; standard port 80/443 only; response content is summarized, not executed. A query string may be sent but never echoed in tool output. Returns HTTP status, selected headers (no session cookies), title, detected generator tags, sample internal paths. Does not assert that missing headers are vulnerabilities.
 
-`bash /workspace/cybernova-qwen-webui-src/cybernova/qwen-webui/mcp-gateway/install.sh`
+## Test and deployment
 
-An already running `cybernova-tools` tmux session must be restarted after updating code to load new tools. The installer does not replace an active process. Run `smoke.py` to confirm exactly six MCP tools and allowlist behavior.
+    D=/workspace/cybernova-qwen-webui-src/cybernova/qwen-webui/mcp-gateway
+    PYTHONPATH="$D" /workspace/cybernova-qwen-webui-runtime/venv/bin/python -m unittest discover -s "$D/tests"
+    tmux kill-session -t cybernova-tools
+    bash "$D/install.sh"
+
+The install script runs protocol smoke, tools/list verifies six generic tools and checks localhost blocking. The previous target-specific simnet_public_page tool is retired. Refresh the connection in Open WebUI to load the changed tool schema.
 
 ## Open WebUI
-
-As admin, create/verify External Tool Servers → MCP Streamable HTTP:
+Admin → Settings → Integrations → External Tool Servers:
 - Name: Cybernova Lab Tools
-- URL: `http://127.0.0.1:18792/mcp`
-- Authentication: None only while both components are loopback-bound on trusted Vast.
+- Type: MCP Streamable HTTP
+- URL: http://127.0.0.1:18792/mcp
+- No auth **only on loopback-bound single-user Vast**; do not expose this port externally.
 
-In the chosen `CYBERNOVA — Security Researcher` profile or conversation, enable this connection. Refresh the UI after restarting the server. Ask model to list its actual tools and call `simnet_public_page(page="home")`.
-
-A successful MCP smoke test does **not** prove the model sees the connection. Verify a real tool call in the Open WebUI chat; the literal text `<tool_call>` is not evidence of tool execution.
-
-## Limits
-
-Public GET observations are only indicative and require critical evaluation. Arbitrary HTTP URLs, shell execution, scans, login, credential capture or intrusive tests are not available. The separate Cybernova event-ring and local Qwen baseline sessions are not modified.
+Select the tool connection for CYBERNOVA — Security Researcher. Ask it to call http_get(url="https://simnet.ua/") and report the actual tool result. A <tool_call> string or invented function is not proof of successful execution.
