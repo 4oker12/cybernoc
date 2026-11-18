@@ -44,6 +44,12 @@ BASE_SYSTEM = """Ты CYBERNOVA — локальный исследовател�
 Для подтверждения фактов по возможности вызывай подходящий инструмент.
 Ты видишь ВСЕ реально подключённые MCP инструменты. Сама выбирай,
 какие из них полезны для проверки гипотез, и уточняй план по результатам.
+Если пользователь загрузил HAR или JavaScript, используй traffic_inventory,
+traffic_api_map, traffic_session_review, traffic_js_review, traffic_graph,
+traffic_hypotheses и traffic_report для последовательного анализа.
+Это офлайн-обработка только очищенных пользовательских артефактов.
+Не заявляй о BOLA, гонке платежей, SQLi или XSS как о доказанных дефектах
+без соответствующих наблюдений и разрешённой проверки.
 Если инструмент требует разрешения, объясни пользователю его цель,
 необходимые параметры и потенциальное воздействие. Действие не выполнено
 до отдельного разрешения пользователя. Если нужного инструмента нет в списке,
@@ -288,9 +294,13 @@ class Agent:
                     try:
                         if name not in allowed_names:
                             raise BackendError("tool_not_registered")
-                        if name in REVIEWED_TOOLS:
+                        if name in {"gateway_status", "python_static_review",
+                                    "http_header_review", "ip_network_summary",
+                                    "local_webui_health", "http_get"}:
                             args = _arguments(name, function.get("arguments"))
                         else:
+                            # The 8 offline traffic tools use exact MCP-declared
+                            # JSON argument schemas, like unknown tools.
                             args = validate_dynamic_arguments(
                                 function.get("arguments"),
                                 descriptors[name].get("inputSchema", {}),
