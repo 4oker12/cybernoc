@@ -28,7 +28,7 @@ def fixture_har():
             {"name":"Set-Cookie","value":"session=ULTRA_SECRET; HttpOnly; Secure; SameSite=Lax"},
             {"name":"Cache-Control","value":"private"}],
             "content":{"mimeType":"application/json",
-                       "text":'{"balance":100, "role":"subscriber", "token":"ULTRA_SECRET","contract":{"id":44}}'}}]}})
+                       "text":'{"balance":100, "role":"subscriber", "token":"ULTRA_SECRET","contract":{"id":44}}'}}}]}})
 
 
 class FakeUpstream:
