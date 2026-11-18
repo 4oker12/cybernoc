@@ -48,7 +48,7 @@ def tool_schemas():
 class OllamaClient:
     """Connects *only* to local Ollama on fixed loopback port 11434."""
     def __init__(self, model="cybernova-security:30b", timeout=180):
-        if not MODEL_ID_RE.fullmatch(model):
+        if not MODEL_ID_RE.fullmatch(model) or "://" in model or model.startswith("/") or ".." in model:
             raise ValueError("Invalid Ollama model ID")
         self.model=model
         self.timeout=timeout
