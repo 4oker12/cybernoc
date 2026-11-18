@@ -4,7 +4,8 @@
   "semantics": {
     "deployed_mcp": "Previously observed deployed on Vast MCP; not necessarily exposed in Open WebUI",
     "planned_adapter": "Specification only: not installed or implemented",
-    "planned_rename_of_local_webui_health": "Existing local_webui_health remains live; proposed generic replacement is not deployed"
+    "planned_rename_of_local_webui_health": "Existing local_webui_health remains live; proposed generic replacement is not deployed",
+    "implemented_offline_not_deployed": "Real offline Python functionality exists in core/ or cli.py, but is not registered in running MCP and does not execute external actions."
   },
   "execution_default": "deny",
   "modes": [
@@ -26,24 +27,24 @@
       "name": "tool_catalog",
       "family": "control",
       "mode": "offline",
-      "engine": "Cybernova core",
-      "status": "planned_adapter",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
       "description": "Каталог доступных возможностей с фактическим состоянием"
     },
     {
       "name": "scope_check",
       "family": "control",
       "mode": "offline",
-      "engine": "Cybernova core",
-      "status": "planned_adapter",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
       "description": "Проверка точной принадлежности ресурса утверждённой области"
     },
     {
       "name": "engagement_validate",
       "family": "control",
       "mode": "offline",
-      "engine": "Cybernova core",
-      "status": "planned_adapter",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
       "description": "Проверка документа допуска, сроков и правил исполнения"
     },
     {
@@ -58,8 +59,8 @@
       "name": "plan_validate",
       "family": "control",
       "mode": "offline",
-      "engine": "Cybernova core",
-      "status": "planned_adapter",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
       "description": "Сухая проверка плана на допуски, квоты и зависимости"
     },
     {
@@ -578,16 +579,16 @@
       "name": "evidence_hash",
       "family": "evidence",
       "mode": "offline",
-      "engine": "Cybernova core / JSONL / SHA-256",
-      "status": "planned_adapter",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
       "description": "SHA-256, цепочка происхождения и целостность"
     },
     {
       "name": "evidence_redact",
       "family": "evidence",
       "mode": "offline",
-      "engine": "Cybernova core / JSONL / SHA-256",
-      "status": "planned_adapter",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
       "description": "Удалить токены, PII, платёжные данные и ключи"
     },
     {
