@@ -16,7 +16,7 @@ TOOLS = [
     {"name": "gateway_status", "description": "Status", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "http_get", "description": "Limited GET", "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
     {"name": "ip_network_summary", "description": "CIDR", "inputSchema": {"type": "object", "properties": {"cidr": {"type": "string"}}, "required": ["cidr"]}},
-    {"name": "arbitrary_shell", "description": "Never allowed", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "arbitrary_shell", "description": "Requires human approval", "inputSchema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
 ]
 def calls(*items):
     return {"role": "assistant", "content": "", "tool_calls": [
@@ -46,11 +46,12 @@ class FakeOllama:
         return self.messages.pop(0)
 
 class AgentTests(unittest.TestCase):
-    def test_tool_schema_denies_unknown_and_http_by_default(self):
-        self.assertEqual([t["function"]["name"] for t in _tool_schema(TOOLS,False)],
-                         ["gateway_status","ip_network_summary"])
-        self.assertIn("http_get",[t["function"]["name"] for t in _tool_schema(TOOLS,True)])
-        self.assertNotIn("arbitrary_shell",[t["function"]["name"] for t in _tool_schema(TOOLS,True)])
+    def test_all_registered_tools_visible_to_qwen(self):
+        names = [t["function"]["name"] for t in _tool_schema(TOOLS, False)]
+        self.assertEqual(names, ["gateway_status", "http_get", "ip_network_summary",
+                                 "arbitrary_shell"])
+        self.assertIn("Requires user approval",
+                      _tool_schema(TOOLS)[-1]["function"]["description"])
 
     def test_one_native_tool_call_then_reasoned_answer(self):
         mcp=FakeMCP();lm=FakeOllama([calls(("ip_network_summary",{"cidr":"192.0.2.7/24"})),
@@ -61,13 +62,16 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(mcp.calls,[("ip_network_summary",{"cidr":"192.0.2.7/24"})])
         self.assertIn("192.0.2.0/24",out["answer"])
 
-    def test_unknown_tool_never_executes(self):
+    def test_new_tool_is_proposed_not_executed(self):
         mcp=FakeMCP();lm=FakeOllama([calls(("arbitrary_shell",{"command":"id"})),
-                                   {"role":"assistant","content":"Нельзя"}])
+                                   {"role":"assistant","content":"Нужно разрешение"}])
         out=Agent(lm,lambda:mcp).run([],"Вызови shell")
         self.assertEqual(mcp.calls,[])
-        self.assertTrue(out["events"][0]["is_error"])
-        self.assertEqual(out["events"][0]["result"]["error"],"tool_not_permitted")
+        self.assertEqual(out["tool_calls"],0)
+        self.assertEqual(out["events"][0]["type"],"approval_required")
+        self.assertEqual(out["events"][0]["result"]["status"],"approval_required")
+        self.assertEqual(out["approval_requests"][0]["args"],{"command":"id"})
+        self.assertIn("нужны отдельные разрешения",out["answer"])
 
     def test_external_get_rejected_even_when_checkbox_enabled(self):
         mcp=FakeMCP();lm=FakeOllama([calls(("http_get",{"url":"https://example.org/"})),
@@ -174,7 +178,8 @@ class AgentTests(unittest.TestCase):
             {"role": "assistant", "content": "Запрос не выполнен"},
         ])
         out = Agent(lm, lambda:mcp).run([], "Проверь evil.example.net")
-        self.assertEqual(out["events"][0]["result"]["error"],
+        self.assertEqual(out["events"][0]["type"], "scope_change_required")
+        self.assertEqual(out["events"][0]["result"]["reason"],
                          "http_target_outside_gateway_scope")
         self.assertNotIn("http_get", [name for name, _ in mcp.calls])
 
