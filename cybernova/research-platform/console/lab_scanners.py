@@ -135,9 +135,18 @@ def _safe_target(policy, target_id):
     try:
         u = urlsplit(url)
         ip = ipaddress.ip_address(u.hostname or "")
-        # Lab may use RFC1918, IPv4/6 loopback, documentation networks, but
-        # never globally routable destinations, even by configuration mistake.
-        if ip.is_global or ip.is_multicast or ip.is_unspecified or ip.is_link_local:
+        # Only RFC1918/loopback or IPv6 ULA/loopback lab address space.
+        # In particular, CGNAT 100.64/10, public and documentation blocks
+        # are NOT accepted as evidence of an isolated test environment.
+        lab_ranges = (
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+            ipaddress.ip_network("127.0.0.0/8"),
+            ipaddress.ip_network("fc00::/7"),
+            ipaddress.ip_network("::1/128"),
+        )
+        if not any(ip in net for net in lab_ranges):
             raise ScannerError("non_lab_ip_forbidden")
         if u.scheme not in {"http", "https"} or not u.port or not (1 <= u.port <= 65535):
             raise ScannerError("target_requires_explicit_port")
