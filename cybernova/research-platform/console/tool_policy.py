@@ -23,6 +23,11 @@ REVIEWED_OFFLINE = frozenset({
     "traffic_inventory", "traffic_api_map", "traffic_js_review",
     "traffic_session_review", "traffic_graph", "traffic_hypotheses",
     "traffic_report", "traffic_compare",
+    "research_capabilities", "research_artifacts", "research_openapi_routes",
+    "research_authorization_matrix", "research_network_packets",
+    "research_network_logs", "research_server_config", "research_code_review",
+    "research_dependencies", "research_tls_review", "research_findings",
+    "research_next_steps", "research_full_report",
 })
 REVIEWED_SCOPED = frozenset({"http_get"})
 REVIEWED_TOOLS = REVIEWED_OFFLINE | REVIEWED_SCOPED
