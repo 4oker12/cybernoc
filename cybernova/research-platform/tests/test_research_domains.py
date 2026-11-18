@@ -101,7 +101,8 @@ class MultiDomainTests(unittest.TestCase):
         sbom=analyze_dependencies(json.dumps({"bomFormat":"CycloneDX",
                    "components":[{"name":"example","version":"1.0.0"}]}))
         self.assertEqual(sbom["packages"],[{"name":"example","version":"1.0.0"}])
-        self.assertNotIn("CVE",json.dumps(req))
+        self.assertEqual(req["observations"], [])
+        self.assertTrue(any("advisory lookup" in x for x in req["limitations"]))
 
     def test_tls_transcript_offline(self):
         report=analyze_tls("Protocol  : TLSv1.2\n"
