@@ -6,8 +6,12 @@ unknown or not imported evidence is reported explicitly; no live target I/O.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from .traffic_tools import _definition, _paging
-from .traffic_intelligence import api_graph, hypotheses
+try:
+    from .traffic_tools import _definition, _paging
+    from .traffic_intelligence import api_graph, hypotheses
+except ImportError:
+    from traffic_tools import _definition, _paging
+    from traffic_intelligence import api_graph, hypotheses
 
 DOMAIN_TOOLS = [
     _definition("research_capabilities",
