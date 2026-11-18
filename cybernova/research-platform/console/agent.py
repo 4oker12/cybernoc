@@ -236,7 +236,7 @@ class Agent:
             for round_no in range(MAX_ROUNDS):
                 result = self.ollama.chat(context, tools if tools and round_no < MAX_ROUNDS - 1 else [])
                 calls = result.get("tool_calls") or []
-                if (not calls and round_no < MAX_ROUNDS - 1 and force_tools and tools and mcp):
+                if (not calls and round_no == 0 and force_tools and tools and mcp):
                     # Some derivative models ignore native tool_calls. The
                     # fallback still asks Qwen to SELECT tools, and every tool
                     # goes through exactly the same strict validation.
@@ -296,6 +296,8 @@ class Agent:
                                 descriptors[name].get("inputSchema", {}),
                             )
                         if name == "http_get":
+                            if not public_get:
+                                raise BackendError("public_http_not_enabled")
                             if gets >= MAX_HTTP_GETS:
                                 raise BackendError("public_http_budget_exhausted")
                             gateway, error_flag = mcp.call("gateway_status", {})
