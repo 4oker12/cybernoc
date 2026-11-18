@@ -7,7 +7,10 @@ or receive raw captured secret values.
 from __future__ import annotations
 
 from collections import Counter
-from .traffic_intelligence import api_graph, hypotheses, audit_report
+try:
+    from .traffic_intelligence import api_graph, hypotheses, audit_report
+except ImportError:
+    from traffic_intelligence import api_graph, hypotheses, audit_report
 
 MAX_ARTIFACTS = 12
 MAX_PAGE = 30
@@ -54,9 +57,14 @@ class TrafficToolClient:
         self.artifacts = artifacts
 
     def initialize(self) -> list[dict]:
-        from .domain_tools import DOMAIN_TOOLS
-        from .scoped_network_tools import SCOPED_TOOLS
-        from .lab_scanners import SCANNER_TOOLS
+        try:
+            from .domain_tools import DOMAIN_TOOLS
+            from .scoped_network_tools import SCOPED_TOOLS
+            from .lab_scanners import SCANNER_TOOLS
+        except ImportError:
+            from domain_tools import DOMAIN_TOOLS
+            from scoped_network_tools import SCOPED_TOOLS
+            from lab_scanners import SCANNER_TOOLS
         try:
             remote = self.upstream.initialize()
         except Exception:
@@ -75,9 +83,14 @@ class TrafficToolClient:
         return self.artifacts[artifact_id]
 
     def call(self, name: str, args: dict) -> tuple[dict, bool]:
-        from .domain_tools import DOMAIN_NAMES, domain_call
-        from .scoped_network_tools import SCOPED_NAMES, scoped_call
-        from .lab_scanners import SCANNER_TOOL_NAMES, dispatch_scanner
+        try:
+            from .domain_tools import DOMAIN_NAMES, domain_call
+            from .scoped_network_tools import SCOPED_NAMES, scoped_call
+            from .lab_scanners import SCANNER_TOOL_NAMES, dispatch_scanner
+        except ImportError:
+            from domain_tools import DOMAIN_NAMES, domain_call
+            from scoped_network_tools import SCOPED_NAMES, scoped_call
+            from lab_scanners import SCANNER_TOOL_NAMES, dispatch_scanner
         if name in SCANNER_TOOL_NAMES:
             return dispatch_scanner(name, args)
         if name in SCOPED_NAMES:
