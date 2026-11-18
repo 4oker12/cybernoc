@@ -13,6 +13,7 @@ import unittest
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from http.server import ThreadingHTTPServer
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
@@ -226,6 +227,42 @@ class ConsoleHTTPTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as caught:
             urlopen(request,timeout=3)
         self.assertEqual(caught.exception.code,400)
+
+    def test_agent_disabled_without_explicit_flag(self):
+        request=Request(self.url("/api/agent"),
+            data=json.dumps({"question":"Create a defensive audit plan"}).encode(),
+            headers={"Content-Type":"application/json",
+              "X-Cybernova-CSRF":self.state["csrf_token"]},method="POST")
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(request,timeout=3)
+        self.assertEqual(caught.exception.code,403)
+
+    def test_agent_enabled_runs_only_mocked_local_handler(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state=build_state(db_path=Path(temp)/"agent-http.db",agent_enabled=True)
+            server=ThreadingHTTPServer(("127.0.0.1",0),make_handler(state,port=0))
+            worker=threading.Thread(target=server.serve_forever,daemon=True)
+            worker.start()
+            try:
+                addr=f"http://127.0.0.1:{server.server_port}/api/agent"
+                request=Request(addr,
+                    data=json.dumps({"question":"Study defensive system architecture"}).encode(),
+                    headers={"Content-Type":"application/json",
+                             "X-Cybernova-CSRF":state["csrf_token"]},method="POST")
+                expected={"ok":True,"state":"answered",
+                         "answer":"Mocked local model answer",
+                         "receipts":[{"tool":"plan_build","executed":True}],"verified_tool_calls":1}
+                with patch("app.OllamaClient") as ollama, patch("app.run_research",return_value=expected) as runner:
+                    with urlopen(request,timeout=3) as response:
+                        data=json.load(response)
+                self.assertEqual(data["answer"],expected["answer"])
+                self.assertEqual(data["verified_tool_calls"],1)
+                runner.assert_called_once()
+                ollama.assert_called_once()
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join(timeout=3)
 
     def test_host_header_rejected(self):
         request=Request(self.url("/api/status"),headers={"Host":"evil.example"})
