@@ -55,3 +55,22 @@ Refresh the existing ChatGPT CyberSec Vast plugin after activation. Confirm the 
 Only successful challenge verification establishes an active subscription. An actual subscribed ChatGPT wake-up cannot be claimed until delivery is accepted by the supplied callback and ChatGPT responds.
 
 Official protocol reference: https://developers.openai.com/plugins/build/mcp-events
+
+
+## Fixed Cybernova research sessions (no per-command terminal approval)
+
+This add-on defines **three typed tools**, separate from the original terminal API:
+
+- `cybernova_session_start()` starts one predefined `local_qwen_baseline` job, returning a session ID immediately.
+- `cybernova_session_status(session_id)` reports running, completed, failed or stalled.
+- `cybernova_session_report(session_id)` returns bounded, non-sensitive validation metadata and verified evidence count.
+
+The fixed preset invokes the **real local Qwen** and seven implemented adapters from the existing isolated checkout at `/workspace/cybernova-pentest-kit-src/cybernova/v10/pentest_pack`, using `/workspace/cybernova-lab-review-venv/bin/python`. It requires the environment previously prepared on Vast; it does not silently install dependencies.
+
+The runner is executed as unprivileged `cybernova`, keeps private session records in `/workspace/cybernova-updater/sessions`, accepts no arbitrary commands, paths, hostnames, URLs, ports, shell arguments or new presets, and only permits loopback/offline synthetic actions. One session at a time; bounded timeout; raw stdout/stderr and original evidence remain private on Vast. Both scripted adapter use and Qwen-selected actions must pass before the final result is marked successful.
+
+**This is not an external scanner.** It does not enable active assessment of `simnet.ua`, change `PLAN_ONLY`, or remove the original `terminal_execute` user-approval rule. Expanding from local baseline to an explicitly authorized external assessment must be developed and reviewed separately.
+
+**One-time activation is still required.** First deploy this reviewed MCP add-on on Vast using `install.sh --check`, then `install.sh --activate` and refresh the connected MCP plugin. The current chat-only terminal tool cannot self-approve this installation; Work can operate the Jupyter terminal with the operator's existing access. Once the new tools are installed, their fixed research sessions do not use `approve_command.py` per internal step.
+
+The code is staged in a feature branch for review. No deployment or tunnel restart occurs when the branch is created.
