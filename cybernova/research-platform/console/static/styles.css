@@ -35,3 +35,10 @@
 .tool-access{margin-left:auto;font-size:10px;border:1px solid #58705e;color:#a9d8b5;padding:1px 6px;border-radius:6px;flex-shrink:0}
 .tool-item:has(.tool-access) .tool-dot{display:none}
 @media(max-width:680px){.approval-card{margin-left:0}}
+
+/* Minimal file upload, like a regular chat attachment control. */
+.composer-left{display:flex;align-items:center;gap:14px;min-width:0}
+.upload-button{display:inline-flex;align-items:center;border:1px solid #555;color:#eee;background:#373737;border-radius:20px;padding:6px 11px;font-size:12px;white-space:nowrap;cursor:pointer}
+.upload-button:hover{background:#4a4a4a}
+#uploadStatus{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%}
+@media(max-width:680px){.composer-left{gap:9px}.upload-button{font-size:11px;padding:6px 8px}#uploadStatus{max-width:78%}}
