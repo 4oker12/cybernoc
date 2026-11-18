@@ -1,0 +1,3 @@
+# Protocol bridge uses MCP v2 discovery/custom-handler APIs.
+# Install only in an isolated environment; install.sh never upgrades the live SDK.
+mcp==2.3.0

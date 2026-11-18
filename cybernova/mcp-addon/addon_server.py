@@ -28,6 +28,8 @@ def load_server():
     register(server)
     from events_bridge import register as register_events
     register_events(server)
+    from session_registry import register as register_sessions
+    register_sessions(server)
     return server
 
 if __name__=="__main__":
