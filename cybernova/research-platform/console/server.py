@@ -27,6 +27,7 @@ try:
     from .traffic_tools import TrafficToolClient, LOCAL_TOOLS, MAX_ARTIFACTS
     from .domain_intelligence import PARSERS, DomainError
     from .domain_tools import DOMAIN_TOOLS
+    from .scoped_network_tools import SCOPED_TOOLS
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL
     from followups import generate_followups
@@ -35,6 +36,7 @@ except ImportError:
     from traffic_tools import TrafficToolClient, LOCAL_TOOLS, MAX_ARTIFACTS
     from domain_intelligence import PARSERS, DomainError
     from domain_tools import DOMAIN_TOOLS
+    from scoped_network_tools import SCOPED_TOOLS
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -159,7 +161,7 @@ def status():
         mcp_ok = True
     except Exception:
         remote_tools, mcp_ok = [], False
-    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS]
+    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS]
     return {
         "model": MODEL,
         "ollama_ready": _ollama_health(),
@@ -170,6 +172,7 @@ def status():
         "tools_selection": "automatic_qwen",
         "http_get": "available_for_preconfigured_mcp_hosts_only",
         "traffic_intelligence": "offline_multi_domain_analysis",
+        "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
         "import_kinds": ["har", "javascript"] + sorted(PARSERS),
         "mode": "loopback_only",
         "version": "0.1.0",
