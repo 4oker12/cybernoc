@@ -24,6 +24,11 @@ jobs:
           python-version: '3.12'
       - name: Compile new project source
         run: python -m compileall -q cybernova/research-platform
+      - name: Validate Vast quickstart shell syntax
+        run: |
+          bash -n cybernova/research-platform/scripts/start.sh
+          bash -n cybernova/research-platform/scripts/serve.sh
+          bash -n cybernova/research-platform/scripts/stop.sh
       - name: Validate browser script syntax
         run: node --check cybernova/research-platform/ui/app.js
       - name: Run offline policy, evidence and installer unit tests
