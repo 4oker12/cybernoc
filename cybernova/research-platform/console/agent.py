@@ -327,7 +327,9 @@ class Agent:
                             failed = True
                             request_id = secrets.token_urlsafe(18)
                             desc = action_description(
-                                name, "Новая MCP-функция: влияние не подтверждено", args
+                                name, "Вызов ещё не проверенной функции требует согласования", args,
+                                objective=text,
+                                description=descriptors[name].get("description", ""),
                             )
                             event = {"request_id": request_id, **desc}
                             pending_requests.append({
@@ -346,7 +348,8 @@ class Agent:
                     serialized = json.dumps(safe_result, ensure_ascii=False)[:MAX_RESULT]
                     safe_event = {
                         "type": kind, "name": str(name)[:80],
-                        "arguments": safe_preview(args),
+                        "arguments": _safe_args(name, args) if name in REVIEWED_TOOLS
+                                     else safe_preview(args),
                         "is_error": failed or safe_result.get("ok") is False,
                         "result": safe_result if len(serialized) < MAX_RESULT
                                   else {"truncated": serialized},
