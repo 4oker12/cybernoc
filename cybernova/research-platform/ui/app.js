@@ -40,7 +40,7 @@ function route(name) {
   ui.view=name;
   document.querySelectorAll(".page-view").forEach(e=>e.classList.toggle("is-hidden",e.id!=="view-"+name));
   document.querySelectorAll(".nav-button").forEach(e=>e.classList.toggle("is-current",e.dataset.nav===name));
-  const titles={overview:"Обзор",tools:"Инструменты",cases:"Гипотезы и факты",report:"Отчёт"};
+  const titles={overview:"Обзор",agent:"Qwen-исследователь",tools:"Инструменты",cases:"Гипотезы и факты",report:"Отчёт"};
   $("#pageBreadcrumb").textContent=titles[name]||name;
   if (name==="cases") refreshCases();
   if (name==="report") refreshReport();
@@ -185,6 +185,36 @@ async function runTool(ev) {
     button.textContent="Выполнить проверку →";
   }
 }
+async function runAgent(ev) {
+  ev.preventDefault();
+  const task=$("#agentPrompt").value.trim();
+  if (task.length<5) {toast("Укажи исследовательскую задачу");return;}
+  const button=$("#agentRun");
+  button.disabled=true;button.textContent="Вызов локального Qwen...";
+  $("#agentResultState").textContent="RUNNING";
+  $("#agentAnswer").textContent="Ожидается фактический ответ локальной модели.";
+  $("#agentReceipts").textContent="";
+  try {
+    const result=await request("/api/agent",{method:"POST",
+       headers:{"Content-Type":"application/json","X-Cybernova-CSRF":CSRF},
+       body:JSON.stringify({question:task})});
+    $("#agentResultState").textContent=String(result.state||"UNKNOWN").toUpperCase();
+    $("#agentAnswer").textContent=result.answer||"Модель не вернула окончательного ответа.";
+    $("#agentReceipts").textContent=JSON.stringify({
+       model_turns:result.model_turns||0,
+       verified_tool_calls:result.verified_tool_calls||0,
+       receipts:result.receipts||[]
+    },null,2);
+    toast(result.ok?"Исследование завершено":"Исследование остановлено: "+result.state);
+  } catch (error) {
+    $("#agentResultState").textContent="ERROR";
+    $("#agentAnswer").textContent=error.message;
+    toast("Qwen недоступен: "+error.message);
+  } finally {
+    button.disabled=!Boolean(ui.status&&ui.status.result&&ui.status.result.agent_enabled);
+    button.textContent="Отправить исследователю →";
+  }
+}
 async function refreshCases() {
   try {
     const [caseData,eventData]=await Promise.all([request("/api/findings"),request("/api/events")]);
@@ -237,6 +267,7 @@ async function init() {
   }));
   $("#toolSearch").addEventListener("input",e=>{ui.search=e.target.value;renderTools();});
   $("#toolForm").addEventListener("submit",runTool);
+  $("#agentForm").addEventListener("submit",runAgent);
   $("#quickPlan").addEventListener("click",()=>{route("tools");selectTool("plan_build");});
   $("#newFinding").addEventListener("click",()=>{route("tools");selectTool("finding_create");});
   $("#refreshCases").addEventListener("click",refreshCases);
@@ -246,7 +277,15 @@ async function init() {
   try {
     const [status,tools,project,findings]=await Promise.all([
       request("/api/status"),request("/api/tools"),request("/api/project"),request("/api/findings")]);
-    ui.status={result:{registered_capabilities:tools.registered_total}};
+    ui.status=status;
+    ui.status.result.registered_capabilities=tools.registered_total;
+    const agentReady=Boolean(status.result&&status.result.agent_enabled);
+    $("#agentRun").disabled=!agentReady;
+    $("#agentBadge").textContent=agentReady?"OLLAMA / READY":"DISABLED";
+    $("#agentBadge").className=agentReady?"status ready":"status warning";
+    $("#agentStatus").textContent=agentReady?
+       "Локальный Ollama: "+status.result.model+". Запросы к платным API не выполняются.":
+       "Локальный агент выключен. При старте контроллера нужен --enable-local-llm.";
     ui.tools=tools.available||{};
     ui.planned=tools.planned||[];
     ui.project=project;
