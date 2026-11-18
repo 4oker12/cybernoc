@@ -19,7 +19,7 @@ bash bootstrap.sh
 
 Never commit the WebUI secret, auth database, SSH private keys, or Ollama API access externally. Runtime data stays under `/workspace/cybernova-qwen-webui-runtime` for Python mode and named volume `cybernova_webui_data` for Docker mode.
 
-Open via *private* SSH forwarding: remote 127.0.0.1:18791 -> local 127.0.0.1:18791, then visit http://127.0.0.1:18791 on your laptop. The first account becomes admin; turn off new signup immediately if it is still enabled. Select `cybernova-security:30b` in the model picker.
+Open via *private* SSH forwarding: remote 127.0.0.1:18791 -> local 127.0.0.1:18791, then visit http://127.0.0.1:18791 on your laptop. The first account becomes admin; turn off new signup immediately if it is still enabled. Select `cybernova-security:30b` in the model picker. For the most reliable application of the role, also create a Workspace > Models preset named `CYBERNOVA Security Researcher`, base model `cybernova-security:30b`, and paste `SYSTEM_PROMPT.md` into the preset System Prompt. Open WebUI model-level prompts may override Ollama's internal default. Keep the prompt version in Git and replicate changes into the Workspace preset.
 
 ## Acceptance
 1. `ollama list` includes both the base model and `cybernova-security:30b`.
