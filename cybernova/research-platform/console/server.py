@@ -68,8 +68,6 @@ async def localhost_only(request: Request, call_next):
 class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
     message: str = Field(min_length=1, max_length=10000)
-    public_get: bool = False
-    force_tools: bool = False
 
 
 class ResetRequest(BaseModel):
@@ -142,7 +140,8 @@ def status():
         "ollama_ready": _ollama_health(),
         "mcp_ready": mcp_ok,
         "tools": tools,
-        "public_get_default": False,
+        "tools_selection": "automatic_qwen",
+        "http_get": "available_for_preconfigured_mcp_hosts_only",
         "mode": "loopback_only",
         "version": "0.1.0",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -157,8 +156,8 @@ def chat(payload: ChatRequest):
         try:
             outcome = agent.run(
                 state["history"], payload.message,
-                public_get=payload.public_get,
-                force_tools=payload.force_tools,
+                public_get=True,
+                force_tools=True,
             )
         except Exception as exc:
             raise HTTPException(status_code=502, detail="agent_failed: " +
