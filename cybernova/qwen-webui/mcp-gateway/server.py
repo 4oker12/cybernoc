@@ -1,72 +1,68 @@
 #!/usr/bin/env python3
-"""Cybernova: bounded Streamable HTTP MCP tools for local Open WebUI."""
+"""Cybernova: bounded, generic Streamable HTTP MCP tools."""
 from mcp.server.mcpserver import MCPServer
-from core import (
-    check_local_webui, review_http_headers, review_python_source, summarize_network
-)
-from simnet_public import simnet_public_page as _fetch_simnet_public_page
+from core import check_local_webui, review_http_headers, review_python_source, summarize_network
+from http_client import http_get as _http_get, _load_scope
 
 mcp = MCPServer(
     "Cybernova Lab Tools",
     instructions=(
-        "Cybernova read-only lab. Only simnet_public_page makes a public HTTP request: "
-        "a single rate-limited GET to a fixed allowlisted page of https://simnet.ua/; "
-        "no redirect following, no arbitrary URLs, no cookies, credentials, scans or forms. "
-        "All other analysis is offline except fixed localhost Open WebUI health check. "
-        "No shell, no filesystem reads and no privileged target access. "
-        "Report security observations as hypotheses, not verified vulnerabilities. "
-        "Use names supplied by tools/list, NEVER invent web_get or other tool names."
+        "Use tool names from tools/list. For approved public sites use http_get(url='https://host/path'). "
+        "Targets are configured separately via scope.json. Never invent web_get or target-specific tool names. "
+        "HTTP tool: one GET, rate-limited, authorized hostnames only, no auth, redirects, proxies, "
+        "arbitrary ports, cookie values, scanning, form submission, or shell. "
+        "Other analysis is offline except fixed local Open WebUI health. "
+        "Observations and missing headers are not proven vulnerabilities."
     ),
 )
 
 
 @mcp.tool()
 def gateway_status() -> dict:
-    """Report exact installed tools, scope and operational restrictions."""
+    """Show the exact tools and currently authorized website hostnames."""
     return {
-        "version": "0.2", "mode": "BOUNDED_PUBLIC_GET_LAB",
-        "arbitrary_commands": False, "arbitrary_file_access": False,
-        "external_target_requests": "one fixed HTTPS GET to allowlisted simnet.ua public page per invocation",
-        "rate_limit": "one request every 5 seconds per server process",
-        "tools": [
-            "gateway_status", "python_static_review", "http_header_review",
-            "ip_network_summary", "local_webui_health", "simnet_public_page",
-        ],
+        "version": "0.3",
+        "mode": "SCOPED_PUBLIC_HTTP_LAB",
+        "authorized_hosts": sorted(_load_scope()),
+        "arbitrary_commands": False,
+        "arbitrary_file_access": False,
+        "http_methods": ["GET"],
+        "http_limits": "one direct HTTP(S) GET per call; 5-second cooldown; 8-second timeout; first 32768 HTML bytes; no redirects",
+        "tools": ["gateway_status", "python_static_review", "http_header_review",
+                  "ip_network_summary", "local_webui_health", "http_get"],
     }
 
 
 @mcp.tool()
 def python_static_review(source: str) -> dict:
-    """Parse supplied Python code for security indicators without executing it."""
+    """Analyze user-supplied Python source using AST only, without executing it."""
     return review_python_source(source)
 
 
 @mcp.tool()
 def http_header_review(raw_headers: str, scheme: str = "https") -> dict:
-    """Inspect pasted HTTP response headers, without contacting the remote host."""
+    """Inspect pasted response headers offline; no origin contact."""
     return review_http_headers(raw_headers, scheme)
 
 
 @mcp.tool()
 def ip_network_summary(cidr: str) -> dict:
-    """Calculate CIDR network metadata offline (no probing)."""
+    """Offline IPv4 and IPv6 CIDR calculations."""
     return summarize_network(cidr)
 
 
 @mcp.tool()
 def local_webui_health() -> dict:
-    """Check only the fixed 127.0.0.1:18791 Open WebUI local service."""
+    """Check only the fixed localhost 127.0.0.1:18791 WebUI service."""
     return check_local_webui()
 
 
 @mcp.tool()
-def simnet_public_page(page: str = "home") -> dict:
-    """Fetch one public page from a fixed allowlist on https://simnet.ua. Use page='home' for the homepage. Returns real status, selected security headers and HTML summary. No arbitrary URLs, redirects or active probing."""
-    return _fetch_simnet_public_page(page)
+def http_get(url: str) -> dict:
+    """Fetch one URL on an explicitly approved public hostname. Example: http_get(url='https://simnet.ua/'). Generic for future sites: update scope.json allowed_hosts, not the tool code. Never follows redirects or sends credentials."""
+    return _http_get(url)
 
 
 if __name__ == "__main__":
-    mcp.run(
-        transport="streamable-http", host="127.0.0.1", port=18792,
-        stateless_http=True, json_response=True,
-    )
+    mcp.run(transport="streamable-http", host="127.0.0.1", port=18792,
+            stateless_http=True, json_response=True)
