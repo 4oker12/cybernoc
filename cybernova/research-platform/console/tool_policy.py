@@ -19,6 +19,10 @@ SECRET_RE = re.compile(r"(?i)(?:password|passwd|secret|token|api.?key|cookie|aut
 REVIEWED_OFFLINE = frozenset({
     "gateway_status", "python_static_review", "http_header_review",
     "ip_network_summary", "local_webui_health",
+    # Per-chat Traffic Intelligence (offline, sanitized, no network).
+    "traffic_inventory", "traffic_api_map", "traffic_js_review",
+    "traffic_session_review", "traffic_graph", "traffic_hypotheses",
+    "traffic_report", "traffic_compare",
 })
 REVIEWED_SCOPED = frozenset({"http_get"})
 REVIEWED_TOOLS = REVIEWED_OFFLINE | REVIEWED_SCOPED
