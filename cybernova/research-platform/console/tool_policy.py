@@ -28,6 +28,7 @@ REVIEWED_OFFLINE = frozenset({
     "research_network_logs", "research_server_config", "research_code_review",
     "research_dependencies", "research_tls_review", "research_findings",
     "research_next_steps", "research_full_report",
+    "lab_scanner_inventory",
 })
 REVIEWED_SCOPED = frozenset({"http_get", "scoped_dns_resolve", "scoped_tls_inspect"})
 REVIEWED_TOOLS = REVIEWED_OFFLINE | REVIEWED_SCOPED
