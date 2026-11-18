@@ -43,6 +43,11 @@ class InstallerTests(unittest.TestCase):
             p = install_arsenal.build_plan("all", M)
             self.assertEqual(p["selected"], len(M["engines"]))
 
+    def test_inventory_profile_includes_all_engines_without_execution(self):
+        p=install_arsenal.build_plan("inventory",M)
+        self.assertEqual(p["selected"],107)
+        self.assertFalse(any(x["execution_enabled"] for x in p["engines"]))
+
     def test_unknown_profile_rejected(self):
         with self.assertRaises(ValueError):
             install_arsenal.build_plan("attack-simnet", M)
