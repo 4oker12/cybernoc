@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feature/cybernova-audit-architecture
+      - feature/cybernova-chat-console
     paths:
       - cybernova/research-platform/**
       - .github/workflows/cybernova-research-platform.yml
@@ -23,6 +24,8 @@ jobs:
           python-version: '3.12'
       - name: Compile new project source
         run: python -m compileall -q cybernova/research-platform
+      - name: Parse frontend JavaScript
+        run: node --check cybernova/research-platform/console/static/app.js
       - name: Run offline policy, evidence, WAK research and installer unit tests
         run: python -m unittest discover -s cybernova/research-platform/tests -p 'test_*.py' -v
       - name: Check tool registry and dry-run installation inventory
