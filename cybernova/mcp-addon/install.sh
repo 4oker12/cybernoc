@@ -18,15 +18,16 @@ echo "=== 1. VERIFY SOURCES ==="
 test -f "$ORIGINAL" && test -x "$PY" && test -f "$PROFILE"
 test -f "$SRC/registry.py" && test -f "$SRC/deployment_ops.py"
 test -f "$SRC/addon_server.py" && test -f "$SRC/tests/test_deployment.py"
+test -f "$SRC/session_registry.py" && test -f "$SRC/session_ops.py"
 test -f "$SRC/events_core.py" && test -f "$SRC/events_bridge.py"
-test -f "$SRC/tests/test_events.py"
+test -f "$SRC/tests/test_events.py" && test -f "$SRC/tests/test_sessions.py"
 test -f /workspace/cybernova-updater/config.json
 test -L /workspace/cybernova-agent
 id cybernova >/dev/null
 
 echo "=== 2. TEST ADDON (ISOLATED) ==="
 (cd "$SRC" && "$PY" -m unittest discover -s tests -v)
-"$PY" -m py_compile "$SRC/registry.py" "$SRC/deployment_ops.py" "$SRC/addon_server.py" "$SRC/events_core.py" "$SRC/events_bridge.py"
+"$PY" -m py_compile "$SRC/registry.py" "$SRC/deployment_ops.py" "$SRC/addon_server.py" "$SRC/events_core.py" "$SRC/events_bridge.py" "$SRC/session_registry.py" "$SRC/session_ops.py"
 "$PY" -c 'import mcp; print("MCP SDK OK")'
 
 if [[ "$MODE" == "--check" ]]; then echo "CHECK OK, tunnel untouched"; exit 0; fi
@@ -44,6 +45,8 @@ install -m 0644 "$SRC/deployment_ops.py" "$DEST/deployment_ops.py"
 install -m 0644 "$SRC/addon_server.py" "$DEST/addon_server.py"
 install -m 0644 "$SRC/events_core.py" "$DEST/events_core.py"
 install -m 0644 "$SRC/events_bridge.py" "$DEST/events_bridge.py"
+install -m 0644 "$SRC/session_registry.py" "$DEST/session_registry.py"
+install -m 0644 "$SRC/session_ops.py" "$DEST/session_ops.py"
 
 echo "=== 4. VERIFY ORIGINAL SERVER + ADDON ==="
 "$PY" - <<'PYCODE'
