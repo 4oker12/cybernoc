@@ -1,7 +1,7 @@
 name: Cybernova MCP addon checks
 on:
   push:
-    branches: [cybernova-autodeploy]
+    branches: [cybernova-autodeploy, feature/cybernova-session-control]
     paths:
       - 'cybernova/mcp-addon/**'
       - '.github/workflows/cybernova-mcp-addon-checks.yml'
