@@ -154,11 +154,81 @@ async function loadFollowups(sid,turn,reply){
     // Suggestions are optional; a timeout must not affect the chat.
   }
 }
+function kindForFile(file,source){
+  const name=file.name.toLowerCase();
+  if(/\.(pcap|cap)$/.test(name))return "pcap";
+  if(/\.har$/.test(name))return "har";
+  if(/\.js$/.test(name))return "javascript";
+  if(/\.py$/.test(name))return "python";
+  if(/\.(log|txt)$/.test(name))return "log";
+  if(/\.(conf|cfg|ini|yaml|yml|env|toml)$/.test(name))return "config";
+  if(/\.(pem|crt)$/.test(name))return "tls";
+  if(/(?:package-lock|npm-shrinkwrap|sbom|composer|yarn|requirements)/.test(name))return "dependencies";
+  if(/\.(lock|mod)$/.test(name))return "dependencies";
+  if(/\.json$/.test(name)){
+    try{
+      const data=JSON.parse(source);
+      if(data?.log?.entries)return "har";
+      if(data?.openapi||data?.swagger)return "openapi";
+      if(data?.packages||data?.dependencies||data?.components)return "dependencies";
+    }catch(_){}
+  }
+  return null;
+}
+function readSelectedFile(file,binary){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onerror=()=>reject(Error("Ошибка чтения файла"));
+    reader.onload=()=>{
+      const result=String(reader.result||"");
+      resolve(binary?result.split(",").slice(1).join(","):result);
+    };
+    if(binary)reader.readAsDataURL(file);
+    else reader.readAsText(file,"utf-8");
+  });
+}
+async function importArtifact(file){
+  if(!file||state.running)return;
+  if(file.size>4_000_000){
+    $("uploadStatus").textContent="Файл слишком большой (максимум 4 МБ)";
+    return;
+  }
+  const binary=/\.(pcap|cap)$/i.test(file.name);
+  $("uploadStatus").textContent="Анализируем файл локально…";
+  busy(true);
+  $("artifactFile").disabled=true;
+  try{
+    const content=await readSelectedFile(file,binary);
+    const kind=kindForFile(file,content);
+    if(!kind)throw Error("Формат не распознан. Используй .har, .js, .py, .json, .log, .conf, .pcap или .pem");
+    const result=await requestJson("/api/import",{
+      session_id:state.sessionId,kind,content
+    });
+    state.sessionId=result.session_id;
+    $("welcome")?.remove();
+    renderMessage("user","Импортирован файл: "+file.name+
+      "\nТип: "+kind+" · SHA-256: "+result.source_sha256.slice(0,16)+
+      "\nСырые данные не сохраняются.");
+    $("uploadStatus").textContent=file.name+" · обработан офлайн";
+    $("messageInput").value="Проанализируй загруженный артефакт "+result.artifact_id+
+      ". Сам выбери доступные traffic_* и research_* инструменты. "+
+      "Покажи факты, гипотезы, взаимосвязи и следующие проверки. "+
+      "Не называй уязвимость доказанной без подтверждения.";
+  }catch(exc){
+    $("uploadStatus").textContent="Ошибка импорта: "+String(exc.message||exc).slice(0,180);
+  }finally{
+    busy(false);
+    $("artifactFile").disabled=false;
+    $("artifactFile").value="";
+    $("messageInput").focus();
+  }
+}
 function busy(on){
   state.running=on;
   $("sendButton").disabled=on;
   $("messageInput").disabled=on;
   $("newSession").disabled=on;
+  $("artifactFile").disabled=on;
   $("sendStatus").textContent=on?"Qwen выполняет запрос…":"Готов";
 }
 async function requestJson(path,data){
@@ -258,6 +328,7 @@ async function reset(){
   $("messages").replaceChildren(window.cybernovaWelcome.cloneNode(true));
   showEvents([],0,"none");
   $("messageInput").value="";
+  $("uploadStatus").textContent="Импорт локальных артефактов";
   $("sidebar").classList.remove("open");
   $("sendStatus").textContent="Готов";
 }
@@ -268,6 +339,7 @@ function toolsPanel(show){
 function init(){
   window.cybernovaWelcome=$("welcome").cloneNode(true);
   $("sendButton").addEventListener("click",send);
+  $("artifactFile").addEventListener("change",event=>importArtifact(event.target.files?.[0]));
   $("messageInput").addEventListener("keydown",e=>{
     if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}
   });
