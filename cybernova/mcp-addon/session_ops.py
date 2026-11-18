@@ -124,10 +124,17 @@ def start(preset=PRESET):
 
 def _check_evidence(root):
     count = 0
+    evidence = root / "evidence"
+    if root.is_symlink() or evidence.is_symlink() or not evidence.is_dir():
+        raise ValueError("Missing or unsafe evidence directory")
     for path in (root / "evidence").glob("*/*.json"):
+        if path.parent.is_symlink() or not ID.fullmatch(path.parent.name):
+            raise ValueError("Unsafe evidence run directory")
         obj = _read(path)
         if "stdout_sha256" not in obj:
             continue
+        if obj.get("capture_complete", True) is not True:
+            raise ValueError("Incomplete evidence capture")
         for stream in ("stdout", "stderr"):
             name = obj.get(stream + "_file")
             if (type(name) is not str or not re.fullmatch(r"[0-9a-f]{32}\." + stream, name)):
@@ -135,6 +142,8 @@ def _check_evidence(root):
             artifact = path.parent / name
             if artifact.is_symlink() or not artifact.is_file():
                 raise ValueError("Missing artifact")
+            if artifact.stat().st_size > 4_000_000:
+                raise ValueError("Evidence artifact exceeds capture quota")
             digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
             if digest != obj[stream + "_sha256"] or artifact.stat().st_size != obj[stream + "_bytes"]:
                 raise ValueError("Evidence digest or size mismatch")

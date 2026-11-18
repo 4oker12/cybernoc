@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install MCP SDK v2 for protocol tests
-        run: python -m pip install 'mcp==2.3.0'
+        run: python -m pip install -r cybernova/mcp-addon/requirements-mcp.txt
       - name: Compile addon
         run: python -m compileall -q cybernova/mcp-addon
       - name: Unit tests

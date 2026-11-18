@@ -90,6 +90,20 @@ class SessionRunnerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ops._check_evidence(work)
 
+    def test_evidence_symlink_run_is_rejected(self):
+        work = self.root/'case'; (work/'evidence').mkdir(parents=True)
+        outside = self.root/'outside'; outside.mkdir()
+        (outside/'manifest.json').write_text('{}')
+        (work/'evidence'/('b'*32)).symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(ValueError): ops._check_evidence(work)
+
+    def test_incomplete_capture_cannot_pass_validation(self):
+        work = self.root/'case'; sub = work/'evidence'/('b'*32); sub.mkdir(parents=True)
+        (sub/('c'*32+'.json')).write_text(json.dumps({'stdout_sha256':'0'*64,
+                                                    'capture_complete':False}))
+        with self.assertRaisesRegex(ValueError, 'Incomplete'):
+            ops._check_evidence(work)
+
     def test_worker_reports_success_only_for_two_real_qwen_actions(self):
         session_id = "d" * 32
         folder = ops._root() / session_id

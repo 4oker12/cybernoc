@@ -74,3 +74,13 @@ The runner is executed as unprivileged `cybernova`, keeps private session record
 **One-time activation is still required.** First deploy this reviewed MCP add-on on Vast using `install.sh --check`, then `install.sh --activate` and refresh the connected MCP plugin. The current chat-only terminal tool cannot self-approve this installation; Work can operate the Jupyter terminal with the operator's existing access. Once the new tools are installed, their fixed research sessions do not use `approve_command.py` per internal step.
 
 The code is staged in a feature branch for review. No deployment or tunnel restart occurs when the branch is created.
+
+## Session-control installation review (18 November 2026)
+
+The MCP wrapper requires the **v2 discovery/custom-handler APIs**, pinned to `mcp==2.3.0` in `requirements-mcp.txt`. The isolated lab environment is a different dependency boundary: its HTTPX/dnspython and `cybernova_lab` modules are checked as the unprivileged `cybernova` user. The installer never upgrades the live MCP SDK automatically.
+
+`install.sh` defaults to `--check`; activation requires the explicit `--activate` argument. Check mode imports the source wrapper against the original server, checks required handlers, lab dependencies/service-user storage permissions, and the existing tunnel prerequisites without replacing the installed addon/profile. A per-install lock prevents concurrent installers; the lock descriptor is closed before launching long-running children.
+
+Each activation takes a **new snapshot of the immediate previous addon and current profile**, even when that profile already points to an addon. Private `*.activation.<id>` snapshots include checksums. Failure after mutation restores that specific code/profile pair; failed code is preserved for diagnosis. Cron changes and a newly started event worker are rolled back when applicable, and a restarted tunnel is checked again after recovery. A historic `.yaml.before-addon` file is retained only as a legacy backup, not used as the current upgrade rollback source. Recovery errors stop and require operator inspection rather than claiming success.
+
+Local verification: 36 tests passed with MCP SDK 2.3.0, including recovery of an already-installed addon, initial-install rollback, private unique snapshots, corruption refusal, symlinks and incomplete evidence rejection. These tests do **not** substitute for `install.sh --check/--activate` on Vast or prove reconnection of the live tunnel. Activation, plugin tool discovery and a live session remain unverified until actually run and observed there.
