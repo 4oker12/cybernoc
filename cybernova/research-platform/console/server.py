@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import secrets
@@ -22,10 +23,14 @@ try:
     from .agent import Agent, MCPClient, MODEL, OLLAMA_URL
     from .followups import generate_followups
     from .tool_policy import REVIEWED_TOOLS
+    from .traffic_intelligence import analyze_har, analyze_js, TrafficError
+    from .traffic_tools import TrafficToolClient, LOCAL_TOOLS, MAX_ARTIFACTS
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL
     from followups import generate_followups
     from tool_policy import REVIEWED_TOOLS
+    from traffic_intelligence import analyze_har, analyze_js, TrafficError
+    from traffic_tools import TrafficToolClient, LOCAL_TOOLS, MAX_ARTIFACTS
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -81,6 +86,12 @@ class FollowupsRequest(BaseModel):
     turn: int = Field(ge=1)
 
 
+class ImportRequest(BaseModel):
+    session_id: str | None = Field(default=None, min_length=16, max_length=100)
+    kind: str = Field(pattern="^(har|javascript)$")
+    content: str = Field(min_length=1, max_length=6_000_000)
+
+
 class ApprovalRequest(BaseModel):
     session_id: str = Field(min_length=16, max_length=100)
     request_id: str = Field(min_length=16, max_length=100)
@@ -101,7 +112,8 @@ def _session(session_id: str | None) -> tuple[str, dict]:
             return session_id, session
         key = secrets.token_urlsafe(24)
         session = {"last": now, "history": [], "lock": RLock(), "turns": 0,
-                   "followups_turn": None, "followups": [], "pending_approvals": {}}
+                   "followups_turn": None, "followups": [], "pending_approvals": {},
+                   "traffic_artifacts": {}}
         sessions[key] = session
         while len(sessions) > MAX_SESSIONS:
             sessions.popitem(last=False)
@@ -139,10 +151,11 @@ def _ollama_health() -> bool:
 def status():
     try:
         mcp = MCPClient()
-        tools = [t["name"] for t in mcp.initialize()]
+        remote_tools = [t["name"] for t in mcp.initialize()]
         mcp_ok = True
     except Exception:
-        tools, mcp_ok = [], False
+        remote_tools, mcp_ok = [], False
+    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS]
     return {
         "model": MODEL,
         "ollama_ready": _ollama_health(),
@@ -152,10 +165,55 @@ def status():
         "others_require_approval": sorted(set(tools) - REVIEWED_TOOLS),
         "tools_selection": "automatic_qwen",
         "http_get": "available_for_preconfigured_mcp_hosts_only",
+        "traffic_intelligence": "offline_har_and_javascript_analysis",
         "mode": "loopback_only",
         "version": "0.1.0",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.post("/api/import")
+def import_artifact(payload: ImportRequest):
+    """Parse user-supplied own HAR/JS into memory, permanently discard raw text.
+
+    No body values, passwords, cookies or request payloads are sent to Qwen.
+    This endpoint never performs remote HTTP or replays captured operations.
+    """
+    sid, state = _session(payload.session_id)
+    with state["lock"]:
+        if len(state["traffic_artifacts"]) >= MAX_ARTIFACTS:
+            raise HTTPException(status_code=409, detail="artifact_limit_reached")
+        try:
+            artifact = (analyze_har(payload.content) if payload.kind == "har"
+                        else analyze_js(payload.content))
+        except TrafficError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)[:160]) from exc
+        artifact_id = "ti_" + secrets.token_urlsafe(12)
+        state["traffic_artifacts"][artifact_id] = artifact
+        summary = {
+            "artifact_id": artifact_id,
+            "kind": artifact["kind"],
+            "source_sha256": artifact["source_sha256"],
+            "requests": artifact.get("requests_analyzed", 0),
+            "endpoints": len(artifact.get("endpoints", [])),
+            "js_api_paths": len(artifact.get("api_paths", [])),
+            "observations": len(artifact.get("observations", [])),
+            "raw_data_retained": False,
+        }
+        # Add only sanitized metadata to next Qwen context, never the capture.
+        state["history"].append({
+            "role": "user",
+            "content": "Локально импортирован мой артефакт Traffic Intelligence: "
+                       + json.dumps(summary, ensure_ascii=False)
+                       + ". Для исследования доступны traffic_* инструменты.",
+        })
+        state["history"].append({
+            "role": "assistant",
+            "content": "Импорт выполнен офлайн. Значения cookie, токены, тела ответов "
+                       "и исходный JS не сохранены. Жду исследовательскую задачу.",
+        })
+        state["history"] = state["history"][-MAX_HISTORY:]
+    return {"session_id": sid, **summary}
 
 
 @app.post("/api/chat")
@@ -164,7 +222,11 @@ def chat(payload: ChatRequest):
     # Prevent overlapping turns in one session from corrupting model history.
     with state["lock"]:
         try:
-            outcome = agent.run(
+            current_agent = Agent(
+                ollama=agent.ollama,
+                mcp_factory=lambda: TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
+            )
+            outcome = current_agent.run(
                 state["history"], payload.message,
                 public_get=True,
                 force_tools=True,
@@ -206,7 +268,11 @@ def approve(payload: ApprovalRequest):
                     "инструмент не запускался", "tool_calls": 0}
         try:
             # The reviewed agent checks the latest MCP schema before execution.
-            result = agent.execute_approved(item, state["history"])
+            current_agent = Agent(
+                ollama=agent.ollama,
+                mcp_factory=lambda: TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
+            )
+            result = current_agent.execute_approved(item, state["history"])
         except Exception as exc:
             raise HTTPException(
                 status_code=502, detail="approved_action_failed: " + type(exc).__name__
