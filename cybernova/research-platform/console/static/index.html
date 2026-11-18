@@ -41,7 +41,7 @@
         <div class="welcome" id="welcome">
           <div class="welcome-logo" aria-hidden="true">◈</div>
           <h1>Чем займёмся?</h1>
-          <p>Общайтесь с Qwen. Для диагностики она может вызывать разрешённые MCP-инструменты и показывать реальные результаты.</p>
+          <p>Общайтесь с Qwen. Она сама выбирает, когда нужны MCP-инструменты, и показывает результаты вызовов.</p>
           <div class="suggestions">
             <button type="button" data-prompt="Вызови gateway_status и расскажи, какие инструменты доступны." class="suggestion">Какие инструменты доступны?</button>
             <button type="button" data-prompt="Вызови ip_network_summary для 192.0.2.7/24 и объясни результат." class="suggestion">Разобрать учебную подсеть</button>
@@ -55,13 +55,8 @@
         <label class="sr-only" for="messageInput">Сообщение для Qwen</label>
         <textarea id="messageInput" rows="2" maxlength="10000" placeholder="Спросите что-нибудь или задайте задачу…"></textarea>
         <div class="composer-bottom">
-          <div class="options">
-            <label class="option" title="Разрешить Qwen выбирать из доступных офлайн-инструментов">
-              <input type="checkbox" id="forceTools" checked> Инструменты
-            </label>
-            <label class="option" title="Разрешить до трёх одиночных GET к точно разрешённым хостам; выключается после сообщения">
-              <input type="checkbox" id="publicGet"> Публичный GET
-            </label>
+          <div class="auto-tools-label" title="Qwen самостоятельно выбирает инструменты. Сетевые запросы допускаются только к ранее разрешённым хостам MCP.">
+            <span class="auto-tools-dot" aria-hidden="true"></span> MCP автоматически
           </div>
           <button type="button" id="sendButton" class="send-button" aria-label="Отправить">↑</button>
         </div>
