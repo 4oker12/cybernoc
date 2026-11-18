@@ -21,9 +21,11 @@ from pydantic import BaseModel, Field
 try:
     from .agent import Agent, MCPClient, MODEL, OLLAMA_URL
     from .followups import generate_followups
+    from .tool_policy import REVIEWED_TOOLS
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL
     from followups import generate_followups
+    from tool_policy import REVIEWED_TOOLS
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -79,6 +81,12 @@ class FollowupsRequest(BaseModel):
     turn: int = Field(ge=1)
 
 
+class ApprovalRequest(BaseModel):
+    session_id: str = Field(min_length=16, max_length=100)
+    request_id: str = Field(min_length=16, max_length=100)
+    decision: str = Field(pattern="^(approve|deny)$")
+
+
 
 def _session(session_id: str | None) -> tuple[str, dict]:
     now = time.monotonic()
@@ -93,7 +101,7 @@ def _session(session_id: str | None) -> tuple[str, dict]:
             return session_id, session
         key = secrets.token_urlsafe(24)
         session = {"last": now, "history": [], "lock": RLock(), "turns": 0,
-                   "followups_turn": None, "followups": []}
+                   "followups_turn": None, "followups": [], "pending_approvals": {}}
         sessions[key] = session
         while len(sessions) > MAX_SESSIONS:
             sessions.popitem(last=False)
@@ -140,6 +148,8 @@ def status():
         "ollama_ready": _ollama_health(),
         "mcp_ready": mcp_ok,
         "tools": tools,
+        "auto_executable": sorted(set(tools) & REVIEWED_TOOLS),
+        "others_require_approval": sorted(set(tools) - REVIEWED_TOOLS),
         "tools_selection": "automatic_qwen",
         "http_get": "available_for_preconfigured_mcp_hosts_only",
         "mode": "loopback_only",
@@ -162,11 +172,54 @@ def chat(payload: ChatRequest):
         except Exception as exc:
             raise HTTPException(status_code=502, detail="agent_failed: " +
                                 type(exc).__name__) from exc
+        # Raw arguments are never exposed in the chat response.
+        requests = outcome.pop("approval_requests", [])
+        state["pending_approvals"].clear()
+        for item in requests[:6]:
+            state["pending_approvals"][item["request_id"]] = {
+                **item, "turn": state["turns"] + 1,
+            }
         state["history"].append({"role": "user", "content": payload.message[:10000]})
         state["history"].append({"role": "assistant", "content": outcome["answer"][:16000]})
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
     return {"session_id": sid, "turn": state["turns"], **outcome}
+
+
+@app.post("/api/approve")
+def approve(payload: ApprovalRequest):
+    """One-shot human authorization, bound to session, call, exact args and turn."""
+    with sessions_lock:
+        state = sessions.get(payload.session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    with state["lock"]:
+        item = state["pending_approvals"].pop(payload.request_id, None)
+        if item is None:
+            raise HTTPException(status_code=404, detail="approval_not_found_or_used")
+        if item["turn"] != state["turns"]:
+            raise HTTPException(status_code=409, detail="approval_from_previous_turn")
+        if time.time() - item["created_at"] > 600:
+            raise HTTPException(status_code=410, detail="approval_expired")
+        if payload.decision == "deny":
+            return {"ok": True, "decision": "denied", "message": "Действие отклонено; "
+                    "инструмент не запускался", "tool_calls": 0}
+        try:
+            # The reviewed agent checks the latest MCP schema before execution.
+            result = agent.execute_approved(item, state["history"])
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502, detail="approved_action_failed: " + type(exc).__name__
+            ) from exc
+        state["history"].append({
+            "role": "user", "content": "Разрешаю один вызов MCP-инструмента: " + item["tool"],
+        })
+        state["history"].append({"role": "assistant", "content": result["answer"][:16000]})
+        state["history"] = state["history"][-MAX_HISTORY:]
+        state["turns"] += 1
+        state["pending_approvals"].clear()
+        return {"ok": True, "decision": "approved", "session_id": payload.session_id,
+                "turn": state["turns"], **result}
 
 
 @app.post("/api/followups")
