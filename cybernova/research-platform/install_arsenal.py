@@ -50,7 +50,7 @@ def build_plan(profile: str, manifest: dict) -> dict:
     inventory = validated_inventory(manifest)
     if profile not in PROFILES and profile != "all":
         raise ValueError("Unknown profile")
-    selected = PROFILES.get(profile, tuple(inventory))
+    selected = tuple(inventory) if profile in ("inventory","all") else PROFILES[profile]
     absent = [name for name in selected if name not in inventory]
     if absent:
         raise ValueError("Missing engine definitions: " + str(absent))
@@ -124,6 +124,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     plan = build_plan(args.profile, manifest)
+    if args.apply and args.profile in ("inventory","all"):
+        print(json.dumps({"ok":False,"error":"inventory/all profiles are read-only; choose baseline or expanded to install vetted software"}))
+        return 2
     if args.apply:
         try:
             result = _execute_pdtm(plan, bootstrap=args.bootstrap_pdtm,
