@@ -36,6 +36,27 @@ def discover_binary(name: str | None) -> str | None:
     return None
 
 
+# Software inventory is independent from installation authorization.
+# Providers, libraries and reference documents are not executable binaries.
+NON_EXECUTABLE = {
+    "RDAP", "crt.sh", "Certspotter", "Shodan", "Censys", "FOFA",
+    "ZoomEye", "Wayback Machine", "dnsdumpster", "SecurityTrails",
+    "Exploit-DB", "Burp Suite", "Caido", "OpenAPI", "Postman",
+    "GraphQL schema", "cvss Python", "report.py",
+}
+BINARY_ALIASES = {
+    "amass intel": "amass", "nmap vulners NSE": "nmap",
+    "Metasploit auxiliary": "msfconsole", "ZAP": "zap.sh",
+    "testssl.sh": "testssl.sh", "theHarvester": "theHarvester",
+    "subjs": "subjs", "getJS": "getJS",
+}
+
+def inventory_command_for(name: str):
+    if name in NON_EXECUTABLE:
+        return None
+    return BINARY_ALIASES.get(name, name)
+
+
 def validated_inventory(manifest: dict) -> dict:
     engines = manifest.get("engines")
     if not isinstance(engines, list):
@@ -57,7 +78,7 @@ def build_plan(profile: str, manifest: dict) -> dict:
     items = []
     for name in selected:
         engine = inventory[name]
-        binary = name if engine["installation"] == "pdtm" else None
+        binary = inventory_command_for(name)
         installed = discover_binary(binary)
         items.append({
             "engine": name,
