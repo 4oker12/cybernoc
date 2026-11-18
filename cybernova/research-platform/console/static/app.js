@@ -95,8 +95,6 @@ function busy(on){
   state.running=on;
   $("sendButton").disabled=on;
   $("messageInput").disabled=on;
-  $("forceTools").disabled=on;
-  $("publicGet").disabled=on;
   $("newSession").disabled=on;
   $("sendStatus").textContent=on?"Qwen выполняет запрос…":"Готов";
 }
@@ -112,16 +110,13 @@ async function send(){
   const text=$("messageInput").value.trim();
   if(!text||state.running)return;
   $("welcome")?.remove();
-  const publicGet=$("publicGet").checked;
-  const forceTools=$("forceTools").checked;
-  $("publicGet").checked=false;
   renderMessage("user",text);
   $("messageInput").value="";
   const pending=renderMessage("assistant","Qwen формирует ответ…",true);
   busy(true);
   try{
     const result=await requestJson("/api/chat",{
-      session_id:state.sessionId,message:text,public_get:publicGet,force_tools:forceTools,
+      session_id:state.sessionId,message:text,
     });
     state.sessionId=result.session_id;
     state.turns=result.turn||state.turns+1;
@@ -193,7 +188,6 @@ async function reset(){
   $("messages").replaceChildren(window.cybernovaWelcome.cloneNode(true));
   showEvents([],0,"none");
   $("messageInput").value="";
-  $("publicGet").checked=false;
   $("sidebar").classList.remove("open");
   $("sendStatus").textContent="Готов";
 }
