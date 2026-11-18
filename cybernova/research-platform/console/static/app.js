@@ -40,6 +40,50 @@ function makeToolDetails(event){
   },null,2)));
   return d;
 }
+function approvalCard(event){
+  const card=node("div","approval-card");
+  const title=node("div","approval-title","Qwen запрашивает разрешение");
+  const name=node("div","approval-tool",event.name||"MCP-инструмент");
+  const reason=node("p","approval-reason",
+    event.reason||"Действие может повлиять на внешнюю систему. До подтверждения оно не выполнено.");
+  const preview=node("pre","approval-args",JSON.stringify(event.arguments||{},null,2));
+  const buttons=node("div","approval-buttons");
+  const yes=node("button","approval-yes","Разрешить один раз");
+  const no=node("button","approval-no","Отклонить");
+  yes.type="button";no.type="button";
+  const requestId=event.request_id;
+  yes.addEventListener("click",()=>decideAction(requestId,"approve",card));
+  no.addEventListener("click",()=>decideAction(requestId,"deny",card));
+  buttons.append(yes,no);
+  card.append(title,name,reason,preview,buttons);
+  return card;
+}
+async function decideAction(requestId,decision,card){
+  if(state.running||!state.sessionId)return;
+  busy(true);
+  card.querySelectorAll("button").forEach(button=>button.disabled=true);
+  try{
+    const reply=await requestJson("/api/approve",{
+      session_id:state.sessionId,request_id:requestId,decision:decision
+    });
+    card.querySelector(".approval-buttons")?.remove();
+    card.append(node("div","approval-state",
+      decision==="approve"?"Разрешение использовано. Инструмент вызван.":"Действие отклонено."));
+    if(decision==="approve"){
+      state.turns=reply.turn||state.turns+1;
+      const result=renderMessage("assistant",reply.answer||"Вызов завершён.");
+      showEvents(reply.events,reply.tool_calls,reply.selected_by,result);
+      void loadFollowups(state.sessionId,state.turns,result);
+    }else{
+      renderMessage("assistant","Действие отклонено. Инструмент не запускался.");
+    }
+  }catch(err){
+    card.append(node("div","approval-error","Ошибка: "+String(err.message||err)));
+    card.querySelectorAll("button").forEach(button=>button.disabled=false);
+  }finally{
+    busy(false);toBottom();
+  }
+}
 function showEvents(events,count,mode,reply){
   const inspector=$("runList");
   inspector.replaceChildren();
@@ -56,6 +100,20 @@ function showEvents(events,count,mode,reply){
     if(inline)inline.append(makeToolDetails(e));
   }
   if(inline)reply.wrap.append(inline);
+  if(reply){
+    for(const event of events){
+      if(event.type==="approval_required"&&event.request_id){
+        reply.wrap.append(approvalCard(event));
+      }else if(event.type==="scope_change_required"){
+        const notice=node("div","approval-card scope-notice");
+        notice.append(node("div","approval-title","Нужно расширить область доступа"),
+          node("p","approval-reason","Qwen запросила внешний ресурс, которого нет в разрешённом scope MCP. "+
+            "Добавить домен может только администратор системы. Самостоятельного обхода ограничений нет."),
+          node("pre","approval-args",JSON.stringify(event.arguments||{},null,2)));
+        reply.wrap.append(notice);
+      }
+    }
+  }
   if(reply && count){
     const receipt=node("div","tool-receipt");
     receipt.append(node("strong","",count+" реальных вызовов MCP"),
@@ -124,7 +182,10 @@ async function send(){
     pending.body.textContent=result.answer||"Ответ модели пуст.";
     showEvents(result.events,result.tool_calls,result.selected_by,pending);
     // Generate contextual next questions independently; do not delay Qwen reply.
-    void loadFollowups(result.session_id,result.turn,pending);
+    // A pending approval is the next user decision, not a generic follow-up.
+    if(!result.events?.some(e=>e.type==="approval_required")){
+      void loadFollowups(result.session_id,result.turn,pending);
+    }
     if(state.turns===1){
       const label=text.length>32?text.substring(0,31)+"…":text;
       $("sessionItem").textContent=label;
@@ -139,7 +200,7 @@ async function send(){
     busy(false);$("messageInput").focus();toBottom();
   }
 }
-function renderTools(tools){
+function renderTools(tools,automatic=[]){
   const container=$("toolList");
   container.replaceChildren();
   $("toolCount").textContent=String(tools.length);
@@ -147,11 +208,15 @@ function renderTools(tools){
     container.append(node("p","muted","MCP сейчас недоступен."));
     return;
   }
+  const allowed=new Set(automatic);
   for(const name of tools){
     const row=node("div","tool-item");
     const label=node("code","",name);
-    label.title=descriptions[name]||"Неизвестный инструмент";
-    row.append(label,node("span","tool-dot"));
+    label.title=descriptions[name]||"Подключённый MCP-инструмент";
+    const indicator=node("span","tool-access",allowed.has(name)?"AUTO":"ASK");
+    indicator.title=allowed.has(name)?"Qwen может запустить без подтверждения":
+      "Qwen может выбрать; для исполнения потребуется подтверждение";
+    row.append(label,indicator);
     container.append(row);
   }
 }
@@ -167,7 +232,7 @@ async function status(){
     $("backendDot").className="dot "+(ready?"ok":"bad");
     $("backendStatus").textContent=ready?"Qwen и MCP подключены":
       info.ollama_ready?"Qwen подключена · MCP недоступен":"Проверь Ollama";
-    renderTools(Array.isArray(info.tools)?info.tools:[]);
+    renderTools(Array.isArray(info.tools)?info.tools:[],info.auto_executable||[]);
   }catch(_){
     $("backendDot").className="dot bad";
     $("backendStatus").textContent="Нет подключения к серверу";
