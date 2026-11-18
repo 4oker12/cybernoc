@@ -140,6 +140,8 @@ def _safe_target(policy, target_id):
             raise ScannerError("target_requires_explicit_port")
         if u.username or u.password or u.query or u.fragment or u.path not in {"", "/"}:
             raise ScannerError("target_must_be_clean_origin")
+    except ScannerError:
+        raise
     except (ValueError, TypeError) as exc:
         raise ScannerError("invalid_lab_target") from exc
     return url.rstrip("/"), str(ip), int(u.port)
