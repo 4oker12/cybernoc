@@ -1,0 +1,715 @@
+{
+  "schema_version": "1.0",
+  "generated_for": "Cybernova general research platform",
+  "semantics": {
+    "deployed_mcp": "Previously observed deployed on Vast MCP; not necessarily exposed in Open WebUI",
+    "planned_adapter": "Specification only: not installed or implemented",
+    "planned_rename_of_local_webui_health": "Existing local_webui_health remains live; proposed generic replacement is not deployed",
+    "implemented_offline_not_deployed": "Real offline Python functionality exists in core/ or cli.py, but is not registered in running MCP and does not execute external actions."
+  },
+  "execution_default": "deny",
+  "modes": [
+    "offline",
+    "passive_public",
+    "low_impact_active",
+    "controlled_active"
+  ],
+  "tools": [
+    {
+      "name": "gateway_status",
+      "family": "control",
+      "mode": "offline",
+      "engine": "Cybernova existing MCP",
+      "status": "deployed_mcp",
+      "description": "Версия и здоровье инструментального шлюза"
+    },
+    {
+      "name": "tool_catalog",
+      "family": "control",
+      "mode": "offline",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
+      "description": "Каталог доступных возможностей с фактическим состоянием"
+    },
+    {
+      "name": "scope_check",
+      "family": "control",
+      "mode": "offline",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
+      "description": "Проверка точной принадлежности ресурса утверждённой области"
+    },
+    {
+      "name": "engagement_validate",
+      "family": "control",
+      "mode": "offline",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
+      "description": "Проверка документа допуска, сроков и правил исполнения"
+    },
+    {
+      "name": "plan_build",
+      "family": "control",
+      "mode": "offline",
+      "engine": "Cybernova offline research/workflow modules",
+      "status": "implemented_offline_not_deployed",
+      "description": "План исследований из гипотез и разрешённых инструментов"
+    },
+    {
+      "name": "plan_validate",
+      "family": "control",
+      "mode": "offline",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
+      "description": "Сухая проверка плана на допуски, квоты и зависимости"
+    },
+    {
+      "name": "run_start",
+      "family": "control",
+      "mode": "offline",
+      "engine": "Cybernova core",
+      "status": "planned_adapter",
+      "description": "Запуск только разрешённого плана с контролем квот"
+    },
+    {
+      "name": "run_status",
+      "family": "control",
+      "mode": "offline",
+      "engine": "Cybernova core",
+      "status": "planned_adapter",
+      "description": "Прогресс, ошибки, лимиты и результаты задания"
+    },
+    {
+      "name": "run_cancel",
+      "family": "control",
+      "mode": "offline",
+      "engine": "Cybernova core",
+      "status": "planned_adapter",
+      "description": "Экстренное прекращение всех дочерних задач"
+    },
+    {
+      "name": "runtime_health",
+      "family": "control",
+      "mode": "offline",
+      "engine": "Cybernova core",
+      "status": "planned_rename_of_local_webui_health",
+      "description": "Диагностика локальной системы и зависимостей"
+    },
+    {
+      "name": "dns_lookup",
+      "family": "discovery",
+      "mode": "passive_public",
+      "engine": "DNS/CT/Amass/subfinder/archives",
+      "status": "planned_adapter",
+      "description": "DNS A/AAAA/CNAME/MX/NS/TXT/CAA для заданного домена"
+    },
+    {
+      "name": "certificate_transparency_search",
+      "family": "discovery",
+      "mode": "passive_public",
+      "engine": "DNS/CT/Amass/subfinder/archives",
+      "status": "planned_adapter",
+      "description": "Исторические публичные имена из CT журналов"
+    },
+    {
+      "name": "domain_registration_review",
+      "family": "discovery",
+      "mode": "passive_public",
+      "engine": "DNS/CT/Amass/subfinder/archives",
+      "status": "planned_adapter",
+      "description": "Регистрационная и инфраструктурная информация"
+    },
+    {
+      "name": "passive_asset_discovery",
+      "family": "discovery",
+      "mode": "passive_public",
+      "engine": "DNS/CT/Amass/subfinder/archives",
+      "status": "planned_adapter",
+      "description": "Обогащение инвентаря пассивными публичными источниками"
+    },
+    {
+      "name": "web_archive_search",
+      "family": "discovery",
+      "mode": "passive_public",
+      "engine": "DNS/CT/Amass/subfinder/archives",
+      "status": "planned_adapter",
+      "description": "Публичные исторические пути без запросов к целевому сервису"
+    },
+    {
+      "name": "asset_inventory",
+      "family": "discovery",
+      "mode": "passive_public",
+      "engine": "Cybernova offline research/workflow modules",
+      "status": "implemented_offline_not_deployed",
+      "description": "Сведение активов и отделение кандидатов от подтверждённого scope"
+    },
+    {
+      "name": "service_dependency_map",
+      "family": "discovery",
+      "mode": "passive_public",
+      "engine": "DNS/CT/Amass/subfinder/archives",
+      "status": "planned_adapter",
+      "description": "Карта поставщиков, CDN, оплаты и сторонних хостов"
+    },
+    {
+      "name": "http_get",
+      "family": "transport",
+      "mode": "low_impact_active",
+      "engine": "Cybernova existing MCP",
+      "status": "deployed_mcp",
+      "description": "Один GET HTTP(S) в пределах подтверждённого scope"
+    },
+    {
+      "name": "http_header_review",
+      "family": "transport",
+      "mode": "offline",
+      "engine": "Cybernova existing MCP",
+      "status": "deployed_mcp",
+      "description": "Локальная проверка предоставленных HTTP заголовков"
+    },
+    {
+      "name": "http_probe",
+      "family": "transport",
+      "mode": "low_impact_active",
+      "engine": "httpx/SSL/http-client/testssl.sh",
+      "status": "planned_adapter",
+      "description": "Бюджетная проверка состояния точно разрешённых URL"
+    },
+    {
+      "name": "tls_inspect",
+      "family": "transport",
+      "mode": "low_impact_active",
+      "engine": "httpx/SSL/http-client/testssl.sh",
+      "status": "planned_adapter",
+      "description": "Сертификат, SAN, цепочка, сроки, SNI"
+    },
+    {
+      "name": "tls_configuration_test",
+      "family": "transport",
+      "mode": "low_impact_active",
+      "engine": "httpx/SSL/http-client/testssl.sh",
+      "status": "planned_adapter",
+      "description": "Контроль версий TLS и шифров только при разрешении"
+    },
+    {
+      "name": "dns_security_review",
+      "family": "transport",
+      "mode": "low_impact_active",
+      "engine": "httpx/SSL/http-client/testssl.sh",
+      "status": "planned_adapter",
+      "description": "DNSSEC, CAA и ошибки конфигурации DNS"
+    },
+    {
+      "name": "security_header_review",
+      "family": "transport",
+      "mode": "low_impact_active",
+      "engine": "httpx/SSL/http-client/testssl.sh",
+      "status": "planned_adapter",
+      "description": "CSP/HSTS/XFO/XCTO/Referrer-Policy/Permissions-Policy"
+    },
+    {
+      "name": "web_technology_inventory",
+      "family": "transport",
+      "mode": "low_impact_active",
+      "engine": "httpx/SSL/http-client/testssl.sh",
+      "status": "planned_adapter",
+      "description": "Признаки платформ, CMS и библиотек с оценкой достоверности"
+    },
+    {
+      "name": "service_health",
+      "family": "transport",
+      "mode": "low_impact_active",
+      "engine": "httpx/SSL/http-client/testssl.sh",
+      "status": "planned_adapter",
+      "description": "Контроль доступности после проверок"
+    },
+    {
+      "name": "robots_read",
+      "family": "web_mapping",
+      "mode": "low_impact_active",
+      "engine": "Katana/Playwright/ZAP",
+      "status": "planned_adapter",
+      "description": "Обычное чтение robots.txt на разрешённом хосте"
+    },
+    {
+      "name": "sitemap_read",
+      "family": "web_mapping",
+      "mode": "low_impact_active",
+      "engine": "Katana/Playwright/ZAP",
+      "status": "planned_adapter",
+      "description": "Чтение и разбор sitemap"
+    },
+    {
+      "name": "web_crawl",
+      "family": "web_mapping",
+      "mode": "low_impact_active",
+      "engine": "Katana/Playwright/ZAP",
+      "status": "planned_adapter",
+      "description": "Ограниченный обход разрешённых публичных URL"
+    },
+    {
+      "name": "browser_navigate",
+      "family": "web_mapping",
+      "mode": "low_impact_active",
+      "engine": "Katana/Playwright/ZAP",
+      "status": "planned_adapter",
+      "description": "Открытие разрешённой страницы в изолированном браузере"
+    },
+    {
+      "name": "browser_capture",
+      "family": "web_mapping",
+      "mode": "low_impact_active",
+      "engine": "Katana/Playwright/ZAP",
+      "status": "planned_adapter",
+      "description": "Скриншот/DOM/консоль/HAR с редактированием секретов"
+    },
+    {
+      "name": "web_route_inventory",
+      "family": "web_mapping",
+      "mode": "low_impact_active",
+      "engine": "Katana/Playwright/ZAP",
+      "status": "planned_adapter",
+      "description": "Матрица маршрутов, форм, параметров, методов"
+    },
+    {
+      "name": "client_script_inventory",
+      "family": "web_mapping",
+      "mode": "low_impact_active",
+      "engine": "Katana/Playwright/ZAP",
+      "status": "planned_adapter",
+      "description": "JS bundles, источники и внешние зависимости"
+    },
+    {
+      "name": "api_schema_import",
+      "family": "web_mapping",
+      "mode": "low_impact_active",
+      "engine": "Katana/Playwright/ZAP",
+      "status": "planned_adapter",
+      "description": "Импорт предоставленного OpenAPI, GraphQL, Postman или HAR"
+    },
+    {
+      "name": "api_endpoint_inventory",
+      "family": "web_mapping",
+      "mode": "low_impact_active",
+      "engine": "Katana/Playwright/ZAP",
+      "status": "planned_adapter",
+      "description": "Сведение endpoint/method/role/object/action в карту API"
+    },
+    {
+      "name": "identity_flow_review",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Проверка границ регистрации, восстановления и MFA"
+    },
+    {
+      "name": "authentication_review",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Контролируемая проверка механизмов аутентификации тестовыми аккаунтами"
+    },
+    {
+      "name": "session_management_review",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "TTL, logout, rotation, cookie flags, invalidation"
+    },
+    {
+      "name": "authorization_matrix_test",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Горизонтальные и вертикальные права двух тестовых ролей"
+    },
+    {
+      "name": "api_object_access_test",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "BOLA/BOPLA/BFLA с тестовыми объектами"
+    },
+    {
+      "name": "csrf_control_test",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Проверки anti-CSRF на разрешённых неразрушающих действиях"
+    },
+    {
+      "name": "cors_policy_review",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Проверки доверенных Origin и credentials"
+    },
+    {
+      "name": "oauth_oidc_review",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Redirect, state, nonce, PKCE, token audience и logout"
+    },
+    {
+      "name": "input_validation_test",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Валидация и нормализация входных параметров на стенде"
+    },
+    {
+      "name": "injection_control_test",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Контролируемая проверка SQLi/XSS/SSRF/SSTI/XXE и других классов на стенде"
+    },
+    {
+      "name": "file_handling_review",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Upload/download, media, content-type, access policy"
+    },
+    {
+      "name": "business_logic_test",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Проверка состояний заказа, оплаты, баланса, лимитов, идемпотентности на тестовых данных"
+    },
+    {
+      "name": "resource_limit_test",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Небольшая проверка rate controls только в согласованном окне"
+    },
+    {
+      "name": "api_contract_test",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Ошибки схемы, избыточные поля, версии и граничные значения"
+    },
+    {
+      "name": "client_security_review",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "DOM XSS, CSP, storage, service workers, dependency trust"
+    },
+    {
+      "name": "cache_security_review",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Cache-Control, пользовательские данные, shared cache"
+    },
+    {
+      "name": "error_handling_review",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "ZAP/Burp-compatible/Playwright/custom validators",
+      "status": "planned_adapter",
+      "description": "Информационные утечки в ошибках и ошибочные статусы"
+    },
+    {
+      "name": "port_inventory",
+      "family": "infrastructure",
+      "mode": "controlled_active",
+      "engine": "Nmap/tcpdump/SSL/tshark",
+      "status": "planned_adapter",
+      "description": "Ограниченная проверка согласованных TCP/UDP сервисов"
+    },
+    {
+      "name": "service_protocol_review",
+      "family": "infrastructure",
+      "mode": "controlled_active",
+      "engine": "Nmap/tcpdump/SSL/tshark",
+      "status": "planned_adapter",
+      "description": "Версии и конфигурация разрешённых сетевых протоколов"
+    },
+    {
+      "name": "network_path_review",
+      "family": "infrastructure",
+      "mode": "controlled_active",
+      "engine": "Nmap/tcpdump/SSL/tshark",
+      "status": "planned_adapter",
+      "description": "DNS/TLS/proxy/ACL/routing с границами scope"
+    },
+    {
+      "name": "firewall_policy_review",
+      "family": "infrastructure",
+      "mode": "controlled_active",
+      "engine": "Nmap/tcpdump/SSL/tshark",
+      "status": "planned_adapter",
+      "description": "Анализ предоставленных ACL/WAF/firewall правил офлайн"
+    },
+    {
+      "name": "packet_capture_analyze",
+      "family": "infrastructure",
+      "mode": "controlled_active",
+      "engine": "Nmap/tcpdump/SSL/tshark",
+      "status": "planned_adapter",
+      "description": "Анализ предоставленного PCAP без новых проб"
+    },
+    {
+      "name": "mail_security_review",
+      "family": "infrastructure",
+      "mode": "controlled_active",
+      "engine": "Nmap/tcpdump/SSL/tshark",
+      "status": "planned_adapter",
+      "description": "SPF/DKIM/DMARC и соответствующие риски"
+    },
+    {
+      "name": "cloud_configuration_review",
+      "family": "infrastructure",
+      "mode": "controlled_active",
+      "engine": "Nmap/tcpdump/SSL/tshark",
+      "status": "planned_adapter",
+      "description": "Проверка конфигурации облака из предоставленного экспорта"
+    },
+    {
+      "name": "host_configuration_review",
+      "family": "infrastructure",
+      "mode": "controlled_active",
+      "engine": "Nmap/tcpdump/SSL/tshark",
+      "status": "planned_adapter",
+      "description": "Проверка предоставленных системных конфигураций"
+    },
+    {
+      "name": "python_static_review",
+      "family": "source_supply_chain",
+      "mode": "offline",
+      "engine": "Cybernova existing MCP",
+      "status": "deployed_mcp",
+      "description": "Анализ предоставленного Python source без выполнения"
+    },
+    {
+      "name": "static_code_scan",
+      "family": "source_supply_chain",
+      "mode": "offline",
+      "engine": "Semgrep/Trivy/Gitleaks/OSV/Grype/Syft/Checkov",
+      "status": "planned_adapter",
+      "description": "SAST по предоставленному исходному коду"
+    },
+    {
+      "name": "dependency_audit",
+      "family": "source_supply_chain",
+      "mode": "offline",
+      "engine": "Semgrep/Trivy/Gitleaks/OSV/Grype/Syft/Checkov",
+      "status": "planned_adapter",
+      "description": "SCA: версии, SBOM, CVE/OSV с проверкой достижимости"
+    },
+    {
+      "name": "secret_scan",
+      "family": "source_supply_chain",
+      "mode": "offline",
+      "engine": "Semgrep/Trivy/Gitleaks/OSV/Grype/Syft/Checkov",
+      "status": "planned_adapter",
+      "description": "Поиск секретов только в разрешённых репозиториях и файлах"
+    },
+    {
+      "name": "container_image_audit",
+      "family": "source_supply_chain",
+      "mode": "offline",
+      "engine": "Semgrep/Trivy/Gitleaks/OSV/Grype/Syft/Checkov",
+      "status": "planned_adapter",
+      "description": "Аудит контейнерного образа из локальной копии"
+    },
+    {
+      "name": "iac_configuration_audit",
+      "family": "source_supply_chain",
+      "mode": "offline",
+      "engine": "Semgrep/Trivy/Gitleaks/OSV/Grype/Syft/Checkov",
+      "status": "planned_adapter",
+      "description": "IaC: Terraform, Kubernetes, Docker и CI/CD"
+    },
+    {
+      "name": "sbom_generate",
+      "family": "source_supply_chain",
+      "mode": "offline",
+      "engine": "Semgrep/Trivy/Gitleaks/OSV/Grype/Syft/Checkov",
+      "status": "planned_adapter",
+      "description": "Формирование SBOM и происхождения библиотек"
+    },
+    {
+      "name": "cve_applicability_review",
+      "family": "source_supply_chain",
+      "mode": "offline",
+      "engine": "Semgrep/Trivy/Gitleaks/OSV/Grype/Syft/Checkov",
+      "status": "planned_adapter",
+      "description": "Проверка условий конкретной уязвимости и версии"
+    },
+    {
+      "name": "ip_network_summary",
+      "family": "source_supply_chain",
+      "mode": "offline",
+      "engine": "Cybernova existing MCP",
+      "status": "deployed_mcp",
+      "description": "Локальные расчёты CIDR, подсетей и интерфейсов"
+    },
+    {
+      "name": "evidence_capture",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova core / JSONL / SHA-256",
+      "status": "planned_adapter",
+      "description": "Сохранить разрешённые артефакты с временем, scope, контекстом"
+    },
+    {
+      "name": "evidence_hash",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
+      "description": "SHA-256, цепочка происхождения и целостность"
+    },
+    {
+      "name": "evidence_redact",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova research-platform Python (not MCP registered)",
+      "status": "implemented_offline_not_deployed",
+      "description": "Удалить токены, PII, платёжные данные и ключи"
+    },
+    {
+      "name": "finding_create",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova core / JSONL / SHA-256",
+      "status": "planned_adapter",
+      "description": "Создать гипотезу с минимально необходимыми доказательствами"
+    },
+    {
+      "name": "finding_correlate",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova core / JSONL / SHA-256",
+      "status": "planned_adapter",
+      "description": "Дедупликация фактов из нескольких движков"
+    },
+    {
+      "name": "finding_verify",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova core / JSONL / SHA-256",
+      "status": "planned_adapter",
+      "description": "Отделить детект от воспроизведения и подтверждения"
+    },
+    {
+      "name": "risk_assess",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova core / JSONL / SHA-256",
+      "status": "planned_adapter",
+      "description": "CVSS/экспозиция/влияние/компенсирующие контроли"
+    },
+    {
+      "name": "report_generate",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova core / JSONL / SHA-256",
+      "status": "planned_adapter",
+      "description": "Технический и управленческий отчёт из проверенных фактов"
+    },
+    {
+      "name": "retest_track",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova core / JSONL / SHA-256",
+      "status": "planned_adapter",
+      "description": "Отслеживать исправления, повторные проверки и регрессии"
+    },
+    {
+      "name": "audit_event_log",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova core / JSONL / SHA-256",
+      "status": "planned_adapter",
+      "description": "Неизменяемый журнал решений, инструментов, исключений и отказов"
+    },
+    {
+      "name": "vulnerability_scan",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "Planned generic adapter",
+      "status": "planned_adapter",
+      "description": "Authorized scanning engine adapter (Nuclei/ZAP etc), by default disabled; template allowlist and request budgets mandatory"
+    },
+    {
+      "name": "oast_observation",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "Planned generic adapter",
+      "status": "planned_adapter",
+      "description": "Explicitly approved OAST callback observation with privacy-safe trusted collector"
+    },
+    {
+      "name": "recon_search",
+      "family": "discovery",
+      "mode": "passive_public",
+      "engine": "Planned generic adapter",
+      "status": "planned_adapter",
+      "description": "Query public internet indexes through opt-in API providers with credentials and quotas"
+    },
+    {
+      "name": "http_intercept_review",
+      "family": "web_mapping",
+      "mode": "offline",
+      "engine": "Planned generic adapter",
+      "status": "planned_adapter",
+      "description": "Offline review of captured HTTP request/response and HAR; interactive proxy is a separately authorized operator task"
+    },
+    {
+      "name": "entity_disambiguation",
+      "family": "discovery",
+      "mode": "offline",
+      "engine": "Cybernova offline research.py",
+      "status": "implemented_offline_not_deployed",
+      "description": "Offline source-tagged company-name/domain disambiguation without implicit ownership/authorization"
+    },
+    {
+      "name": "threat_intelligence_review",
+      "family": "discovery",
+      "mode": "offline",
+      "engine": "Cybernova offline research.py",
+      "status": "implemented_offline_not_deployed",
+      "description": "Offline normalization of supplied CT/domain-typosquat/history/IOC claims; suspected is not proven malicious"
+    },
+    {
+      "name": "attack_path_model",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova offline research.py",
+      "status": "implemented_offline_not_deployed",
+      "description": "Offline hypothesis dependency graph with separately verified links, no exploit execution"
+    },
+    {
+      "name": "security_posture_summary",
+      "family": "evidence",
+      "mode": "offline",
+      "engine": "Cybernova offline research.py",
+      "status": "implemented_offline_not_deployed",
+      "description": "Coverage, verified severity, confidence axes; never a fake 100-point security grade"
+    }
+  ]
+}
