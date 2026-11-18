@@ -646,6 +646,38 @@
       "engine": "Cybernova core / JSONL / SHA-256",
       "status": "planned_adapter",
       "description": "Неизменяемый журнал решений, инструментов, исключений и отказов"
+    },
+    {
+      "name": "vulnerability_scan",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "Planned generic adapter",
+      "status": "planned_adapter",
+      "description": "Authorized scanning engine adapter (Nuclei/ZAP etc), by default disabled; template allowlist and request budgets mandatory"
+    },
+    {
+      "name": "oast_observation",
+      "family": "web_controls",
+      "mode": "controlled_active",
+      "engine": "Planned generic adapter",
+      "status": "planned_adapter",
+      "description": "Explicitly approved OAST callback observation with privacy-safe trusted collector"
+    },
+    {
+      "name": "recon_search",
+      "family": "discovery",
+      "mode": "passive_public",
+      "engine": "Planned generic adapter",
+      "status": "planned_adapter",
+      "description": "Query public internet indexes through opt-in API providers with credentials and quotas"
+    },
+    {
+      "name": "http_intercept_review",
+      "family": "web_mapping",
+      "mode": "offline",
+      "engine": "Planned generic adapter",
+      "status": "planned_adapter",
+      "description": "Offline review of captured HTTP request/response and HAR; interactive proxy is a separately authorized operator task"
     }
   ]
 }
