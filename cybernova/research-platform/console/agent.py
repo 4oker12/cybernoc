@@ -24,8 +24,8 @@ except ImportError:
 OLLAMA_URL = os.environ.get("CYBERNOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MCP_URL = os.environ.get("CYBERNOVA_MCP_URL", "http://127.0.0.1:18792/mcp")
 MODEL = os.environ.get("CYBERNOVA_MODEL", "cybernova-security:30b")
-MAX_ROUNDS = 3
-MAX_CALLS = 6
+MAX_ROUNDS = 5
+MAX_CALLS = 12
 MAX_HTTP_GETS = 3
 MAX_PROMPT = 10000
 MAX_RESULT = 6000
