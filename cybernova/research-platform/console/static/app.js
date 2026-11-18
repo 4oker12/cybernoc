@@ -44,8 +44,13 @@ function approvalCard(event){
   const card=node("div","approval-card");
   const title=node("div","approval-title","Qwen запрашивает разрешение");
   const name=node("div","approval-tool",event.name||"MCP-инструмент");
-  const reason=node("p","approval-reason",
-    event.reason||"Действие может повлиять на внешнюю систему. До подтверждения оно не выполнено.");
+  const explanation=[
+    event.purpose||"Qwen предложила этот вызов для текущей задачи.",
+    event.tool_description ? "Описание функции: "+event.tool_description : "",
+    event.reason||"Необходимо отдельное разрешение",
+    "Ни один вызов не был выполнен.",
+  ].filter(Boolean).join("\n");
+  const reason=node("p","approval-reason",explanation);
   const preview=node("pre","approval-args",JSON.stringify(event.arguments||{},null,2));
   const buttons=node("div","approval-buttons");
   const yes=node("button","approval-yes","Разрешить один раз");
