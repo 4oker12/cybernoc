@@ -161,7 +161,7 @@
     {
       "name": "http_header_review",
       "family": "transport",
-      "mode": "low_impact_active",
+      "mode": "offline",
       "engine": "Cybernova existing MCP",
       "status": "deployed_mcp",
       "description": "Локальная проверка предоставленных HTTP заголовков"
