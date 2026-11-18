@@ -36,6 +36,27 @@ def discover_binary(name: str | None) -> str | None:
     return None
 
 
+# Software inventory is independent from installation authorization.
+# Providers, libraries and reference documents are not executable binaries.
+NON_EXECUTABLE = {
+    "RDAP", "crt.sh", "Certspotter", "Shodan", "Censys", "FOFA",
+    "ZoomEye", "Wayback Machine", "dnsdumpster", "SecurityTrails",
+    "Exploit-DB", "Burp Suite", "Caido", "OpenAPI", "Postman",
+    "GraphQL schema", "cvss Python", "report.py",
+}
+BINARY_ALIASES = {
+    "amass intel": "amass", "nmap vulners NSE": "nmap",
+    "Metasploit auxiliary": "msfconsole", "ZAP": "zap.sh",
+    "testssl.sh": "testssl.sh", "theHarvester": "theHarvester",
+    "subjs": "subjs", "getJS": "getJS",
+}
+
+def inventory_command_for(name: str):
+    if name in NON_EXECUTABLE:
+        return None
+    return BINARY_ALIASES.get(name, name)
+
+
 def validated_inventory(manifest: dict) -> dict:
     engines = manifest.get("engines")
     if not isinstance(engines, list):
@@ -50,14 +71,14 @@ def build_plan(profile: str, manifest: dict) -> dict:
     inventory = validated_inventory(manifest)
     if profile not in PROFILES and profile != "all":
         raise ValueError("Unknown profile")
-    selected = PROFILES.get(profile, tuple(inventory))
+    selected = tuple(inventory) if profile in ("inventory","all") else PROFILES[profile]
     absent = [name for name in selected if name not in inventory]
     if absent:
         raise ValueError("Missing engine definitions: " + str(absent))
     items = []
     for name in selected:
         engine = inventory[name]
-        binary = name if engine["installation"] == "pdtm" else None
+        binary = inventory_command_for(name)
         installed = discover_binary(binary)
         items.append({
             "engine": name,
@@ -124,6 +145,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     plan = build_plan(args.profile, manifest)
+    if args.apply and args.profile in ("inventory","all"):
+        print(json.dumps({"ok":False,"error":"inventory/all profiles are read-only; choose baseline or expanded to install vetted software"}))
+        return 2
     if args.apply:
         try:
             result = _execute_pdtm(plan, bootstrap=args.bootstrap_pdtm,

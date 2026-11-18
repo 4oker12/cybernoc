@@ -1,7 +1,7 @@
 # CYBERNOVA — расширенный арсенал и политика установки
 
 **Версия 1.0 — 18 ноября 2026.** Основной технический план: PLAN.md.
-**Каталог движков:** engines/manifest.json — 107 записей, включая программы, SaaS-источники, библиотеки и reference frameworks. **Каталог MCP возможностей:** tools/catalog.json — 83 универсальных имени.
+**Каталог движков:** engines/manifest.json — 107 записей, включая программы, SaaS-источники, библиотеки и reference frameworks. **Каталог MCP возможностей:** tools/catalog.json — 85 универсальных имени.
 
 ## 1. Исходный список учтён
 
@@ -125,7 +125,7 @@ Shodan / Censys / FOFA / ZoomEye / SecurityTrails / Certspotter и другие 
 ## 5. Что действительно готово
 
 - Реестр 107 engine candidates с attribution, назначением, режимом и установочным статусом.
-- 83 универсальных capability с честной пометкой deployed / offline implemented / planned.
+- 85 универсальных capability с честной пометкой deployed / offline implemented / planned.
 - Dry-run by default install_arsenal.py с явным флагом согласия для установки девяти PDTM кандидатов.
 - Тесты установщика, scope/authorization policy и evidence redaction в проектной ветке.
 - Подробный план по исследованию SIMNET в PLAN.md.
