@@ -1,0 +1,46 @@
+name: Cybernova Research Platform Quality Gate
+on:
+  push:
+    branches:
+      - feature/cybernova-audit-architecture
+    paths:
+      - cybernova/research-platform/**
+      - .github/workflows/cybernova-research-platform.yml
+  pull_request:
+    paths:
+      - cybernova/research-platform/**
+      - .github/workflows/cybernova-research-platform.yml
+permissions:
+  contents: read
+jobs:
+  offline-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile new project source
+        run: python -m compileall -q cybernova/research-platform
+      - name: Run offline policy, evidence and installer unit tests
+        run: python -m unittest discover -s cybernova/research-platform/tests -p 'test_*.py' -v
+      - name: Check tool registry and dry-run installation inventory
+        run: |
+          python cybernova/research-platform/cli.py catalog > /tmp/cybernova-catalog-check.json
+          python cybernova/research-platform/cli.py engagement > /tmp/cybernova-engagement-check.json
+          python cybernova/research-platform/install_arsenal.py --profile inventory > /tmp/cybernova-engine-inventory.json
+          python cybernova/research-platform/install_arsenal.py --profile baseline > /tmp/cybernova-install-dry-run.json
+      - name: Assert catalog sizes and default-closed state
+        run: |
+          python - <<'PY'
+          import json
+          c=json.load(open('/tmp/cybernova-catalog-check.json'))
+          a=json.load(open('/tmp/cybernova-engine-inventory.json'))
+          e=json.load(open('/tmp/cybernova-engagement-check.json'))
+          assert c['valid'] and c['count']==83, c
+          assert a['selected']==107, a['selected']
+          assert not e['approved'], e
+          assert all(not row['execution_enabled'] for row in a['engines'])
+          print('CATALOG_AND_SCOPE_CI_OK')
+          PY
