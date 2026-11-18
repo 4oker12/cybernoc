@@ -19,6 +19,7 @@
       <div class="sidebar-section-title">РАБОЧЕЕ ПРОСТРАНСТВО</div>
       <nav class="navigation" aria-label="Разделы">
         <button class="nav-button is-current" type="button" data-nav="overview"><span class="nav-symbol">▦</span>Обзор</button>
+        <button class="nav-button" type="button" data-nav="agent"><span class="nav-symbol">◇</span>Qwen-исследователь</button>
         <button class="nav-button" type="button" data-nav="tools"><span class="nav-symbol">⌘</span>Инструменты</button>
         <button class="nav-button" type="button" data-nav="cases"><span class="nav-symbol">◎</span>Гипотезы и факты</button>
         <button class="nav-button" type="button" data-nav="report"><span class="nav-symbol">≡</span>Отчёт</button>
@@ -75,6 +76,32 @@
           <div class="panel next-action">
             <div><div class="eyebrow">РЕКОМЕНДУЕМЫЙ ПЕРВЫЙ ШАГ</div><h2>Сформировать план исследования</h2><p class="muted">Создай рабочую последовательность. Она покажет границы допуска, а не запустит сканирование.</p></div>
             <button id="quickPlan" class="primary-button" type="button">Открыть планировщик <span>→</span></button>
+          </div>
+        </section>
+        <section id="view-agent" class="page-view is-hidden">
+          <div class="page-intro compact">
+            <div class="eyebrow">AI RESEARCHER / LOCAL OLLAMA</div>
+            <h1>Qwen — исследователь</h1>
+            <p>Задача → реальный tool call → квитанция выполнения → аргументированный ответ.</p>
+          </div>
+          <div class="agent-layout">
+            <section class="panel agent-task">
+              <div class="panel-heading"><h2>Новое исследование</h2><span class="status warning" id="agentBadge">OFF</span></div>
+              <p class="muted" id="agentStatus">Проверяем локальную модель.</p>
+              <form id="agentForm" autocomplete="off">
+                <label class="form-label" for="agentPrompt">Задача для Qwen</label>
+                <textarea class="field-input" id="agentPrompt" rows="8" maxlength="3000"
+                  placeholder="Изучи предоставленную архитектуру, составь карту компонентов, выдвини гипотезы и укажи какие данные нужны для верификации." required></textarea>
+                <p class="panel-note">Автономный агент видит только разрешённые локальные функции. Shell и сетевые сканирования ему не предоставлены.</p>
+                <button id="agentRun" type="submit" class="primary-button" disabled>Отправить исследователю →</button>
+              </form>
+            </section>
+            <section class="panel agent-response">
+              <div class="panel-heading"><div><div class="eyebrow">VERIFIABLE EXECUTION</div><h2>Ответ и фактические вызовы</h2></div><span class="status neutral" id="agentResultState">NO RUN</span></div>
+              <div class="muted" id="agentAnswer">Задачи ещё не запускались.</div>
+              <div class="result-heading"><h3>Реальные квитанции инструментов</h3></div>
+              <pre id="agentReceipts" class="result-output" aria-live="polite"></pre>
+            </section>
           </div>
         </section>
         <section id="view-tools" class="page-view is-hidden">
