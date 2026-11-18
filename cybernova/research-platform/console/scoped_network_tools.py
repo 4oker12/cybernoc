@@ -11,7 +11,10 @@ import socket
 import ssl
 from urllib.parse import urlsplit
 
-from .traffic_tools import _definition
+try:
+    from .traffic_tools import _definition
+except ImportError:
+    from traffic_tools import _definition
 
 SCOPED_TOOLS = [
     _definition("scoped_dns_resolve",
