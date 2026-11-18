@@ -25,12 +25,16 @@ try:
     from .tool_policy import REVIEWED_TOOLS
     from .traffic_intelligence import analyze_har, analyze_js, TrafficError
     from .traffic_tools import TrafficToolClient, LOCAL_TOOLS, MAX_ARTIFACTS
+    from .domain_intelligence import PARSERS, DomainError
+    from .domain_tools import DOMAIN_TOOLS
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL
     from followups import generate_followups
     from tool_policy import REVIEWED_TOOLS
     from traffic_intelligence import analyze_har, analyze_js, TrafficError
     from traffic_tools import TrafficToolClient, LOCAL_TOOLS, MAX_ARTIFACTS
+    from domain_intelligence import PARSERS, DomainError
+    from domain_tools import DOMAIN_TOOLS
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -88,7 +92,7 @@ class FollowupsRequest(BaseModel):
 
 class ImportRequest(BaseModel):
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
-    kind: str = Field(pattern="^(har|javascript)$")
+    kind: str = Field(pattern="^(har|javascript|openapi|log|config|python|dependencies|tls|pcap)$")
     content: str = Field(min_length=1, max_length=6_000_000)
 
 
@@ -155,7 +159,7 @@ def status():
         mcp_ok = True
     except Exception:
         remote_tools, mcp_ok = [], False
-    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS]
+    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS]
     return {
         "model": MODEL,
         "ollama_ready": _ollama_health(),
@@ -165,7 +169,8 @@ def status():
         "others_require_approval": sorted(set(tools) - REVIEWED_TOOLS),
         "tools_selection": "automatic_qwen",
         "http_get": "available_for_preconfigured_mcp_hosts_only",
-        "traffic_intelligence": "offline_har_and_javascript_analysis",
+        "traffic_intelligence": "offline_multi_domain_analysis",
+        "import_kinds": ["har", "javascript"] + sorted(PARSERS),
         "mode": "loopback_only",
         "version": "0.1.0",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -184,9 +189,13 @@ def import_artifact(payload: ImportRequest):
         if len(state["traffic_artifacts"]) >= MAX_ARTIFACTS:
             raise HTTPException(status_code=409, detail="artifact_limit_reached")
         try:
-            artifact = (analyze_har(payload.content) if payload.kind == "har"
-                        else analyze_js(payload.content))
-        except TrafficError as exc:
+            if payload.kind == "har":
+                artifact = analyze_har(payload.content)
+            elif payload.kind == "javascript":
+                artifact = analyze_js(payload.content)
+            else:
+                artifact = PARSERS[payload.kind](payload.content)
+        except (TrafficError, DomainError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)[:160]) from exc
         artifact_id = "ti_" + secrets.token_urlsafe(12)
         state["traffic_artifacts"][artifact_id] = artifact
@@ -203,14 +212,14 @@ def import_artifact(payload: ImportRequest):
         # Add only sanitized metadata to next Qwen context, never the capture.
         state["history"].append({
             "role": "user",
-            "content": "Локально импортирован мой артефакт Traffic Intelligence: "
+            "content": "Локально импортирован мой исследовательский артефакт: "
                        + json.dumps(summary, ensure_ascii=False)
-                       + ". Для исследования доступны traffic_* инструменты.",
+                       + ". Для исследования доступны traffic_* и research_* инструменты.",
         })
         state["history"].append({
             "role": "assistant",
-            "content": "Импорт выполнен офлайн. Значения cookie, токены, тела ответов "
-                       "и исходный JS не сохранены. Жду исследовательскую задачу.",
+            "content": "Импорт обработан офлайн. Сохраняются только извлечённые "
+                       "метаданные и гипотезы; сырые данные удалены. Жду задачу.",
         })
         state["history"] = state["history"][-MAX_HISTORY:]
     return {"session_id": sid, **summary}
