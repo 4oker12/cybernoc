@@ -151,3 +151,5 @@
 .scope-status{font-size:11px;line-height:1.5;color:#a9dbbd;margin:9px 0 0}
 .scope-explain{color:#a8aba8;font-size:10px;line-height:1.5;margin:9px 0 0}
 .scope-settings[open]{margin-bottom:14px}
+
+.scope-settings[hidden]{display:none!important}
