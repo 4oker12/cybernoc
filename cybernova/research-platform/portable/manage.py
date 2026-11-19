@@ -193,6 +193,62 @@ def backup_to_host(directory: Path) -> dict:
             "warning":"Copy both files AND backup.key to another machine/storage securely"}
 
 
+def import_backup_key(source: Path) -> dict:
+    """Import a 32-byte key to a NEW container volume without printing it."""
+    if not ENV_FILE.is_file():
+        raise InstallError("run_init_first")
+    source = source.expanduser()
+    if source.is_symlink() or not source.is_file():
+        raise InstallError("backup_key_source_invalid")
+    key = source.read_bytes()
+    if len(key) != 32:
+        raise InstallError("backup_key_must_be_32_bytes")
+    _compose("build", APP)
+    command = [
+        "docker", "compose", "-f", str(ROOT / "compose.yaml"),
+        "run", "--rm", "--no-deps", "-T", APP,
+        "python", "-m", "console.portable_credentials", "import-backup-key",
+    ]
+    result = subprocess.run(command, cwd=ROOT, input=key, capture_output=True)
+    if result.returncode:
+        raise InstallError("backup_key_import_failed_or_key_already_exists")
+    return {"backup_key_imported": True, "key_printed": False,
+            "next": "python manage.py restore --from PATH_TO_BACKUP.cnbk"}
+
+
+def restore_from_host(archive: Path) -> dict:
+    """Restore onto a NEW /data database; never replace a running investigation."""
+    if not ENV_FILE.is_file():
+        raise InstallError("run_init_first")
+    archive = archive.expanduser().absolute()
+    manifest = Path(str(archive) + ".manifest.json")
+    if (archive.is_symlink() or not archive.is_file()
+            or manifest.is_symlink() or not manifest.is_file()
+            or archive.suffix != ".cnbk"):
+        raise InstallError("archive_or_manifest_invalid")
+    # Never mutate an active database or stop active services implicitly.
+    if _compose("ps", "--status", "running", "-q", APP, capture=True).strip():
+        raise InstallError("stop_cybernova_before_restore")
+    _compose("build", APP)
+    command = [
+        "docker", "compose", "-f", str(ROOT / "compose.yaml"),
+        "run", "--rm", "--no-deps", "-T",
+        "--volume", str(archive.parent) + ":/restore:ro", APP,
+        "python", "-m", "console.backup", "restore",
+        "/restore/" + archive.name, "--to", "/data/communications.sqlite3",
+    ]
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+    if result.returncode:
+        raise InstallError("restore_failed_check_key_manifest_and_empty_database")
+    return {
+        "database_restored": True,
+        "archive": str(archive),
+        "overwrite": False,
+        "next": "python manage.py up",
+        "note": "Only the communications SQLite DB was restored; original raw artifacts, models, API keys and scope must be provisioned separately.",
+    }
+
+
 def wizard() -> dict:
     print("Cybernova Portable — мастер первого запуска")
     print("1 — своя модель через Ollama (локально / Vast)")
@@ -337,6 +393,10 @@ def main():
     x.add_argument("--to",required=True,type=Path)
     x=commands.add_parser("backup",help="Online encrypted DB snapshot to a host directory")
     x.add_argument("--to",type=Path,required=True)
+    x=commands.add_parser("import-backup-key",help="Import existing binary backup key into a fresh Docker volume")
+    x.add_argument("--from",dest="source",required=True,type=Path)
+    x=commands.add_parser("restore",help="Restore archive to a NEW database while service is stopped")
+    x.add_argument("--from",dest="source",required=True,type=Path)
     x=commands.add_parser("stage-restore",help="Verify encrypted backup on new machine without replacing database")
     x.add_argument("--from",dest="archive",type=Path,required=True)
     x.add_argument("--key-file",type=Path,required=True)
@@ -373,6 +433,10 @@ def main():
         elif args.cmd=="init-backup-key":
             exec_in_container("python","-m","console.backup","init-key",capture=False)
             result={"key_initialized":True,"reminder":"Export key to another machine"}
+        elif args.cmd=="import-backup-key":
+            result=import_backup_key(args.source)
+        elif args.cmd=="restore":
+            result=restore_from_host(args.source)
         elif args.cmd=="export-backup-key":
             dst=args.to.expanduser().resolve()
             if dst.exists() or dst.is_symlink():
