@@ -696,6 +696,7 @@ def communication_resume(payload: ResumeTaskRequest):
     sid, state = _session(None)
     with state["lock"]:
         state["task_id"] = payload.task_id
+        state["scope"] = research_scope_store().load(payload.task_id)
         state["history"] = [
             {"role": "assistant" if row["actor"] == "qwen" else "user",
              "content": row["body"][:10000]}
@@ -704,7 +705,7 @@ def communication_resume(payload: ResumeTaskRequest):
             and row["kind"] in {"instruction", "feedback", "result"}
         ][-MAX_HISTORY:]
         state["turns"] = len([x for x in state["history"] if x["role"] == "assistant"])
-    return {"session_id": sid, "task": task,
+    return {"session_id": sid, "task": task, "scope": state["scope"],
             "messages": dialog["messages"], "turn": state["turns"]}
 
 
