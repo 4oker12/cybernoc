@@ -214,6 +214,32 @@ class CollaborationStore:
                              status="running")
             return self.read(task_id)
 
+    def update_goal(self, task_id: str, goal: str) -> dict:
+        """Revise the task at a safe pause point; never rewrite past messages."""
+        if not isinstance(goal, str) or not 1 <= len(goal.strip()) <= MAX_GOAL or "\x00" in goal:
+            raise CollaborationError("invalid_collaboration_goal")
+        revised = goal.strip()
+        with self.lock:
+            run = self.read(task_id)
+            if run["state"] != "paused":
+                raise CollaborationError("collaboration_must_be_paused_to_edit")
+            if run["goal"] == revised:
+                return run
+            with self.comm._lock, self.comm._connection() as db:
+                db.execute(
+                    "UPDATE collaboration_runs SET goal=?,updated_at=? "
+                    "WHERE task_id=? AND state='paused'",
+                    (revised, _utc(), task_id),
+                )
+            # Scope and tool approval policy remain unchanged. The revision
+            # is appended to the immutable conversation history.
+            self.comm.append(
+                task_id, "human", "instruction",
+                "Новая редакция задачи (заменяет исходную цель):\n" + revised,
+                status="idle",
+            )
+            return self.read(task_id)
+
     def finish(self, task_id: str) -> dict:
         """Only the owner explicitly closes the durable conversation."""
         with self.lock:
@@ -299,4 +325,12 @@ def researcher_messages(run: dict) -> tuple[list[dict], str]:
             context.append({"role": "assistant", "content": item["body"][:9500]})
     if context[-1]["role"] != "user" or len(context) < 2:
         raise CollaborationError("researcher_waits_for_mentor")
-    return context[-15:-1], context[-1]["content"]
+    previous = context[:-1]
+    if len(previous) > 14:
+        previous = [previous[0]] + previous[-13:]
+    # Always deliver the *latest* goal, even after many exchanges pushed the
+    # original task out of the researcher's rolling context window.
+    prompt = (context[-1]["content"] +
+              "\n\nАктуальная редакция задачи пользователя "
+              "(имеет приоритет над прежними редакциями):\n" + run["goal"])
+    return previous, prompt
