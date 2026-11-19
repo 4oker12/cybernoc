@@ -6,7 +6,10 @@ cannot impersonate ChatGPT or choose another task ID.
 """
 from __future__ import annotations
 
-from .communication import CommunicationStore, CommunicationError
+try:
+    from .communication import CommunicationStore, CommunicationError
+except ImportError:
+    from communication import CommunicationStore, CommunicationError
 
 
 COMMUNICATION_TOOLS = [
