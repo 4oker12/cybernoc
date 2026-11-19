@@ -62,6 +62,57 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(mcp.calls,[("ip_network_summary",{"cidr":"192.0.2.7/24"})])
         self.assertIn("192.0.2.0/24",out["answer"])
 
+    def test_reasoning_content_is_preserved_between_deepseek_tool_rounds(self):
+        mcp=FakeMCP()
+        lm=FakeOllama([
+            {"role":"assistant","content":"","reasoning_content":"tool decision context",
+             "tool_calls":[{"function":{"name":"ip_network_summary",
+                 "arguments":{"cidr":"192.0.2.7/24"}}}]},
+            {"role":"assistant","content":"Subnet checked"},
+        ])
+        out=Agent(lm,lambda:mcp).run([],"Check this subnet")
+        second_context=lm.prompts[1][0]
+        assistant=next(x for x in second_context
+                       if x.get("role")=="assistant" and x.get("tool_calls"))
+        self.assertEqual(assistant["reasoning_content"],"tool decision context")
+        self.assertEqual(out["answer"],"Subnet checked")
+
+    def test_approved_browser_submit_resumes_agent_tool_loop(self):
+        import time
+        from console.tool_policy import schema_digest
+        browser_submit = {
+            "name": "browser_submit",
+            "description": "Approved browser submit",
+            "inputSchema": {"type": "object", "properties": {
+                "name": {"type": "string"}}, "required": ["name"],
+                "additionalProperties": False},
+        }
+        class BrowserMCP(FakeMCP):
+            def initialize(self):
+                return TOOLS + [browser_submit]
+            def call(self, name, args):
+                self.calls.append((name,args))
+                if name == "browser_submit":
+                    return {"ok": True, "submitted": True}, False
+                if name == "ip_network_summary":
+                    return {"ok": True, "network": "192.0.2.0/24"}, False
+                return {"ok": False, "error": "unknown"}, True
+        mcp=BrowserMCP()
+        lm=FakeOllama([
+            calls(("ip_network_summary",{"cidr":"192.0.2.7/24"})),
+            {"role":"assistant","content":"Продолжила после разрешённого действия"},
+        ])
+        approval={
+            "tool":"browser_submit","args":{"name":"Confirm booking"},
+            "schema_hash":schema_digest(browser_submit),"created_at":time.time(),
+        }
+        out=Agent(lm,lambda:mcp).execute_approved(approval,[])
+        self.assertEqual(out["tool_calls"],2)
+        self.assertEqual(out["events"][0]["type"],"approved_tool_result")
+        self.assertIn(("browser_submit",{"name":"Confirm booking"}),mcp.calls)
+        self.assertIn(("ip_network_summary",{"cidr":"192.0.2.7/24"}),mcp.calls)
+        self.assertEqual(out["answer"],"Продолжила после разрешённого действия")
+
     def test_new_tool_is_proposed_not_executed(self):
         mcp=FakeMCP();lm=FakeOllama([calls(("arbitrary_shell",{"command":"id"})),
                                    {"role":"assistant","content":"Нужно разрешение"}])

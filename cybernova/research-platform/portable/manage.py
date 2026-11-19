@@ -66,11 +66,13 @@ def _write_new(path: Path, data: str):
 
 
 def init(provider: str, model: str, base_url: str = "") -> dict:
-    if provider not in {"ollama", "openai_compatible"}:
+    if provider not in {"ollama", "openai_compatible", "deepseek"}:
         raise InstallError("invalid_provider")
     if not MODEL_RE.fullmatch(model):
         raise InstallError("invalid_model_name")
-    if provider == "openai_compatible" and not URL_RE.fullmatch(base_url):
+    if provider == "deepseek" and not base_url:
+        base_url = "https://api.deepseek.com"
+    if provider in {"openai_compatible", "deepseek"} and not URL_RE.fullmatch(base_url):
         raise InstallError("remote_base_url_must_be_https")
     if provider == "ollama" and base_url:
         raise InstallError("ollama_base_url_not_needed")
@@ -93,13 +95,13 @@ def init(provider: str, model: str, base_url: str = "") -> dict:
         "CYBERNOVA_OLLAMA_URL=http://ollama:11434/api/chat\n"
         "CYBERNOVA_LLM_BASE_URL=" + base_url + "\n"
         "CYBERNOVA_LLM_API_KEY_FILE=" +
-        ("/data/model_api_key" if provider=="openai_compatible" else "") +
+        ("/data/model_api_key" if provider in {"openai_compatible", "deepseek"} else "") +
         "\n"
     )
     _write_new(ENV_FILE, env)
     return {
         "initialized":True, "provider":provider, "model":model,
-        "next": "python manage.py set-key" if provider == "openai_compatible"
+        "next": "python manage.py set-key" if provider in {"openai_compatible", "deepseek"}
                 else "python manage.py up; python manage.py pull-model",
     }
 
@@ -107,7 +109,10 @@ def init(provider: str, model: str, base_url: str = "") -> dict:
 def set_key(rotate: bool = False) -> dict:
     if not ENV_FILE.is_file():
         raise InstallError("run_init_first")
-    if "CYBERNOVA_LLM_PROVIDER=openai_compatible" not in ENV_FILE.read_text():
+    configured = ENV_FILE.read_text()
+    if not any(line in configured for line in (
+            "CYBERNOVA_LLM_PROVIDER=openai_compatible",
+            "CYBERNOVA_LLM_PROVIDER=deepseek")):
         raise InstallError("remote_provider_not_selected")
     key = getpass.getpass("API key (input hidden): ").strip()
     if not 8 <= len(key) <= 10000 or any(ord(c)<32 for c in key):
@@ -252,13 +257,22 @@ def restore_from_host(archive: Path) -> dict:
 def wizard() -> dict:
     print("Cybernova Portable — мастер первого запуска")
     print("1 — своя модель через Ollama (локально / Vast)")
-    print("2 — внешняя модель через OpenAI-совместимый API")
-    selection=input("Режим [1/2]: ").strip()
-    if selection not in {"1","2"}:
+    print("2 — другой внешний OpenAI-compatible API")
+    print("3 — DeepSeek API (рекомендуется deepseek-flash)")
+    selection=input("Режим [1/2/3]: ").strip()
+    if selection not in {"1","2","3"}:
         raise InstallError("invalid_wizard_selection")
     if selection=="1":
         model=input("Модель Ollama [qwen2.5-coder:7b]: ").strip() or "qwen2.5-coder:7b"
         result=init("ollama",model)
+    elif selection=="3":
+        model=input("DeepSeek model [deepseek-flash]: ").strip() or "deepseek-flash"
+        print("ВНИМАНИЕ: история чата, контекст и результаты инструментов")
+        print("будут передаваться DeepSeek API.")
+        if input("Разрешаю внешний инференс? [yes/NO]: ").strip()!="yes":
+            raise InstallError("cloud_inference_not_approved")
+        result=init("deepseek",model)
+        set_key()
     else:
         model=input("Идентификатор модели у провайдера: ").strip()
         url=input("HTTPS API base URL (пример https://api.example/v1): ").strip()
@@ -373,7 +387,7 @@ def main():
     commands=p.add_subparsers(dest="cmd",required=True)
     commands.add_parser("wizard",help="Interactive first-run setup with clear privacy/cost prompts")
     x=commands.add_parser("init",help="Create local config and empty allowlist")
-    x.add_argument("--provider",choices=["ollama","openai_compatible"],required=True)
+    x.add_argument("--provider",choices=["ollama","openai_compatible","deepseek"],required=True)
     x.add_argument("--model",default="qwen2.5-coder:7b")
     x.add_argument("--base-url",default="")
     x=commands.add_parser("set-key",help="Import API key into private named volume")

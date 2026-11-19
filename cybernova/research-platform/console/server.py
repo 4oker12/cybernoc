@@ -32,6 +32,7 @@ try:
     from .scoped_network_tools import SCOPED_TOOLS
     from .browser_tools import BROWSER_TOOLS
     from .devtools_network import NETWORK_TOOLS
+    from .browser_control import BROWSER_CONTROL_TOOLS, BrowserSession
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -54,6 +55,7 @@ except ImportError:
     from scoped_network_tools import SCOPED_TOOLS
     from browser_tools import BROWSER_TOOLS
     from devtools_network import NETWORK_TOOLS
+    from browser_control import BROWSER_CONTROL_TOOLS, BrowserSession
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -100,6 +102,13 @@ async def lifespan(app):
     finally:
         if worker is not None:
             worker.stop()
+        with sessions_lock:
+            active_sessions = list(sessions.values())
+            sessions.clear()
+        for item in active_sessions:
+            browser = item.get("browser_session")
+            if browser is not None:
+                browser.close()
 
 
 app = FastAPI(title="Cybernova Console", version="0.2.0",
@@ -169,12 +178,25 @@ class ApprovalRequest(BaseModel):
 
 
 
+def _close_browser_session(state: dict | None):
+    if not isinstance(state, dict):
+        return
+    browser = state.get("browser_session")
+    if browser is not None:
+        try:
+            browser.close()
+        except Exception:
+            pass
+        state["browser_session"] = None
+
+
 def _session(session_id: str | None) -> tuple[str, dict]:
     now = time.monotonic()
     with sessions_lock:
         for key in list(sessions):
             if now - sessions[key]["last"] > SESSION_TTL_SECONDS:
-                sessions.pop(key, None)
+                expired = sessions.pop(key, None)
+                _close_browser_session(expired)
         if session_id and session_id in sessions:
             session = sessions[session_id]
             session["last"] = now
@@ -183,10 +205,12 @@ def _session(session_id: str | None) -> tuple[str, dict]:
         key = secrets.token_urlsafe(24)
         session = {"last": now, "history": [], "lock": RLock(), "turns": 0,
                    "followups_turn": None, "followups": [], "pending_approvals": {},
-                   "traffic_artifacts": {}, "scope": scope_profile([]), "task_id": None}
+                   "traffic_artifacts": {}, "browser_session": None,
+                   "scope": scope_profile([]), "task_id": None}
         sessions[key] = session
         while len(sessions) > MAX_SESSIONS:
-            sessions.popitem(last=False)
+            _, evicted = sessions.popitem(last=False)
+            _close_browser_session(evicted)
         return key, session
 
 
@@ -354,18 +378,18 @@ def status():
         mcp_ok = True
     except Exception:
         remote_tools, mcp_ok = [], False
-    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS]
+    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + BROWSER_CONTROL_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS]
     return {
-        "model": MODEL,
+        "model": getattr(agent.ollama, "model", MODEL),
         "source_commit": os.environ.get("CYBERNOVA_SOURCE_COMMIT","unknown"),
         "ollama_ready": _ollama_health() if os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama") == "ollama" else False,
         "model_provider": os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama"),
-        "model_remote_configured": os.environ.get("CYBERNOVA_LLM_PROVIDER") == "openai_compatible",
+        "model_remote_configured": os.environ.get("CYBERNOVA_LLM_PROVIDER") in {"openai_compatible", "deepseek"},
         "mcp_ready": mcp_ok,
         "tools": tools,
         "auto_executable": sorted(set(tools) & REVIEWED_TOOLS),
         "others_require_approval": sorted(set(tools) - REVIEWED_TOOLS),
-        "tools_selection": "automatic_qwen",
+        "tools_selection": "automatic_model",
         "developer": {"mode": "task_isolated_git_worktree", "self_modification": True,
                       "code_edit": True, "unprivileged_tests": True,
                       "push_and_pr": "require_approval_and_write_credentials"},
@@ -373,6 +397,12 @@ def status():
         "traffic_intelligence": "offline_multi_domain_analysis",
         "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
         "browser_network": "isolated_chromium_readonly_metadata",
+        "browser": {"mode": "interactive_isolated_chromium",
+                    "actions": ["navigate", "snapshot", "follow_link", "fill",
+                                "select", "click_button", "back", "wait"],
+                    "submit": "one_same_origin_post_requires_user_approval",
+                    "downloads": "blocked", "websockets": "blocked",
+                    "private_network": "blocked"},
         "research_scope": {"type": "owner_selected_per_task", "active_actions": "propose_and_confirm"},
         "browser": {"mode": "readonly_https_html", "configured_hosts": [x.strip() for x in os.environ.get("CYBERNOVA_BROWSER_HOSTS", "").split(",") if x.strip()], "live_javascript": False},
         "lab_scanners": inventory(),
@@ -505,7 +535,8 @@ def chat(payload: ChatRequest):
             current_agent = Agent(
                 ollama=agent.ollama,
                 mcp_factory=lambda: CommunicationToolClient(
-                    TrafficToolClient(MCPClient(), state["traffic_artifacts"], scope=state["scope"]),
+                    TrafficToolClient(MCPClient(), state["traffic_artifacts"],
+                                      scope=state["scope"], browser_state=state),
                     store, task_id,
                 ),
             )
@@ -570,21 +601,29 @@ def approve(payload: ApprovalRequest):
             current_agent = Agent(
                 ollama=agent.ollama,
                 mcp_factory=lambda: CommunicationToolClient(
-                    TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
+                    TrafficToolClient(MCPClient(), state["traffic_artifacts"],
+                                      scope=state["scope"], browser_state=state),
                     communication_store(), state["task_id"]),
             )
-            result = current_agent.execute_approved(item, state["history"])
+            result = current_agent.execute_approved(
+                item, state["history"], scope=state["scope"],
+            )
         except Exception as exc:
             raise HTTPException(
                 status_code=502, detail="approved_action_failed: " + type(exc).__name__
             ) from exc
+        requests = result.pop("approval_requests", [])
         state["history"].append({
             "role": "user", "content": "Разрешаю один вызов MCP-инструмента: " + item["tool"],
         })
         state["history"].append({"role": "assistant", "content": result["answer"][:16000]})
         state["history"] = state["history"][-MAX_HISTORY:]
-        state["turns"] += 1
         state["pending_approvals"].clear()
+        for pending in requests[:6]:
+            state["pending_approvals"][pending["request_id"]] = {
+                **pending, "turn": state["turns"] + 1,
+            }
+        state["turns"] += 1
         communication_store().append(state["task_id"], "human", "decision",
                                      "Разрешён один вызов " + item["tool"])
         EvidenceJournal(communication_store()).record_tool_events(
@@ -592,9 +631,9 @@ def approve(payload: ApprovalRequest):
         )
         communication_store().append(state["task_id"], "qwen", "result",
                                      str(result["answer"])[:12000],
-                                     status="completed")
+                                     status="blocked" if requests else "completed")
         return {"ok": True, "decision": "approved", "session_id": payload.session_id,
-                "task_id": state["task_id"],
+                "task_id": state["task_id"], "pending_approval_count": len(requests),
                 "turn": state["turns"], **result}
 
 

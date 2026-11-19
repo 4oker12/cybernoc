@@ -1,7 +1,7 @@
 # Cybernova portable, unprivileged, local-first deployment.
 FROM python:3.12-slim
 
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /app
 
 ARG CYBERNOVA_GIT_SHA=unknown
@@ -11,6 +11,8 @@ ENV CYBERNOVA_SOURCE_COMMIT=${CYBERNOVA_GIT_SHA}
 
 COPY cybernova/research-platform/console/requirements.txt /tmp/cybernova-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/cybernova-requirements.txt && \
+    python -m playwright install --with-deps chromium && \
+    chmod -R a+rX /ms-playwright && \
     groupadd -g 10001 cybernova && \
     useradd -M -u 10001 -g 10001 -s /usr/sbin/nologin cybernova && \
     mkdir -p /data /app/tool_gateway && chown -R 10001:10001 /data
