@@ -36,6 +36,7 @@ try:
     from .safe_terminal import TERMINAL_TOOLS, safe_terminal
     from .research_web import research_web_call
     from .collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
+    from .shared_tool_support import preflight as gpt_tool_preflight
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -63,6 +64,7 @@ except ImportError:
     from safe_terminal import TERMINAL_TOOLS, safe_terminal
     from research_web import research_web_call
     from collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
+    from shared_tool_support import preflight as gpt_tool_preflight
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -343,8 +345,15 @@ def collaboration_step(payload: CollaborationActionRequest):
             tool_count = 0
             blocked = False
             if role == "chatgpt":
+                history = mentor_messages(run)
+                # Only the first mentor turn performs an automatic knowledge
+                # lookup; subsequent turns evaluate DeepSeek's actual evidence.
+                tool_evidence = gpt_tool_preflight(run["goal"], enabled=run["step"] == 0)
+                if tool_evidence["context"] and len(history[-1]["content"]) + len(tool_evidence["context"]) <= 12000:
+                    history[-1] = {**history[-1], "content":
+                                   history[-1]["content"] + tool_evidence["context"]}
                 outcome = chatgpt_chat(
-                    run["model"], mentor_messages(run),
+                    run["model"], history,
                     user_context=user_context_for(profile, "chatgpt"),
                     profile_instructions=MENTOR_PROFILE + "\n\n" +
                                          mode_instructions_for(profile, "chatgpt"),
@@ -454,7 +463,11 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
         store = gpt_chat_store()
         try:
             history = store.context(payload.thread_id) if payload.thread_id else []
-            outgoing = history + [{"role": "user", "content": payload.message.strip()}]
+            preflight = gpt_tool_preflight(payload.message.strip())
+            message_for_model = payload.message.strip()
+            if len(message_for_model) + len(preflight["context"]) <= 12000:
+                message_for_model += preflight["context"]
+            outgoing = history + [{"role": "user", "content": message_for_model}]
             profile = profile_settings_store().load()
             outcome = chatgpt_chat(
                 payload.model, outgoing,
@@ -471,7 +484,8 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
         except SIWCError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
     return {"thread_id": thread_id, "model": payload.model,
-            "answer": outcome["answer"], "source": outcome["source"]}
+            "answer": outcome["answer"], "source": outcome["source"],
+            "tool_events": preflight["events"]}
 
 
 @app.get("/api/siwc/status")
