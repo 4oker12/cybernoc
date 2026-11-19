@@ -187,6 +187,11 @@ def markdown_script():
     return FileResponse(ROOT / "static" / "markdown.js", media_type="text/javascript")
 
 
+@app.get("/static/markdown.js")
+def markdown_javascript():
+    return FileResponse(ROOT / "static" / "markdown.js", media_type="text/javascript")
+
+
 @app.get("/static/app.js")
 def javascript():
     return FileResponse(ROOT / "static" / "app.js", media_type="text/javascript")
