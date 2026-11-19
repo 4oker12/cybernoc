@@ -7,19 +7,31 @@ default to EMPTY; admin must explicitly authorize hostnames in scope.json.
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-GATEWAY_DIR = Path(__file__).resolve().parents[1] / "tool_gateway"
-if not (GATEWAY_DIR / "core.py").is_file():
+CANDIDATES = (
+    Path(__file__).resolve().parents[1] / "tool_gateway",
+    Path(__file__).resolve().parents[2] / "qwen-webui" / "mcp-gateway",
+)
+GATEWAY_DIR = next((item for item in CANDIDATES
+                    if (item / "core.py").is_file()), None)
+if GATEWAY_DIR is None:
     raise RuntimeError("portable_tool_gateway_sources_missing")
 sys.path.insert(0, str(GATEWAY_DIR))
 
 from core import (
     check_local_webui, review_http_headers, review_python_source, summarize_network,
 )
-from http_client import http_get as scoped_http_get, _load_scope
+import http_client as _scoped
+# Default-deny even if a source checkout includes an old nonempty scope.json.
+_scoped._SCOPE = Path(os.environ.get(
+    "CYBERNOVA_HTTP_SCOPE_FILE", "/__cybernova_no_scope_config__"
+))
+scoped_http_get = _scoped.http_get
+_load_scope = _scoped._load_scope
 
 mcp = FastMCP(
     "Cybernova Portable Tools", host="127.0.0.1", port=18792,
