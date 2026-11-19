@@ -26,8 +26,9 @@ https://developers.google.com/custom-search/v1/overview
 Before a query leaves the host, the adapter removes:
 - credentials, bearer values and key/value secret strings;
 - email addresses and MAC addresses;
-- private IPv4 addresses and local-only hostnames;
-- exact hostnames already selected as the target scope.
+- private IPv4 addresses and all hostnames/domain names (not just the selected target).
+  
+This intentionally makes searches product/CVE/error-focused rather than target-domain-focused.
 
 The agent should form short, generic technical queries (CVE, product/version,
 error code, protocol or vulnerability class). Do not search with subscriber
