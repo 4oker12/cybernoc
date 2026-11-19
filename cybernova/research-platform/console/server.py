@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 try:
-    from .agent import Agent, MCPClient, MODEL, OLLAMA_URL
+    from .agent import Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS
     from .followups import generate_followups
     from .tool_policy import REVIEWED_TOOLS
     from .traffic_intelligence import analyze_har, analyze_js, TrafficError
@@ -36,7 +36,7 @@ try:
     from .communication_worker import CommunicationWorker
     from .evidence import EvidenceJournal
 except ImportError:
-    from agent import Agent, MCPClient, MODEL, OLLAMA_URL
+    from agent import Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS
     from followups import generate_followups
     from tool_policy import REVIEWED_TOOLS
     from traffic_intelligence import analyze_har, analyze_js, TrafficError
@@ -358,7 +358,7 @@ def approve(payload: ApprovalRequest):
             raise HTTPException(status_code=404, detail="approval_not_found_or_used")
         if item["turn"] != state["turns"]:
             raise HTTPException(status_code=409, detail="approval_from_previous_turn")
-        if time.time() - item["created_at"] > 600:
+        if time.time() - item["created_at"] > APPROVAL_TTL_SECONDS:
             raise HTTPException(status_code=410, detail="approval_expired")
         if payload.decision == "deny":
             communication_store().append(
