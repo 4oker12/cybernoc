@@ -17,12 +17,14 @@ try:
     from .communication_tools import CommunicationToolClient
     from .evidence import EvidenceJournal
     from .traffic_tools import TrafficToolClient
+    from .research_scope import ResearchScopeStore
 except ImportError:
     from agent import Agent, MCPClient
     from communication import CommunicationStore
     from communication_tools import CommunicationToolClient
     from evidence import EvidenceJournal
     from traffic_tools import TrafficToolClient
+    from research_scope import ResearchScopeStore
 
 
 def _history_from_dialog(messages: list[dict]) -> tuple[list[dict], str] | None:
@@ -53,7 +55,9 @@ class CommunicationWorker:
         if self.agent_factory is not None:
             return self.agent_factory(task_id)
         return Agent(mcp_factory=lambda: CommunicationToolClient(
-            TrafficToolClient(MCPClient(), {}), self.store, task_id
+            TrafficToolClient(MCPClient(), {},
+                              scope=ResearchScopeStore().load(task_id)),
+            self.store, task_id
         ))
 
     def run_once(self) -> dict | None:
