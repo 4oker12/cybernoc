@@ -1079,7 +1079,7 @@ async function runUtility(){
 const expandedCollabMessages = new Set();
 
 function compactPreview(text, max=175){
-  const clean=String(text||"").replace(/\\s+/g," ").trim();
+  const clean=String(text||"").replace(/\s+/g," ").trim();
   return clean.length>max?clean.slice(0,max).trimEnd()+"…":clean;
 }
 
@@ -1092,7 +1092,7 @@ function renderCollabEntry(message){
     message.actor==="qwen"?"◈":"U"),node("strong","",author));
   article.append(heading);
   const full=String(message.body||"");
-  const plain=full.replace(/\\s+/g," ").trim();
+  const plain=full.replace(/\s+/g," ").trim();
   if(plain.length<=210){
     const body=node("div","collab-full");
     if(message.actor==="human")body.textContent=full;
