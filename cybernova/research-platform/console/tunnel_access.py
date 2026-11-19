@@ -22,7 +22,7 @@ except ImportError:
 
 DEFAULT_PORT = 18795
 DEFAULT_SECRET_FILE = "/workspace/cybernova-comm-private/web_access.txt"
-ALLOWED_STATIC = frozenset({"/", "/static/styles.css", "/static/app.js"})
+ALLOWED_STATIC = frozenset({"/", "/static/styles.css", "/static/app.js", "/static/markdown.js"})
 ALLOWED_GET = frozenset({"/api/status", "/api/comm/tasks", "/api/comm/events",
     "/api/comm/review-packet", "/api/comm/evidence", "/api/siwc/status",
     "/api/siwc/models", "/api/siwc/chats", "/api/siwc/chat", "/auth/callback"})
