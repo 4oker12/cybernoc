@@ -290,7 +290,7 @@ class Agent:
                     wants_research = bool(re.search(
                         r"(?i)(?:google|гугл|найди.{0,30}(?:интернет|сети|кейс|случа|форум)|"
                         r"поищи|реальн.{0,20}(?:кейс|инцидент)|похож.{0,20}(?:случ|кейс)|"
-                        r"форум|CVE-\\d{4}-\\d+|\\bCVE\\b|уязвимост|vulnerabilit|"
+                        r"форум|CVE-\d{4}-\d+|\bCVE\b|уязвимост|vulnerabilit|"
                         r"exploit|security advisory|incident report|bug bounty)",
                         text,
                     ))
