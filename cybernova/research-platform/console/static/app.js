@@ -366,6 +366,7 @@ function setMode(mode){
   $("gptSidebar").hidden=!gpt;
   $("collabSidebar").hidden=!collab;
   $("gptTopModel").hidden=!gpt;
+  $("quickTaskOpen").hidden=gpt;
   $("modelName").hidden=gpt;
   $("modelName").textContent=collab?"ChatGPT ↔ DeepSeek":state.qwenModel;
   document.querySelector(".connection-label").hidden=!qwen;
@@ -1340,6 +1341,172 @@ async function newCollab(){
   $("collabGoal").value="";
   void refreshCollabRuns();
 }
+// Quick task builder: declarative, safe prompts; no tool execution.
+const TASK_SCENARIOS = [
+  ["Сеть и конфигурация", [
+    ["DNS", "Проверить DNS: A/AAAA, CNAME, NS, MX, TXT и CAA; выявить ошибки разрешения имён и делегирования."],
+    ["TLS / SSL", "Исследовать TLS/SSL: сертификат, цепочку доверия, сроки, доступные протоколы, HSTS и конфигурационные риски."],
+    ["HTTP / CORS", "Проверить HTTP security headers, Content Security Policy, CORS, кэширование и раскрытие серверных компонентов."],
+    ["Карта сайта", "Составить карту публичных разделов, маршрутов, перенаправлений и архитектуры веб-приложения."],
+  ]],
+  ["Веб и API", [
+    ["API endpoints", "Инвентаризировать API: методы, URL, параметры, структуры запросов и ответов, требования авторизации."],
+    ["JavaScript", "Исследовать JavaScript, используемые библиотеки, версии зависимостей и потенциально небезопасные DOM-операции."],
+    ["Сессии / вход", "Проанализировать аутентификацию, cookie flags, CSRF и управление сеансами; при необходимости попросить оператора войти самостоятельно."],
+    ["Доступ / IDOR", "Исследовать потенциальные IDOR/BOLA/BFLA: сначала архитектуру и безопасные признаки, активные проверки только по отдельному разрешению."],
+  ]],
+  ["Безопасность и доказательства", [
+    ["CVE / advisory", "Сопоставить обнаруженные версии с первичными CVE и advisory; совпадение версии не считать доказанной эксплуатацией."],
+    ["XSS / SQLi / SSRF", "Построить гипотезы XSS, SQLi, SSRF и ошибок валидации по доступным данным; не применять опасные payload без разрешения."],
+    ["Утечки", "Изучить публично доступные технические файлы, метаданные и диагностические признаки без обхода контроля доступа."],
+    ["Отчёт", "Зафиксировать для каждой гипотезы наблюдение, доказательство, способ проверки, влияние, приоритет исправления и следующий шаг."],
+  ]],
+];
+const quickTaskBoxes = [];
+let quickTaskFieldId = "collabGoal";
+function showExportStatus(message){
+  const label=$("conversationExportStatus");
+  label.hidden=false;
+  label.textContent=message;
+}
+function activeExportRef(){
+  if(state.mode==="collab" && state.collabRun?.task_id)
+    return {mode:"collab",id:state.collabRun.task_id};
+  if(state.mode==="gpt" && state.gptThreadId)
+    return {mode:"gpt",id:state.gptThreadId};
+  if(state.mode==="qwen" && state.taskId)
+    return {mode:"research",id:state.taskId};
+  return null;
+}
+async function fetchCompleteConversation(format){
+  const ref=activeExportRef();
+  if(!ref)throw Error("Открой сохранённый диалог или начни задачу.");
+  const url="/api/conversation/export?mode="+encodeURIComponent(ref.mode)+
+    "&id="+encodeURIComponent(ref.id)+"&format="+encodeURIComponent(format);
+  const response=await fetch(url,{cache:"no-store"});
+  if(!response.ok){
+    let detail="HTTP "+response.status;
+    try{const body=await response.json();detail=body.detail||detail;}catch(_){}
+    throw Error(detail);
+  }
+  return {ref,body:await response.text()};
+}
+async function copyCompleteConversation(){
+  $("conversationCopy").disabled=true;
+  showExportStatus("Считываю полную историю из базы…");
+  try{
+    const result=await fetchCompleteConversation("md");
+    try{
+      if(!navigator.clipboard?.writeText)throw Error("clipboard_unavailable");
+      await navigator.clipboard.writeText(result.body);
+    }catch(_){
+      // Fallback for localhost pages without an authorized Clipboard API.
+      const box=document.createElement("textarea");
+      box.value=result.body;
+      box.setAttribute("readonly","");
+      box.style.position="fixed";box.style.opacity="0";
+      document.body.append(box);box.select();
+      try{
+        if(!document.execCommand("copy"))throw Error("copy_rejected");
+      }finally{box.remove();}
+    }
+    showExportStatus("Полная история скопирована. Перед передачей проверь, нет ли в ней секретов.");
+  }catch(err){showExportStatus("Копирование: "+String(err.message||err)+" Используй экспорт, если буфер запрещён.");}
+  finally{$("conversationCopy").disabled=false;}
+}
+async function downloadCompleteConversation(){
+  $("conversationExport").disabled=true;
+  const format=$("conversationExportFormat").value==="json"?"json":"md";
+  showExportStatus("Формирую полную выгрузку…");
+  try{
+    const {ref,body}=await fetchCompleteConversation(format);
+    const blob=new Blob([body],{type:format==="json"?"application/json;charset=utf-8":"text/markdown;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement("a");
+    link.href=url;
+    link.download="cybernova-"+ref.mode+"-"+ref.id+"."+format;
+    document.body.append(link);
+    link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    showExportStatus("Выгрузка подготовлена: "+format.toUpperCase()+". Файл содержит весь текст переписки.");
+  }catch(err){showExportStatus("Экспорт: "+String(err.message||err));}
+  finally{$("conversationExport").disabled=false;}
+}
+function selectedScenarioCount(){
+  return quickTaskBoxes.filter(x=>x.checked).length;
+}
+function updateQuickTaskCount(){
+  $("quickTaskCount").textContent="Выбрано: "+selectedScenarioCount();
+}
+function clearQuickSelection(){
+  for(const box of quickTaskBoxes)box.checked=false;
+  updateQuickTaskCount();
+}
+function initQuickTasks(){
+  const root=$("quickTaskOptions");
+  for(const [title,items] of TASK_SCENARIOS){
+    const group=node("fieldset","");
+    group.append(node("legend","",title));
+    for(const [label,description] of items){
+      const item=node("label","quick-task-option");
+      const check=node("input","");
+      check.type="checkbox";
+      check.value=description;
+      check.addEventListener("change",updateQuickTaskCount);
+      quickTaskBoxes.push(check);
+      item.append(check,node("span","",label));
+      item.title=description;
+      group.append(item);
+    }
+    root.append(group);
+  }
+  updateQuickTaskCount();
+}
+function openQuickTasks(fieldId){
+  quickTaskFieldId=fieldId;
+  $("quickTaskStatus").textContent="";
+  $("quickTaskDialog").showModal();
+}
+async function openQuickTaskForMode(){
+  if(state.mode==="gpt")return;
+  if(state.mode==="collab"){
+    if(state.collabRun && ["active","paused"].includes(state.collabRun.state)){
+      if($("collabEditPanel").hidden)await editCollabGoal();
+      if($("collabEditPanel").hidden)return;
+      return openQuickTasks("collabGoalEdit");
+    }
+    return openQuickTasks("collabGoal");
+  }
+  openQuickTasks("messageInput");
+}
+function applyQuickTasks(){
+  const field=$(quickTaskFieldId);
+  if(!field)return;
+  const chosen=quickTaskBoxes.filter(x=>x.checked).map(x=>x.value);
+  if(!chosen.length){
+    $("quickTaskStatus").textContent="Выбери хотя бы одно направление.";
+    return;
+  }
+  const existing=field.value.trim();
+  const additions=chosen.filter(text=>!existing.includes(text));
+  if(!additions.length){
+    $("quickTaskStatus").textContent="Все выбранные направления уже добавлены.";
+    return;
+  }
+  const appendix="Направления исследования:\n"+additions.map(x=>"- "+x).join("\n");
+  const composed=existing?(existing+"\n\n"+appendix):appendix;
+  const limit=field.maxLength>0?field.maxLength:10000;
+  if(composed.length>limit){
+    $("quickTaskStatus").textContent="Превышен лимит поля ("+limit+" символов). Сократи описание или выбор.";
+    return;
+  }
+  field.value=composed;
+  $("quickTaskDialog").close();
+  clearQuickSelection();
+  field.focus();
+  if(quickTaskFieldId==="collabGoalEdit")
+    $("collabStatus").textContent="Направления добавлены. Нажми «Сохранить изменения», затем «Продолжить».";
+}
 function init(){
   window.cybernovaWelcome=$("welcome").cloneNode(true);
   window.cybernovaGptWelcome=$("gptWelcome").cloneNode(true);
@@ -1357,6 +1524,16 @@ function init(){
   setUtilityPlaceholder();
   try{setSidebarCollapsed(window.localStorage.getItem("cybernova_sidebar_collapsed")==="1");}
   catch(_){setSidebarCollapsed(false);}
+  initQuickTasks();
+  $("quickTaskOpen").addEventListener("click",openQuickTaskForMode);
+  $("quickTaskStart").addEventListener("click",()=>openQuickTasks("collabGoal"));
+  $("quickTaskEdit").addEventListener("click",()=>openQuickTasks("collabGoalEdit"));
+  $("quickTaskClose").addEventListener("click",()=>$("quickTaskDialog").close());
+  $("quickTaskCancel").addEventListener("click",()=>$("quickTaskDialog").close());
+  $("quickTaskClear").addEventListener("click",clearQuickSelection);
+  $("quickTaskApply").addEventListener("click",applyQuickTasks);
+  $("conversationCopy").addEventListener("click",copyCompleteConversation);
+  $("conversationExport").addEventListener("click",downloadCompleteConversation);
   $("collabStart").addEventListener("click",startCollab);
   $("collabStop").addEventListener("click",stopCollab);
   $("collabFinish").addEventListener("click",finishCollab);
