@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from console.agent import Agent, BackendError
+from console.agent import Agent, BackendError, APPROVAL_TTL_SECONDS
 from console.tool_policy import (
     ToolPolicyError, discovered_tools, model_tools, validate_dynamic_arguments,
     safe_preview, schema_digest, action_description,
@@ -131,10 +131,20 @@ class DynamicToolPolicyTests(unittest.TestCase):
         mcp = FakeMCP()
         qwen = FakeQwen([])
         approval = {"tool": "dns_research", "args": {"domain": "example.test"},
-                    "schema_hash": schema_digest(NEW), "created_at": time.time()-900}
+                    "schema_hash": schema_digest(NEW), "created_at": time.time()-APPROVAL_TTL_SECONDS-1}
         with self.assertRaises(BackendError):
             Agent(qwen, lambda: mcp).execute_approved(approval, [])
         self.assertEqual(mcp.calls, [])
+
+    def test_approval_remains_valid_during_human_consultation(self):
+        mcp = FakeMCP()
+        qwen = FakeQwen([{"role": "assistant", "content": "Инструмент выполнен."}])
+        approval = {"tool": "dns_research", "args": {"domain": "example.test"},
+                    "schema_hash": schema_digest(NEW),
+                    "created_at": time.time() - 1800}
+        result = Agent(qwen, lambda: mcp).execute_approved(approval, [])
+        self.assertEqual(result["tool_calls"], 1)
+        self.assertEqual(mcp.calls, [("dns_research", {"domain": "example.test"})])
 
     def test_tool_schema_changed_after_approval_rejected(self):
         mcp = FakeMCP([CHANGED])
