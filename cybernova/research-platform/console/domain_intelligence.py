@@ -17,8 +17,13 @@ import re
 import struct
 from urllib.parse import urlsplit
 
-MAX_TEXT = 6_000_000
-MAX_PCAP = 4_000_000
+try:
+    from .upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
+except ImportError:
+    from upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
+
+MAX_TEXT = MAX_UPLOAD_FILE_BYTES
+MAX_PCAP = MAX_UPLOAD_FILE_BYTES
 MAX_ITEMS = 1200
 SAFE_NAME = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$.\-]{0,75}$")
 DANGER_NAME = re.compile(r"(?i)(password|secret|token|key|auth|cookie|session|credential|ssn|card|iban|client|account)")
@@ -325,7 +330,7 @@ def _pcap_ip4(frame: bytes, pos: int):
 
 
 def analyze_pcap(b64: str) -> dict:
-    if not isinstance(b64,str) or len(b64)>6_000_000:
+    if not isinstance(b64,str) or len(b64)>MAX_PCAP_BASE64_CHARS:
         raise DomainError("pcap_input_too_large")
     try:
         raw=base64.b64decode(b64,validate=True)
