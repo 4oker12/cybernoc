@@ -30,6 +30,7 @@ try:
     from .domain_intelligence import PARSERS, DomainError
     from .domain_tools import DOMAIN_TOOLS
     from .scoped_network_tools import SCOPED_TOOLS
+    from .browser_tools import BROWSER_TOOLS
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -48,6 +49,7 @@ except ImportError:
     from domain_intelligence import PARSERS, DomainError
     from domain_tools import DOMAIN_TOOLS
     from scoped_network_tools import SCOPED_TOOLS
+    from browser_tools import BROWSER_TOOLS
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -336,7 +338,7 @@ def status():
         mcp_ok = True
     except Exception:
         remote_tools, mcp_ok = [], False
-    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + COMMUNICATION_TOOLS]
+    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + COMMUNICATION_TOOLS]
     return {
         "model": MODEL,
         "source_commit": os.environ.get("CYBERNOVA_SOURCE_COMMIT","unknown"),
@@ -351,6 +353,7 @@ def status():
         "http_get": "available_for_preconfigured_mcp_hosts_only",
         "traffic_intelligence": "offline_multi_domain_analysis",
         "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
+        "browser": {"mode": "readonly_https_html", "configured_hosts": [x.strip() for x in os.environ.get("CYBERNOVA_BROWSER_HOSTS", "").split(",") if x.strip()], "live_javascript": False},
         "lab_scanners": inventory(),
         "import_kinds": ["har", "javascript"] + sorted(PARSERS),
         "upload_limit_bytes": MAX_UPLOAD_FILE_BYTES,
