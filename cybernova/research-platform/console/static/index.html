@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#212121">
   <title>Cybernova — Qwen и ChatGPT</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <script defer src="/static/markdown.js"></script>
   <script defer src="/static/app.js"></script>
 </head>
 <body>
@@ -83,9 +84,9 @@
         <textarea id="messageInput" rows="2" maxlength="10000" placeholder="Спросите что-нибудь или задайте задачу…"></textarea>
         <div class="composer-bottom">
           <div class="composer-left">
-            <label for="artifactFile" class="upload-button" title="Импорт HAR, JS, OpenAPI, логов, конфигураций, Python, зависимостей, TLS или PCAP. Файл обрабатывается локально.">＋ Файл</label>
+            <label for="artifactFile" id="qwenUploadLabel" class="upload-button" title="Импорт HAR, JS, OpenAPI, логов, конфигураций, Python, зависимостей, TLS или PCAP. Файл обрабатывается локально.">＋ Файл</label>
             <input id="artifactFile" class="sr-only" type="file" accept=".har,.js,.py,.json,.log,.txt,.conf,.cfg,.ini,.yaml,.yml,.env,.pcap,.cap,.pem,.crt,.lock,.mod,.toml">
-            <div class="auto-tools-label" title="Qwen самостоятельно выбирает инструменты. Сетевые запросы допускаются только к ранее разрешённым хостам MCP.">
+            <div id="qwenAutoTools" class="auto-tools-label" title="Qwen самостоятельно выбирает инструменты. Сетевые запросы допускаются только к ранее разрешённым хостам MCP.">
             <span class="auto-tools-dot" aria-hidden="true"></span> MCP автоматически
           </div>
           </div>
