@@ -52,9 +52,10 @@ LOCAL_NAMES = frozenset(t["name"] for t in LOCAL_TOOLS)
 
 class TrafficToolClient:
     """Composite client delegating existing real MCP calls and 8 local analyzers."""
-    def __init__(self, upstream, artifacts: dict):
+    def __init__(self, upstream, artifacts: dict, scope: dict | None = None):
         self.upstream = upstream
         self.artifacts = artifacts
+        self.scope = scope or {"hosts": [], "capture_detail": "metadata"}
 
     def initialize(self) -> list[dict]:
         try:
@@ -101,12 +102,15 @@ class TrafficToolClient:
             from devtools_network import NETWORK_NAMES, network_call
         if name in NETWORK_NAMES:
             try:
-                return network_call(name, args, self.upstream), False
+                return network_call(name, args, self.upstream,
+                                    extra_hosts=self.scope.get("hosts", []),
+                                    capture_detail=self.scope.get("capture_detail", "metadata")), False
             except (OSError, ValueError) as exc:
                 return {"ok": False, "error": type(exc).__name__+":"+str(exc)[:170]}, True
         if name in BROWSER_NAMES:
             try:
-                return browser_call(name, args, self.upstream), False
+                return browser_call(name, args, self.upstream,
+                                    extra_hosts=self.scope.get("hosts", [])), False
             except (OSError, ValueError) as exc:
                 return {"ok": False, "error": type(exc).__name__+":"+str(exc)[:180]}, True
         if name in SCANNER_TOOL_NAMES:
