@@ -128,6 +128,10 @@ if(!byId('sidebarExpand').hidden)
  throw Error('Sidebar could not be expanded');
 if(typeof byId('collabFinish').listeners.click!=='function')
  throw Error('Finish button not wired');
+for(const id of ['collabEdit','collabGoalSave','collabGoalCancel']){
+ if(typeof byId(id).listeners.click!=='function')
+  throw Error('Goal edit control not wired: '+id);
+}
 const largeMessage='Full technical evidence paragraph. '.repeat(25);
 const run={
  task_id:'task_test',goal:'Test',state:'paused',step:10,max_cycles:5,
@@ -136,8 +140,8 @@ const run={
   {seq:102,actor:'chatgpt',kind:'feedback',body:largeMessage}
  ]};
 context.renderCollabRun(run);
-if(byId('collabResume').hidden || byId('collabFinish').hidden)
- throw Error('Pause must offer Resume and Finish controls');
+if(byId('collabResume').hidden || byId('collabFinish').hidden || byId('collabEdit').hidden)
+ throw Error('Pause must offer Resume, Edit and Finish controls');
 const cards=byId('collabLog').children;
 if(cards.length!==2)throw Error('Expected two compact messages');
 const detail=cards[1].children.find(child=>child.className==='collab-details');
