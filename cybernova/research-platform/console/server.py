@@ -35,6 +35,7 @@ try:
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
     from .communication_worker import CommunicationWorker
     from .evidence import EvidenceJournal
+    from .upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from .siwc import connection as chatgpt_connection, SIWCError
     from .siwc_inference import models as chatgpt_models, review as chatgpt_review
 except ImportError:
@@ -51,6 +52,7 @@ except ImportError:
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
     from communication_worker import CommunicationWorker
     from evidence import EvidenceJournal
+    from upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from siwc import connection as chatgpt_connection, SIWCError
     from siwc_inference import models as chatgpt_models, review as chatgpt_review
 
@@ -132,7 +134,7 @@ class FollowupsRequest(BaseModel):
 class ImportRequest(BaseModel):
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
     kind: str = Field(pattern="^(har|javascript|openapi|log|config|python|dependencies|tls|pcap)$")
-    content: str = Field(min_length=1, max_length=6_000_000)
+    content: str = Field(min_length=1, max_length=MAX_PCAP_BASE64_CHARS)
 
 
 class ApprovalRequest(BaseModel):
@@ -292,6 +294,7 @@ def status():
         "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
         "lab_scanners": inventory(),
         "import_kinds": ["har", "javascript"] + sorted(PARSERS),
+        "upload_limit_bytes": MAX_UPLOAD_FILE_BYTES,
         "communication": {"enabled": True, "durable_tasks": True,
                           "review_inbox": True, "qwen_worker": os.environ.get("CYBERNOVA_COMM_WORKER", "1") == "1",
                           "chatgpt_mcp": "separate_service_not_yet_connected"},
@@ -308,6 +311,13 @@ def import_artifact(payload: ImportRequest):
     No body values, passwords, cookies or request payloads are sent to Qwen.
     This endpoint never performs remote HTTP or replays captured operations.
     """
+    # Enforce the same raw 32-MiB limit even for clients bypassing the UI.
+    # Base64-encoded PCAP has larger transport representation.
+    if payload.kind == "pcap":
+        if len(payload.content) > MAX_PCAP_BASE64_CHARS:
+            raise HTTPException(status_code=413, detail="pcap_too_large")
+    elif len(payload.content.encode("utf-8")) > MAX_UPLOAD_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="file_too_large")
     sid, state = _session(payload.session_id)
     with state["lock"]:
         if state["task_id"] is None:
