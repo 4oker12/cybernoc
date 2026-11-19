@@ -521,3 +521,11 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
     min-width:0;
   }
 }
+
+/* Non-destructive goal revisions within a paused collaboration. */
+.collab-edit-panel{margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.collab-edit-panel label{display:block;font-weight:600;margin-bottom:7px}
+.collab-edit-panel textarea{display:block;width:100%;min-height:130px;box-sizing:border-box;resize:vertical}
+.collab-edit-panel .muted{font-size:12px;margin:8px 0}
+.collab-edit-actions{display:flex;gap:8px;flex-wrap:wrap}
+.collab-edit-actions button{margin:0}
