@@ -13,12 +13,13 @@ from __future__ import annotations
 
 from collections import Counter
 import hashlib
+import json
 import ipaddress
 import re
 import socket
 from urllib.parse import parse_qsl, urlsplit
 
-MAX_EVENTS = 100
+MAX_EVENTS = 500
 MAX_PAGE_TEXT = 2600
 MAX_SITE_HOSTS = 8
 MAX_SECONDS = 17
@@ -79,6 +80,78 @@ def _decision(url: str, method: str, allowed_hosts: set[str]) -> str | None:
         return None
     except ValueError:
         return "blocked_invalid_url"
+
+
+SAFE_HEADERS = frozenset({
+    "content-type", "cache-control", "content-encoding",
+    "content-security-policy", "strict-transport-security", "x-frame-options",
+    "x-content-type-options", "x-powered-by", "server", "vary", "etag",
+    "last-modified", "access-control-allow-origin", "access-control-allow-methods",
+    "access-control-allow-credentials", "cross-origin-resource-policy",
+    "referrer-policy", "permissions-policy", "x-cache",
+})
+SECRET_FIELD = re.compile(
+    r"(?i)(?:password|passwd|secret|token|session|auth|jwt|bearer|"
+    r"access.?key|api.?key|private.?key|cookie|csrf|nonce|email|phone|"
+    r"address|customer|contract|account|balance|user.?id|personal)"
+)
+SENSITIVE_VALUE = re.compile(
+    r"(?i)(?:bearer\s+[A-Za-z0-9._~-]{6,}|"
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|"
+    r"\b(?:[0-9a-f]{16,}|[A-Za-z0-9_-]{40,})\b)"
+)
+
+
+def _shape(value, *, depth=0):
+    if depth >= 4:
+        return {"type": type(value).__name__, "truncated": True}
+    if isinstance(value, dict):
+        return {str(k)[:64]: (
+            "[REDACTED FIELD]" if SECRET_FIELD.search(str(k))
+            else _shape(v, depth=depth + 1))
+            for k, v in list(value.items())[:35]}
+    if isinstance(value, list):
+        return {"type": "array", "length": len(value),
+                "items": [_shape(x, depth=depth + 1) for x in value[:2]]}
+    if isinstance(value, str):
+        return {"type": "string", "length": len(value),
+                "example": SENSITIVE_VALUE.sub("[REDACTED]", value[:70])}
+    if value is None:
+        return {"type": "null"}
+    return {"type": type(value).__name__}
+
+
+def summarize_response(content_type: str, body: bytes, headers: dict | None = None) -> dict:
+    """Evidence for comparing responses, without publishing secrets."""
+    if not isinstance(body, bytes):
+        raise ValueError("invalid_response_bytes")
+    safe_headers = {
+        str(k).lower()[:75]: SENSITIVE_VALUE.sub("[REDACTED]", str(v)[:400])
+        for k, v in (headers or {}).items() if str(k).lower() in SAFE_HEADERS
+    }
+    summary = {
+        "body_sha256": hashlib.sha256(body).hexdigest(),
+        "body_size": len(body),
+        "headers": safe_headers,
+    }
+    ctype = (content_type or "").lower()
+    if len(body) > 400_000:
+        summary["body_preview"] = "[response too large to preview]"
+        return summary
+    if "json" in ctype or body.lstrip().startswith((b"{", b"[")):
+        try:
+            data = json.loads(body.decode("utf-8", "replace"))
+            summary["json_shape"] = _shape(data)
+            summary["body_preview"] = "[JSON: compare schema, status and hash]"
+            return summary
+        except ValueError:
+            pass
+    if any(k in ctype for k in ("text/", "javascript", "xml", "html")):
+        snippet = body.decode("utf-8", "replace")[:3200]
+        summary["body_preview"] = SENSITIVE_VALUE.sub("[REDACTED]", snippet)
+    else:
+        summary["body_preview"] = "[binary content, hash only]"
+    return summary
 
 
 def _capture(url: str, allowed_hosts: set[str], *, runner=None) -> dict:
