@@ -264,6 +264,54 @@ def stage_restore(archive: Path, key_file: Path) -> dict:
             "next":"Inspect staged DB; stop services before explicit activation"}
 
 
+def verify_source() -> dict:
+    """Verify locally checked-out Git objects; do not mistake Git for offsite backup."""
+    if shutil.which("git") is None:
+        raise InstallError("git_missing")
+    check=subprocess.run(["git","fsck","--full","--no-reflogs"],
+                         cwd=REPO,capture_output=True,text=True)
+    if check.returncode:
+        raise InstallError("git_integrity_check_failed")
+    status=subprocess.run(["git","status","--porcelain","--untracked-files=no"],
+                          cwd=REPO,capture_output=True,text=True)
+    if status.returncode:
+        raise InstallError("git_status_failed")
+    commit=subprocess.run(["git","rev-parse","HEAD"],cwd=REPO,
+                          capture_output=True,text=True,check=True).stdout.strip()
+    return {"repository_integrity":"git_fsck_ok",
+            "source_commit":commit,
+            "tracked_changes":bool(status.stdout.strip()),
+            "note":"Git validates tracked objects; verify remote ownership and protected releases separately"}
+
+
+def export_source_bundle(directory: Path) -> dict:
+    from hashlib import sha256
+    info=verify_source()
+    if info["tracked_changes"]:
+        raise InstallError("tracked_changes_not_committed")
+    directory=directory.expanduser().resolve()
+    directory.mkdir(parents=True,exist_ok=True,mode=0o700)
+    name="cybernoc-"+info["source_commit"][:12]+".bundle"
+    dest=directory/name
+    checksum=directory/(name+".sha256")
+    if dest.exists() or checksum.exists():
+        raise InstallError("source_bundle_already_exists")
+    job=subprocess.run(["git","bundle","create",str(dest),"--all"],
+                       cwd=REPO,capture_output=True,text=True)
+    if job.returncode:
+        raise InstallError("git_bundle_creation_failed")
+    verify=subprocess.run(["git","bundle","verify",str(dest)],
+                          cwd=REPO,capture_output=True,text=True)
+    if verify.returncode:
+        dest.unlink(missing_ok=True)
+        raise InstallError("git_bundle_verification_failed")
+    digest=sha256(dest.read_bytes()).hexdigest()
+    _write_new(checksum,digest+"  "+name+"\n")
+    return {"bundle":str(dest),"sha256_file":str(checksum),
+            "source_commit":info["source_commit"],
+            "note":"Store offsite; SHA256 detects accidental transfer corruption, not a forged replacement"}
+
+
 def main():
     p=argparse.ArgumentParser(description="Portable Cybernova deployment")
     commands=p.add_subparsers(dest="cmd",required=True)
@@ -278,6 +326,9 @@ def main():
     x.add_argument("--tunnel",action="store_true")
     x.add_argument("--gpu",action="store_true")
     commands.add_parser("doctor",help="Check running application and MCP")
+    commands.add_parser("verify-source",help="Validate Git object integrity and show commit")
+    x=commands.add_parser("export-source",help="Create verified Git bundle for offline disaster recovery")
+    x.add_argument("--to",type=Path,required=True)
     commands.add_parser("pull-model",help="Download selected local Ollama model")
     commands.add_parser("logs",help="Show last service logs (may contain task content)")
     commands.add_parser("stop",help="Stop containers, preserve volumes")
@@ -299,6 +350,10 @@ def main():
             result=set_key(args.rotate)
         elif args.cmd=="up":
             result=up(args.tunnel,args.gpu)
+        elif args.cmd=="verify-source":
+            result=verify_source()
+        elif args.cmd=="export-source":
+            result=export_source_bundle(args.to)
         elif args.cmd=="doctor":
             exec_in_container("python","-m","console.portable_runtime","doctor",capture=False)
             result={"healthy":True}
