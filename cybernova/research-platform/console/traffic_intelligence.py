@@ -11,8 +11,13 @@ import json
 import re
 from urllib.parse import urlsplit, parse_qsl
 
-MAX_SOURCE_BYTES = 6_000_000
-MAX_ENTRIES = 2500
+try:
+    from .upload_limits import MAX_UPLOAD_FILE_BYTES
+except ImportError:
+    from upload_limits import MAX_UPLOAD_FILE_BYTES
+
+MAX_SOURCE_BYTES = MAX_UPLOAD_FILE_BYTES
+MAX_ENTRIES = 12000
 MAX_RESPONSE_SCHEMA_BYTES = 180_000
 MAX_JS_ENDPOINTS = 180
 MAX_GRAPH_ITEMS = 160
