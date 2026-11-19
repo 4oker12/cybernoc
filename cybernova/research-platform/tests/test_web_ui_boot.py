@@ -66,6 +66,8 @@ class Elem {
   cloneNode(){return new Elem(this.id);}
   remove(){}
   focus(){}
+  showModal(){this.open=true;}
+  close(){this.open=false;}
   scrollIntoView(){}
   querySelector(){return null;}
   get childNodes(){return this.children;}
@@ -128,6 +130,22 @@ if(!byId('sidebarExpand').hidden)
  throw Error('Sidebar could not be expanded');
 if(typeof byId('collabFinish').listeners.click!=='function')
  throw Error('Finish button not wired');
+for(const id of ['quickTaskOpen','quickTaskStart','quickTaskEdit',
+ 'quickTaskApply','quickTaskClear','conversationCopy','conversationExport']){
+ if(typeof byId(id).listeners.click!=='function')
+  throw Error('Quick scenario/export action not wired: '+id);
+}
+const groups=byId('quickTaskOptions').children;
+if(groups.length!==3 || groups.reduce((sum,g)=>sum+g.children.length-1,0)!==12)
+ throw Error('Expected 12 grouped quick-research scenarios');
+const dnsCheck=groups[0].children[1].children[0];
+dnsCheck.checked=true;
+byId('quickTaskStart').listeners.click();
+byId('quickTaskApply').listeners.click();
+if(!byId('collabGoal').value.includes('Проверить DNS:'))
+ throw Error('Selected DNS scenario was not inserted into the editable task');
+if(byId('quickTaskDialog').open)
+ throw Error('Scenario picker did not close after task composition');
 for(const id of ['collabEdit','collabGoalSave','collabGoalCancel']){
  if(typeof byId(id).listeners.click!=='function')
   throw Error('Goal edit control not wired: '+id);
