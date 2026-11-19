@@ -192,6 +192,14 @@ def check_health():
     expected_js = "const MAX_UPLOAD_BYTES = " + str(MAX_UPLOAD_FILE_BYTES // (1024*1024)) + " * 1024 * 1024"
     if js_code != 200 or expected_js.encode() not in js_body:
         raise RuntimeError("browser_upload_limit_not_deployed")
+    html_code, html_body = local_get(18795, "/", basic=credentials)
+    required_tags = [
+        b'<script defer src="/static/markdown.js"></script>',
+        b'<script defer src="/static/app.js"></script>',
+    ]
+    if html_code != 200 or html_body.count(b"</script>") != 2 or any(
+            html_body.count(tag) != 1 for tag in required_tags):
+        raise RuntimeError("web_ui_scripts_malformed_or_missing")
     if b'async function sendGPT()' not in js_body or b'function setMode(mode)' not in js_body:
         raise RuntimeError("dual_chat_frontend_not_deployed")
     css_code, markdown_body = local_get(18795, "/static/markdown.js", basic=credentials)
