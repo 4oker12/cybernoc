@@ -264,6 +264,10 @@ def import_artifact(payload: ImportRequest):
                        "метаданные и гипотезы; сырые данные удалены. Жду задачу.",
         })
         state["history"] = state["history"][-MAX_HISTORY:]
+        communication_store().append(
+            state["task_id"], "controller", "system",
+            "Артефакт импортирован офлайн: " + json.dumps(summary, ensure_ascii=False),
+        )
     return {"session_id": sid, "task_id": state["task_id"], **summary}
 
 
@@ -278,6 +282,21 @@ def chat(payload: ChatRequest):
                 payload.message.strip()[:150], origin="human",
             )["task_id"]
         task_id = state["task_id"]
+        # Include ChatGPT feedback and background Qwen results which arrived
+        # while the browser was open, instead of using stale in-memory history.
+        previous = store.read_dialog(task_id, limit=100)["messages"]
+        persisted_history = []
+        for message in previous:
+            if message["actor"] == "controller" and message["kind"] == "system":
+                persisted_history.append({"role": "user", "content": message["body"][:1500]})
+            elif message["actor"] in {"human", "chatgpt"} and message["kind"] in {
+                    "instruction", "feedback"}:
+                persisted_history.append({"role": "user", "content":
+                                          "[" + message["actor"] + "] " + message["body"]})
+            elif message["actor"] == "qwen" and message["kind"] == "result":
+                persisted_history.append({"role": "assistant", "content": message["body"]})
+        if persisted_history:
+            state["history"] = persisted_history[-MAX_HISTORY:]
         store.append(task_id, "human", "instruction", payload.message,
                      status="running")
         try:
@@ -334,6 +353,10 @@ def approve(payload: ApprovalRequest):
         if time.time() - item["created_at"] > 600:
             raise HTTPException(status_code=410, detail="approval_expired")
         if payload.decision == "deny":
+            communication_store().append(
+                state["task_id"], "human", "decision",
+                "Отклонён вызов " + item["tool"],
+            )
             return {"ok": True, "decision": "denied", "message": "Действие отклонено; "
                     "инструмент не запускался", "tool_calls": 0}
         try:
