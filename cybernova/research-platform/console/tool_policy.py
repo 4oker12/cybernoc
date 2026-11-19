@@ -29,6 +29,7 @@ REVIEWED_OFFLINE = frozenset({
     "research_dependencies", "research_tls_review", "research_findings",
     "research_next_steps", "research_full_report",
     "lab_scanner_inventory",
+    "safe_terminal",
     "comm_request_review", "comm_post_progress", "comm_read_dialog",
     "comm_record_evidence",
     # Coding agent: edits and commits only in a separate Qwen task worktree.
