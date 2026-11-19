@@ -71,8 +71,14 @@ class DualChatTests(unittest.TestCase):
         with patch.object(siwc_inference,"models",return_value=[{"slug":"gpt-6.2-sol"}]),\
              patch.object(siwc_inference.connection,"access",return_value="test"),\
              patch.object(siwc_inference.request,"build_opener",return_value=opener):
-            self.assertEqual(siwc_inference.chat("gpt-6.2-sol",messages)["answer"],"OK")
+            self.assertEqual(siwc_inference.chat(
+                "gpt-6.2-sol",messages,
+                user_context="SHARED USER PROFILE",
+                profile_instructions="CHATGPT CUSTOM INSTRUCTIONS",
+            )["answer"],"OK")
         self.assertEqual(opener.payload["input"],messages)
+        self.assertIn("SHARED USER PROFILE",opener.payload["instructions"])
+        self.assertIn("CHATGPT CUSTOM INSTRUCTIONS",opener.payload["instructions"])
         self.assertFalse(opener.payload["store"])
         self.assertNotIn("tools",opener.payload)
         with self.assertRaises(siwc.SIWCError):
