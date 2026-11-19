@@ -36,6 +36,7 @@ EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 MAC = re.compile(r"(?i)\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b")
 IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 INTERNAL_SUFFIX = re.compile(r"(?i)\b(?:[a-z0-9-]+\.)+(?:local|lan|internal|home)\b")
+DOMAIN_NAME = re.compile(r"(?i)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b")
 GOOGLE_DOMAINS = ("google.com", "googleusercontent.com", "gstatic.com")
 
 
@@ -65,6 +66,9 @@ def sanitize_search_query(query: object, blocked_hosts=()) -> str:
     value = MAC.sub("[redacted-mac]", value)
     value = re.sub(r"https?://\S+", "[url]", value, flags=re.I)
     value = INTERNAL_SUFFIX.sub("[internal-host]", value)
+    # Do not disclose any hostname/domain to the search provider by default.
+    # Product names and version/CVE identifiers remain searchable.
+    value = DOMAIN_NAME.sub("[hostname]", value)
     for match in list(IPV4.finditer(value))[::-1]:
         candidate = match.group(0)
         try:
