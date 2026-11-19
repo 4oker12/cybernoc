@@ -98,8 +98,8 @@ class ProfileSettingsTests(unittest.TestCase):
             calls.append(kwargs)
             return {"answer": "Ответ", "model": model, "source": "test"}
 
-        with patch.object(server, "profile_settings_store", return_value=self.profile_store), \\
-             patch.object(server, "gpt_chat_store", return_value=self.chat_store), \\
+        with patch.object(server, "profile_settings_store", return_value=self.profile_store), \
+             patch.object(server, "gpt_chat_store", return_value=self.chat_store), \
              patch.object(server, "chatgpt_chat", side_effect=fake_chat):
             result = server.siwc_chat_message(server.ChatGPTMessageRequest(
                 model="gpt-6.2-sol", message="Проверь контекст",
