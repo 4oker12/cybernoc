@@ -349,8 +349,15 @@ class Agent:
                     }
                 if not isinstance(calls, list):
                     raise BackendError("invalid_tool_calls")
-                context.append({"role": "assistant", "content": result.get("content") or "",
-                                "tool_calls": calls})
+                assistant_turn = {
+                    "role": "assistant", "content": result.get("content") or "",
+                    "tool_calls": calls,
+                }
+                # DeepSeek thinking mode requires reasoning_content to be
+                # echoed unchanged on the next request when tools are enabled.
+                if isinstance(result.get("reasoning_content"), str):
+                    assistant_turn["reasoning_content"] = result["reasoning_content"]
+                context.append(assistant_turn)
                 for raw in calls[:MAX_CALLS-count]:
                     function = raw.get("function", {}) if isinstance(raw, dict) else {}
                     name = function.get("name")
