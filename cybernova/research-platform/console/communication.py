@@ -17,7 +17,7 @@ from threading import RLock
 
 ACTORS = frozenset({"human", "chatgpt", "qwen", "controller"})
 KINDS = frozenset({"instruction", "feedback", "progress", "result", "request_review", "decision", "system"})
-STATES = frozenset({"queued", "running", "needs_review", "completed", "blocked"})
+STATES = frozenset({"idle", "queued", "running", "needs_review", "completed", "blocked"})
 REF = re.compile(r"^[A-Za-z0-9_./:-]{1,140}$")
 ID = re.compile(r"^[a-zA-Z0-9_-]{12,100}$")
 MAX_BODY = 12000
@@ -84,7 +84,7 @@ class CommunicationStore:
                     CREATE TABLE IF NOT EXISTS tasks (
                       task_id TEXT PRIMARY KEY,
                       title TEXT NOT NULL,
-                      status TEXT NOT NULL DEFAULT 'queued',
+                      status TEXT NOT NULL DEFAULT 'idle',
                       origin TEXT NOT NULL,
                       created_at TEXT NOT NULL,
                       updated_at TEXT NOT NULL,
@@ -136,7 +136,7 @@ class CommunicationStore:
         with self._lock, self._connection() as db:
             db.execute(
                 "INSERT INTO tasks(task_id,title,status,origin,created_at,updated_at)"
-                " VALUES(?,?,'queued',?,?,?)", (task_id, title, origin, now, now),
+                " VALUES(?,?,'idle',?,?,?)", (task_id, title, origin, now, now),
             )
         return self.get_task(task_id)
 
