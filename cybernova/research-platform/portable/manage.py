@@ -15,6 +15,8 @@ Or:
 from __future__ import annotations
 
 import argparse
+from io import BytesIO
+import zipfile
 from datetime import datetime, timezone
 import getpass
 import json
@@ -223,6 +225,45 @@ def wizard() -> dict:
     return result
 
 
+def stage_restore(archive: Path, key_file: Path) -> dict:
+    """Transfer encrypted DB and 32-byte key via stdin; do not replace active DB."""
+    archive=archive.expanduser().resolve()
+    key_file=key_file.expanduser().resolve()
+    manifest=Path(str(archive)+".manifest.json")
+    if not archive.is_file() or not manifest.is_file() or not key_file.is_file():
+        raise InstallError("archive_manifest_or_key_missing")
+    if archive.is_symlink() or manifest.is_symlink() or key_file.is_symlink():
+        raise InstallError("restore_symlink_not_allowed")
+    if archive.stat().st_size > 138*1024*1024:
+        raise InstallError("encrypted_archive_too_large")
+    key=key_file.read_bytes()
+    if len(key)!=32:
+        raise InstallError("backup_key_length_invalid")
+    _compose("build", APP)
+    cmd=["docker","compose","-f",str(ROOT/"compose.yaml"),
+         "run","--rm","--no-deps","-T",APP,"python","-m"]
+    first=subprocess.run(cmd+["console.portable_credentials",
+                             "import-backup-key"],
+                         cwd=ROOT,input=key,capture_output=True)
+    if first.returncode:
+        raise InstallError("backup_key_import_failed_or_already_present")
+    package=BytesIO()
+    with zipfile.ZipFile(package,"w",compression=zipfile.ZIP_STORED) as out:
+        out.writestr("snapshot.cnbk",archive.read_bytes())
+        out.writestr("snapshot.cnbk.manifest.json",manifest.read_bytes())
+    second=subprocess.run(cmd+["console.portable_restore"],
+                          cwd=ROOT,input=package.getvalue(),
+                          capture_output=True)
+    if second.returncode:
+        raise InstallError("encrypted_restore_verification_failed")
+    try:
+        result=json.loads(second.stdout.decode().strip().splitlines()[-1])
+    except (ValueError,IndexError):
+        raise InstallError("restore_stage_response_invalid") from None
+    return {"staged":True,"result":result,
+            "next":"Inspect staged DB; stop services before explicit activation"}
+
+
 def main():
     p=argparse.ArgumentParser(description="Portable Cybernova deployment")
     commands=p.add_subparsers(dest="cmd",required=True)
@@ -245,6 +286,9 @@ def main():
     x.add_argument("--to",required=True,type=Path)
     x=commands.add_parser("backup",help="Online encrypted DB snapshot to a host directory")
     x.add_argument("--to",type=Path,required=True)
+    x=commands.add_parser("stage-restore",help="Verify encrypted backup on new machine without replacing database")
+    x.add_argument("--from",dest="archive",type=Path,required=True)
+    x.add_argument("--key-file",type=Path,required=True)
     args=p.parse_args()
     try:
         if args.cmd=="wizard":
@@ -292,6 +336,8 @@ def main():
                 dst.chmod(0o600)
             result={"key_exported":str(dst),
                     "warning":"Keep it OFF this machine and never commit to Git"}
+        elif args.cmd=="stage-restore":
+            result=stage_restore(args.archive,args.key_file)
         else:
             result=backup_to_host(args.to.expanduser().resolve())
         print(json.dumps(result,ensure_ascii=False,indent=2))
