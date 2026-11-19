@@ -387,6 +387,34 @@ class Agent:
                             context.append({"role": "tool", "tool_name": chosen,
                                             "content": serialized})
                             continue
+                if not calls and not executed and not pending_requests and mcp and tools and round_no == 0:
+                    # A derivative model sometimes lists coding advice without
+                    # calling any real tools. Ground the FIRST coding response in
+                    # the actual repository tree; subsequent choices stay Qwen's.
+                    wants_dev = bool(re.search(
+                        r"(?i)(?:проект|репозитори|исходник|код|cybernova|разработ)",
+                        text
+                    )) and bool(re.search(
+                        r"(?i)(?:изучи|изучить|проанализируй|исправ|проверь|найди|"
+                        r"улучш|создай|напиши|доработ|рефактор|разбер)",
+                        text))
+                    if wants_dev and "dev_list" in descriptors:
+                        observed, error_flag = mcp.call("dev_list", {"limit": 100})
+                        executed += 1
+                        selected_by = "developer_evidence_fallback"
+                        events.append({
+                            "type": "tool_result", "name": "dev_list",
+                            "arguments": {"limit": 100},
+                            "is_error": bool(error_flag), "result": observed,
+                        })
+                        context.append({"role": "system", "content":
+                            "Получена реальная структура Git-проекта dev_list. "
+                            "Если нужен конкретный исходный файл, вызывай dev_read; "
+                            "если нужно менять код, используй dev_edit/dev_test. "
+                            "Не утверждай, что у тебя нет доступа к репозиторию."})
+                        context.append({"role": "tool", "tool_name": "dev_list",
+                                        "content": json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]})
+                        continue
                 if not calls:
                     answer = str(result.get("content") or "").strip()
                     if pending_requests:
