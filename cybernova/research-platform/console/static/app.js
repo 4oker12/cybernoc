@@ -365,6 +365,8 @@ async function resumeTask(taskId){
     const result=await requestJson("/api/comm/resume",{task_id:taskId});
     state.sessionId=result.session_id;
     state.taskId=result.task.task_id;
+    lastGptReview=null;
+    $("chatgptToQwen").disabled=true;
     void refreshChatGPT();
     state.turns=result.turn||0;
     state.lastSeq=0;
@@ -524,6 +526,9 @@ async function refreshChatGPT(){
     $("chatgptConnect").hidden=connected;
     $("chatgptDisconnect").hidden=!connected;
     $("chatgptReview").disabled=!connected||!data.plan_usage||!state.taskId;
+    const callbackResult=new URLSearchParams(window.location.search).get("chatgpt");
+    if(callbackResult==="error")statusLine.textContent="Вход ChatGPT не завершён — проверьте доступность подписки и повторите попытку.";
+    if(callbackResult)window.history.replaceState(null,"",window.location.pathname);
     statusLine.textContent=connected?
       (data.plan_usage?"Подключён: "+(data.email||"аккаунт ChatGPT")+
          " · использование подписки разрешено":
@@ -669,6 +674,9 @@ async function reset(){
   }
   state.sessionId=null;
   state.taskId=null;
+  lastGptReview=null;
+  $("chatgptReview").disabled=true;
+  $("chatgptToQwen").disabled=true;
   state.lastSeq=0;
   state.turns=0;
   showTaskStatus("Общая очередь");
