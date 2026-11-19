@@ -16,6 +16,7 @@ services:
       CYBERNOVA_ACCESS_HOST: "0.0.0.0"
       CYBERNOVA_ACCESS_PORT: "18795"
       CYBERNOVA_MCP_URL: http://127.0.0.1:18792/mcp
+      CYBERNOVA_HTTP_SCOPE_FILE: /app/tool_gateway/scope.json
       CYBERNOVA_COMM_WORKER: "1"
     ports:
       # The ONLY published endpoint: password-authenticated UI.
