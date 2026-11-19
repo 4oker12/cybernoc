@@ -33,6 +33,7 @@ try:
     from .browser_tools import BROWSER_TOOLS
     from .devtools_network import NETWORK_TOOLS
     from .research_web import RESEARCH_WEB_TOOLS
+    from .safe_terminal import TERMINAL_TOOLS, safe_terminal
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -57,6 +58,7 @@ except ImportError:
     from browser_tools import BROWSER_TOOLS
     from devtools_network import NETWORK_TOOLS
     from research_web import RESEARCH_WEB_TOOLS
+    from safe_terminal import TERMINAL_TOOLS, safe_terminal
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -397,7 +399,7 @@ def status():
         mcp_ok = True
     except Exception:
         remote_tools, mcp_ok = [], False
-    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + RESEARCH_WEB_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS]
+    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + RESEARCH_WEB_TOOLS + TERMINAL_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS]
     return {
         "model": MODEL,
         "source_commit": os.environ.get("CYBERNOVA_SOURCE_COMMIT","unknown"),
