@@ -54,3 +54,14 @@
 .chat-msg.from-chatgpt .avatar{background:#344b43;color:#c7f5df}
 .chat-msg.from-chatgpt .message-meta{color:#b9dccb}
 @media(max-width:680px){.task-list{max-height:26vh}}
+
+/* Independent reviewer handoff: manual fallback for ChatGPT plans without full custom MCP. */
+.review-handoff{margin-top:14px;border-top:1px solid var(--line);padding-top:13px;display:flex;flex-direction:column;gap:9px}
+.review-handoff .inspector-header{padding:0;min-height:20px}
+.review-handoff .inspector-note{margin:0;font-size:11px;line-height:1.5}
+.review-feedback{display:flex;flex-direction:column;gap:7px}
+.review-feedback label{font-size:11px;color:#c9d7cc}
+.review-feedback-input{display:block;width:100%;min-height:72px;resize:vertical;background:#242424;border:1px solid #565656;border-radius:8px;padding:10px;color:#ededed;font-family:inherit;font-size:12px;line-height:1.5}
+.review-feedback-input:focus{border-color:#9bd1b7;outline:0}
+.review-evidence{white-space:pre-wrap;overflow-wrap:anywhere;max-height:250px;overflow:auto;background:#181e1b;border:1px solid #425147;border-radius:8px;padding:10px;color:#c5dfce;font-size:10px}
+#reviewStatus{font-size:11px;min-height:17px;line-height:1.5}
