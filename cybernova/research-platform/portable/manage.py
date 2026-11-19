@@ -77,7 +77,14 @@ def init(provider: str, model: str, base_url: str = "") -> dict:
         _write_new(SCOPE,'{\n  "allowed_hosts": []\n}\n')
     if os.name != "nt":
         SCOPE.chmod(0o644)  # Host allowlist is not secret; container is UID 10001.
+    commit = "unknown"
+    try:
+        commit = subprocess.run(["git","rev-parse","HEAD"],cwd=REPO,
+                                capture_output=True,text=True,check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        pass
     env = (
+        "CYBERNOVA_SOURCE_COMMIT=" + commit + "\n"
         "# Cybernova portable config. NEVER commit this file.\n"
         "CYBERNOVA_LLM_PROVIDER=" + provider + "\n"
         "CYBERNOVA_MODEL=" + model + "\n"
