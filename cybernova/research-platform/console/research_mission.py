@@ -1,4 +1,4 @@
-"""Cybernova ISP/security research mission applied to every Qwen agent turn.
+"""Cybernova ISP/security research mission shared by every configured model.
 
 A system prompt is an operational rubric, not model weight training.
 Tool availability, scope, user approvals and evidence verification remain
