@@ -278,6 +278,40 @@ class CommunicationStore:
                 return None
         return self.get_task(row["task_id"])
 
+    def recover_interrupted(self) -> int:
+        """Mark orphaned in-flight tasks blocked after a process restart.
+
+        Never automatically replay a partially executed security operation.
+        The user can explicitly queue a fresh safe continuation.
+        Call only during single-instance startup, before accepting new jobs.
+        """
+        now = _utc()
+        with self._lock, self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT task_id FROM tasks WHERE status='running'"
+            ).fetchall()
+            for row in rows:
+                task_id = row["task_id"]
+                db.execute(
+                    "UPDATE tasks SET status='blocked', updated_at=?, "
+                    "revision=revision+1 WHERE task_id=? AND status='running'",
+                    (now, task_id),
+                )
+                db.execute(
+                    "INSERT INTO messages (message_id, task_id, actor, kind, "
+                    "body, evidence_refs, created_at, event_key) "
+                    "VALUES(?,?,'controller','system',?,'[]',?,NULL)",
+                    (
+                        "msg_" + secrets.token_urlsafe(18), task_id,
+                        "Research was interrupted before completion. "
+                        "State is blocked; review evidence and explicitly resume.",
+                        now,
+                    ),
+                )
+            db.commit()
+            return len(rows)
+
     def set_state(self, task_id: str, status: str) -> dict:
         if status not in STATES:
             raise CommunicationError("invalid_status")
