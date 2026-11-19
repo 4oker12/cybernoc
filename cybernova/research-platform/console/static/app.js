@@ -349,7 +349,10 @@ function setMode(mode){
   $("qwenSidebar").hidden=!qwen;
   $("gptSidebar").hidden=qwen;
   $("gptTopModel").hidden=qwen;
-  $("modelName").textContent=qwen?state.qwenModel:"ChatGPT";
+  $("modelName").hidden=!qwen;
+  $("modelName").textContent=state.qwenModel;
+  document.querySelector(".connection-label").hidden=!qwen;
+  $("navTools").hidden=!qwen;
   document.querySelector(".upload-button").hidden=!qwen;
   document.querySelector(".auto-tools-label").hidden=!qwen;
   $("artifactFile").disabled=!qwen;
