@@ -32,6 +32,7 @@ try:
     from .scoped_network_tools import SCOPED_TOOLS
     from .browser_tools import BROWSER_TOOLS
     from .devtools_network import NETWORK_TOOLS
+    from .research_web import RESEARCH_WEB_TOOLS
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -55,6 +56,7 @@ except ImportError:
     from scoped_network_tools import SCOPED_TOOLS
     from browser_tools import BROWSER_TOOLS
     from devtools_network import NETWORK_TOOLS
+    from research_web import RESEARCH_WEB_TOOLS
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -395,7 +397,7 @@ def status():
         mcp_ok = True
     except Exception:
         remote_tools, mcp_ok = [], False
-    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS]
+    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + RESEARCH_WEB_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS]
     return {
         "model": MODEL,
         "source_commit": os.environ.get("CYBERNOVA_SOURCE_COMMIT","unknown"),
@@ -414,6 +416,7 @@ def status():
         "traffic_intelligence": "offline_multi_domain_analysis",
         "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
         "browser_network": "isolated_chromium_readonly_metadata",
+        "web_research": {"provider": "Google Search HTML", "tools": ["google_search", "research_source_open"], "mode": "public_read_only", "requires_api_key": False},
         "research_scope": {"type": "owner_selected_per_task", "active_actions": "propose_and_confirm"},
         "browser": {"mode": "readonly_https_html", "configured_hosts": [x.strip() for x in os.environ.get("CYBERNOVA_BROWSER_HOSTS", "").split(",") if x.strip()], "live_javascript": False},
         "lab_scanners": inventory(),
