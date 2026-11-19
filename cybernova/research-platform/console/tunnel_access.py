@@ -171,7 +171,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
 def serve(port: int = DEFAULT_PORT, secret_file: str = DEFAULT_SECRET_FILE):
     credentials = read_credentials(secret_file)
-    server = ThreadingHTTPServer(("127.0.0.1", port), GatewayHandler)
+    bind_host = os.environ.get("CYBERNOVA_ACCESS_HOST", "127.0.0.1")
+    if bind_host not in {"127.0.0.1", "0.0.0.0"}:
+        raise ValueError("invalid_access_bind_host")
+    server = ThreadingHTTPServer((bind_host, port), GatewayHandler)
     server.credentials = credentials
     print("CYBERNOVA_ACCESS_READY port=" + str(port), flush=True)
     server.serve_forever(poll_interval=0.2)
