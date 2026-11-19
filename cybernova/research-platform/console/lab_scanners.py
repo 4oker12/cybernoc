@@ -328,7 +328,7 @@ def _summary(tool, text, report_bytes):
                     findings.append({"status": item.get("status"),
                                      "length": item.get("length"),
                                      "words": item.get("words")})
-            elif tool == "lab_zap_baseline":
+            elif tool in {"lab_zap_baseline", "lab_zap_active"}:
                 for site in data.get("site", [])[:20]:
                     for alert in site.get("alerts", [])[:100]:
                         findings.append({
