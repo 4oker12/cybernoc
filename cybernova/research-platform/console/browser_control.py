@@ -125,6 +125,12 @@ def validate_public_url(url: str) -> tuple[str, list[str]]:
     if host in {"localhost", "localdomain"} or host.endswith(
             (".localhost", ".local", ".internal")):
         raise ValueError("browser_private_or_reserved_address")
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None and not literal.is_global:
+        raise ValueError("browser_private_or_reserved_address")
     addresses = _resolve_public(host)
     return host, addresses
 
@@ -215,10 +221,18 @@ class BrowserSession:
                 viewport={"width": 1440, "height": 1000},
             )
             self._context.route("**/*", self._route)
+            # WebSockets bypass the ordinary HTTP route handler; block them
+            # explicitly so a page cannot open an uninspected socket.
+            self._context.route_web_socket(
+                "**/*", lambda websocket: websocket.close(
+                    code=1008, reason="Cybernova browser policy",
+                ),
+            )
         self._page = self._context.new_page()
         self._page.set_default_timeout(7000)
         self._page.on("dialog", lambda dialog: dialog.dismiss())
         self._page.on("download", lambda download: download.cancel())
+        self._page.on("popup", lambda popup: popup.close())
 
     def _host_is_public(self, host: str) -> bool:
         now = time.monotonic()

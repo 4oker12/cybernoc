@@ -222,7 +222,7 @@ class OpenAICompatibleClient:
 
 def build_model_client():
     """Leave Ollama behavior unchanged unless explicitly configured otherwise."""
-    if provider_name() == "openai_compatible":
+    if provider_name() in {"openai_compatible", "deepseek"}:
         return OpenAICompatibleClient()
     try:
         from .agent import OllamaClient

@@ -568,6 +568,34 @@ class Agent:
             raise BackendError("tool_definition_changed")
         args = validate_dynamic_arguments(args, available[name]["inputSchema"])
         result, is_error = mcp.call(name, args)
+        if name != "browser_submit":
+            # Preserve the established one-shot approval behavior for other
+            # dynamically discovered MCP functions.
+            prompt = [
+                {"role": "system", "content":
+                 "Ты — агент Cybernova. Пользователь явно разрешил ОДИН запрос к MCP. "
+                 "Ниже фактический результат. Сделай вывод без вымышленных фактов. "
+                 "Не утверждай, что выполнялись другие действия."},
+                *[{"role": row["role"], "content": row["content"][:4500]}
+                  for row in history[-8:] if row.get("role") in {"assistant", "user"}
+                  and isinstance(row.get("content"), str)],
+                {"role": "user", "content":
+                 "Разрешённый MCP-вызов " + name + " завершён. "
+                 "Результат: " + json.dumps(result, ensure_ascii=False)[:MAX_RESULT]},
+            ]
+            message = self.ollama.chat(prompt, [])
+            return {
+                "answer": str(message.get("content") or "Результат получен, пояснение отсутствует."),
+                "tool_calls": 1,
+                "selected_by": "user_approved",
+                "model": self.ollama.model,
+                "events": [{
+                    "type": "approved_tool_result", "name": name,
+                    "arguments": safe_preview(args),
+                    "is_error": bool(is_error or result.get("ok") is False),
+                    "result": result,
+                }],
+            }
         continuation = (
             "Пользователь явно разрешил и контроллер выполнил ровно один вызов "
             + name + ". Ошибка инструмента: " + str(bool(is_error)) +

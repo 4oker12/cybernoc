@@ -77,21 +77,39 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(assistant["reasoning_content"],"tool decision context")
         self.assertEqual(out["answer"],"Subnet checked")
 
-    def test_approved_action_resumes_agent_tool_loop(self):
+    def test_approved_browser_submit_resumes_agent_tool_loop(self):
         import time
         from console.tool_policy import schema_digest
-        mcp=FakeMCP()
+        browser_submit = {
+            "name": "browser_submit",
+            "description": "Approved browser submit",
+            "inputSchema": {"type": "object", "properties": {
+                "name": {"type": "string"}}, "required": ["name"],
+                "additionalProperties": False},
+        }
+        class BrowserMCP(FakeMCP):
+            def initialize(self):
+                return TOOLS + [browser_submit]
+            def call(self, name, args):
+                self.calls.append((name,args))
+                if name == "browser_submit":
+                    return {"ok": True, "submitted": True}, False
+                if name == "ip_network_summary":
+                    return {"ok": True, "network": "192.0.2.0/24"}, False
+                return {"ok": False, "error": "unknown"}, True
+        mcp=BrowserMCP()
         lm=FakeOllama([
             calls(("ip_network_summary",{"cidr":"192.0.2.7/24"})),
             {"role":"assistant","content":"Продолжила после разрешённого действия"},
         ])
         approval={
-            "tool":"arbitrary_shell","args":{"command":"id"},
-            "schema_hash":schema_digest(TOOLS[-1]),"created_at":time.time(),
+            "tool":"browser_submit","args":{"name":"Confirm booking"},
+            "schema_hash":schema_digest(browser_submit),"created_at":time.time(),
         }
         out=Agent(lm,lambda:mcp).execute_approved(approval,[])
         self.assertEqual(out["tool_calls"],2)
         self.assertEqual(out["events"][0]["type"],"approved_tool_result")
+        self.assertIn(("browser_submit",{"name":"Confirm booking"}),mcp.calls)
         self.assertIn(("ip_network_summary",{"cidr":"192.0.2.7/24"}),mcp.calls)
         self.assertEqual(out["answer"],"Продолжила после разрешённого действия")
 
