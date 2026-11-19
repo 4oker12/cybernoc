@@ -52,6 +52,8 @@ class AgentTests(unittest.TestCase):
         self.assertIn("облачный DeepSeek", BASE_SYSTEM)
         self.assertIn("разработчик самой Cybernova", BASE_SYSTEM)
         self.assertIn("Chromium/Playwright", BASE_SYSTEM)
+        self.assertIn("Первоначальный исполнитель проекта", BASE_SYSTEM)
+        self.assertIn("отдельным посредником", BASE_SYSTEM)
         self.assertIn("ИССЛЕДОВАТЕЛЬСКАЯ МИССИЯ CYBERNOVA", BASE_SYSTEM)
         self.assertIn("РАЗБОР НЕЧЁТКОГО ЗАПРОСА", BASE_SYSTEM)
         self.assertNotIn("Рекомендация Qwen", BASE_SYSTEM)
