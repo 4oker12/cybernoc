@@ -35,7 +35,12 @@ REVIEWED_OFFLINE = frozenset({
     "dev_workspace", "dev_list", "dev_read", "dev_search",
     "dev_edit", "dev_delete", "dev_move", "dev_diff", "dev_test", "dev_commit",
 })
-REVIEWED_SCOPED = frozenset({"http_get", "scoped_dns_resolve", "scoped_tls_inspect", "browser_open", "browser_network"})
+REVIEWED_SCOPED = frozenset({
+    "http_get", "scoped_dns_resolve", "scoped_tls_inspect",
+    "browser_open", "browser_network",
+    # Public read-only web research: Google SERP and one public HTTPS source page.
+    "google_search", "research_source_open",
+})
 REVIEWED_TOOLS = REVIEWED_OFFLINE | REVIEWED_SCOPED
 
 
