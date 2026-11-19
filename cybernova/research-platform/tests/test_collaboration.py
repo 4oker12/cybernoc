@@ -60,6 +60,15 @@ class CollaborationTests(unittest.TestCase):
         with self.assertRaisesRegex(CollaborationError, "not_active"):
             self.collab.advance(run["task_id"], "chatgpt", "late response")
 
+    def test_interrupted_message_commit_blocks_replay(self):
+        run = self.collab.create("Проверка безопасной лаборатории", "gpt-test", 2)
+        self.comm.append(run["task_id"], "chatgpt", "feedback",
+                         "Ответ записан, но курсор не обновился", status="running")
+        recovered = CollaborationStore(CommunicationStore(self.comm.path)).read(run["task_id"])
+        self.assertEqual(recovered["state"], "blocked")
+        with self.assertRaisesRegex(CollaborationError, "not_active"):
+            self.collab.advance(run["task_id"], "chatgpt", "Повтор после сбоя")
+
     def test_approval_does_not_autorun(self):
         run = self.collab.create("Изучить локальную лабораторию", "gpt-test", 1)
         self.collab.advance(run["task_id"], "chatgpt", "Задание")
