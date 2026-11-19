@@ -6,6 +6,8 @@ No reverse proxy exposure, signup, credentials, database or production access.
 from __future__ import annotations
 
 from collections import OrderedDict
+from contextlib import asynccontextmanager
+from functools import lru_cache
 from datetime import datetime, timezone
 import json
 import os
@@ -29,6 +31,9 @@ try:
     from .domain_tools import DOMAIN_TOOLS
     from .scoped_network_tools import SCOPED_TOOLS
     from .lab_scanners import SCANNER_TOOLS, inventory
+    from .communication import CommunicationStore, CommunicationError
+    from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
+    from .communication_worker import CommunicationWorker
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL
     from followups import generate_followups
@@ -39,6 +44,9 @@ except ImportError:
     from domain_tools import DOMAIN_TOOLS
     from scoped_network_tools import SCOPED_TOOLS
     from lab_scanners import SCANNER_TOOLS, inventory
+    from communication import CommunicationStore, CommunicationError
+    from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
+    from communication_worker import CommunicationWorker
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -47,8 +55,29 @@ MAX_HISTORY = 16
 sessions: OrderedDict[str, dict] = OrderedDict()
 sessions_lock = RLock()
 agent = Agent()
-app = FastAPI(title="Cybernova Console", version="0.1.0", docs_url=None, redoc_url=None,
-              openapi_url=None)
+
+
+@lru_cache(maxsize=1)
+def communication_store() -> CommunicationStore:
+    return CommunicationStore()
+
+
+@asynccontextmanager
+async def lifespan(app):
+    worker = None
+    if os.environ.get("CYBERNOVA_COMM_WORKER", "1") == "1":
+        worker = CommunicationWorker(communication_store())
+        worker.start()
+    try:
+        yield
+    finally:
+        if worker is not None:
+            worker.stop()
+
+
+app = FastAPI(title="Cybernova Console", version="0.2.0",
+              docs_url=None, redoc_url=None, openapi_url=None,
+              lifespan=lifespan)
 
 ALLOWED_HOSTS = frozenset({"127.0.0.1:18794", "localhost:18794"})
 
@@ -121,7 +150,7 @@ def _session(session_id: str | None) -> tuple[str, dict]:
         key = secrets.token_urlsafe(24)
         session = {"last": now, "history": [], "lock": RLock(), "turns": 0,
                    "followups_turn": None, "followups": [], "pending_approvals": {},
-                   "traffic_artifacts": {}}
+                   "traffic_artifacts": {}, "task_id": None}
         sessions[key] = session
         while len(sessions) > MAX_SESSIONS:
             sessions.popitem(last=False)
@@ -163,7 +192,7 @@ def status():
         mcp_ok = True
     except Exception:
         remote_tools, mcp_ok = [], False
-    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS]
+    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + COMMUNICATION_TOOLS]
     return {
         "model": MODEL,
         "ollama_ready": _ollama_health(),
@@ -177,6 +206,9 @@ def status():
         "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
         "lab_scanners": inventory(),
         "import_kinds": ["har", "javascript"] + sorted(PARSERS),
+        "communication": {"enabled": True, "durable_tasks": True,
+                          "review_inbox": True, "qwen_worker": os.environ.get("CYBERNOVA_COMM_WORKER", "1") == "1",
+                          "chatgpt_mcp": "separate_service_not_yet_connected"},
         "mode": "loopback_only",
         "version": "0.1.0",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -192,6 +224,10 @@ def import_artifact(payload: ImportRequest):
     """
     sid, state = _session(payload.session_id)
     with state["lock"]:
+        if state["task_id"] is None:
+            state["task_id"] = communication_store().create_task(
+                "Импорт " + payload.kind, origin="human"
+            )["task_id"]
         if len(state["traffic_artifacts"]) >= MAX_ARTIFACTS:
             raise HTTPException(status_code=409, detail="artifact_limit_reached")
         try:
@@ -228,7 +264,7 @@ def import_artifact(payload: ImportRequest):
                        "метаданные и гипотезы; сырые данные удалены. Жду задачу.",
         })
         state["history"] = state["history"][-MAX_HISTORY:]
-    return {"session_id": sid, **summary}
+    return {"session_id": sid, "task_id": state["task_id"], **summary}
 
 
 @app.post("/api/chat")
@@ -236,10 +272,21 @@ def chat(payload: ChatRequest):
     sid, state = _session(payload.session_id)
     # Prevent overlapping turns in one session from corrupting model history.
     with state["lock"]:
+        store = communication_store()
+        if state["task_id"] is None:
+            state["task_id"] = store.create_task(
+                payload.message.strip()[:150], origin="human",
+            )["task_id"]
+        task_id = state["task_id"]
+        store.append(task_id, "human", "instruction", payload.message,
+                     status="running")
         try:
             current_agent = Agent(
                 ollama=agent.ollama,
-                mcp_factory=lambda: TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
+                mcp_factory=lambda: CommunicationToolClient(
+                    TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
+                    store, task_id,
+                ),
             )
             outcome = current_agent.run(
                 state["history"], payload.message,
@@ -247,6 +294,8 @@ def chat(payload: ChatRequest):
                 force_tools=True,
             )
         except Exception as exc:
+            store.append(task_id, "controller", "system",
+                         "Agent failed: " + type(exc).__name__, status="blocked")
             raise HTTPException(status_code=502, detail="agent_failed: " +
                                 type(exc).__name__) from exc
         # Raw arguments are never exposed in the chat response.
@@ -260,7 +309,13 @@ def chat(payload: ChatRequest):
         state["history"].append({"role": "assistant", "content": outcome["answer"][:16000]})
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
-    return {"session_id": sid, "turn": state["turns"], **outcome}
+        current_status = store.get_task(task_id)["status"]
+        final_status = ("needs_review" if current_status == "needs_review"
+                        else "blocked" if requests else "completed")
+        event = store.append(task_id, "qwen", "result",
+                             outcome["answer"][:12000], status=final_status)
+    return {"session_id": sid, "task_id": task_id, "event_seq": event["seq"],
+            "turn": state["turns"], **outcome}
 
 
 @app.post("/api/approve")
@@ -285,7 +340,9 @@ def approve(payload: ApprovalRequest):
             # The reviewed agent checks the latest MCP schema before execution.
             current_agent = Agent(
                 ollama=agent.ollama,
-                mcp_factory=lambda: TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
+                mcp_factory=lambda: CommunicationToolClient(
+                    TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
+                    communication_store(), state["task_id"]),
             )
             result = current_agent.execute_approved(item, state["history"])
         except Exception as exc:
@@ -299,8 +356,64 @@ def approve(payload: ApprovalRequest):
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
         state["pending_approvals"].clear()
+        communication_store().append(state["task_id"], "human", "decision",
+                                     "Разрешён один вызов " + item["tool"])
+        communication_store().append(state["task_id"], "qwen", "result",
+                                     str(result["answer"])[:12000],
+                                     status="completed")
         return {"ok": True, "decision": "approved", "session_id": payload.session_id,
+                "task_id": state["task_id"],
                 "turn": state["turns"], **result}
+
+
+
+@app.get("/api/comm/events")
+def communication_updates(session_id: str, after_seq: int = 0):
+    """Read messages for this browser session from the shared durable task."""
+    with sessions_lock:
+        state = sessions.get(session_id)
+    if state is None or state.get("task_id") is None:
+        raise HTTPException(status_code=404, detail="session_or_task_not_found")
+    try:
+        return communication_store().read_dialog(
+            state["task_id"], after=after_seq, limit=50,
+        )
+    except CommunicationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/comm/tasks")
+def communication_tasks():
+    """List recent persisted tasks in the local Cybernova Web UI."""
+    return {"tasks": communication_store().list_tasks(limit=25)}
+
+
+class ResumeTaskRequest(BaseModel):
+    task_id: str = Field(min_length=12, max_length=100)
+
+
+@app.post("/api/comm/resume")
+def communication_resume(payload: ResumeTaskRequest):
+    """Resume an existing task in the current browser; do not execute Qwen."""
+    store = communication_store()
+    try:
+        task = store.get_task(payload.task_id)
+        dialog = store.read_dialog(payload.task_id, limit=100)
+    except CommunicationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    sid, state = _session(None)
+    with state["lock"]:
+        state["task_id"] = payload.task_id
+        state["history"] = [
+            {"role": "assistant" if row["actor"] == "qwen" else "user",
+             "content": row["body"][:10000]}
+            for row in dialog["messages"]
+            if row["actor"] in {"human", "qwen", "chatgpt"}
+            and row["kind"] in {"instruction", "feedback", "result"}
+        ][-MAX_HISTORY:]
+        state["turns"] = len([x for x in state["history"] if x["role"] == "assistant"])
+    return {"session_id": sid, "task": task,
+            "messages": dialog["messages"], "turn": state["turns"]}
 
 
 @app.post("/api/followups")
