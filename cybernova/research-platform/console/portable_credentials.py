@@ -24,10 +24,10 @@ def main():
         key=key.strip()
     else:
         if len(key)!=32:
-            parser.exit(2,"backup_key_must_be_32_bytes\\n")
+            parser.exit(2,"backup_key_must_be_32_bytes\n")
         target=Path(os.environ.get("CYBERNOVA_BACKUP_KEY_FILE","/data/backup.key"))
         if target.exists() and not args.rotate:
-            parser.exit(2,"backup_key_exists\\n")
+            parser.exit(2,"backup_key_exists\n")
         key_path=target
     if args.command=="import-model-key":
         key_path=KEY_FILE
@@ -42,7 +42,7 @@ def main():
     fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
     try:
         with os.fdopen(fd,"wb") as out:
-            out.write(key + (b"\\n" if args.command=="import-model-key" else b""))
+            out.write(key + (b"\n" if args.command=="import-model-key" else b""))
             out.flush()
             os.fsync(out.fileno())
         os.replace(tmp,key_path)
