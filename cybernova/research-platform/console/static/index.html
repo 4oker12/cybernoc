@@ -98,8 +98,18 @@
             <span id="collabStatus" role="status">Готов</span>
             <button type="button" id="collabResume" class="refresh-button" hidden>Продолжить ещё пакет</button>
             <button type="button" id="collabStop" class="refresh-button">Пауза</button>
+            <button type="button" id="collabEdit" class="refresh-button" hidden>Изменить задачу</button>
             <button type="button" id="collabFinish" class="refresh-button" hidden>Завершить диалог</button>
             <button type="button" id="collabNew" class="refresh-button">Новая задача</button>
+          </div>
+          <div id="collabEditPanel" class="collab-edit-panel" hidden>
+            <label for="collabGoalEdit">Новая редакция задачи</label>
+            <textarea id="collabGoalEdit" maxlength="3000" rows="5" placeholder="Уточни цель, ограничения или направление исследования…"></textarea>
+            <p class="muted">Изменение сохранится в истории и начнёт действовать при продолжении диалога. Разрешённые цели и права инструментов не меняются.</p>
+            <div class="collab-edit-actions">
+              <button type="button" id="collabGoalSave" class="profile-save">Сохранить изменения</button>
+              <button type="button" id="collabGoalCancel" class="refresh-button">Отмена</button>
+            </div>
           </div>
         </section>
         <div id="collabLog" aria-live="polite"></div>
