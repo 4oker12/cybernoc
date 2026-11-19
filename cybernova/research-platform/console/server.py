@@ -18,7 +18,7 @@ import time
 from urllib import request, error, parse
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 try:
@@ -39,6 +39,7 @@ try:
     from .shared_tool_support import preflight as gpt_tool_preflight
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
+    from .conversation_export import export_data, render_export, ConversationExportError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
     from .developer_tools import DEV_TOOLS
     from .communication_worker import CommunicationWorker
@@ -67,6 +68,7 @@ except ImportError:
     from shared_tool_support import preflight as gpt_tool_preflight
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
+    from conversation_export import export_data, render_export, ConversationExportError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
     from developer_tools import DEV_TOOLS
     from communication_worker import CommunicationWorker
@@ -287,6 +289,31 @@ class SharedToolRequest(BaseModel):
 
 
 gpt_turn_lock = RLock()
+
+
+@app.get("/api/conversation/export")
+def conversation_export(mode: str, id: str, format: str = "md"):
+    """Explicit, authenticated GET export; no model calls or external traffic."""
+    if mode not in {"research", "gpt", "collab"} or format not in {"md", "json"}:
+        raise HTTPException(status_code=422, detail="invalid_export_options")
+    try:
+        data = export_data(mode, id, communication_store(),
+                           collaboration_store(), gpt_chat_store())
+        content, media_type, extension = render_export(data, format)
+    except (CommunicationError, CollaborationError, GPTChatError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except ConversationExportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    # The ID is a store-validated opaque identifier, never a user title.
+    filename = "cybernova-" + mode + "-" + id + "." + extension
+    return Response(
+        content=content, media_type=media_type,
+        headers={
+            "Content-Disposition": 'attachment; filename="' + filename + '"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/api/collab/runs")
