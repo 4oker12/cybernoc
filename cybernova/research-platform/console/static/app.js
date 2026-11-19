@@ -318,6 +318,8 @@ function displayTaskEvent(message){
   if(!message)return;
   if(message.actor==="chatgpt"&&(message.kind==="feedback"||message.kind==="instruction")){
     renderMessage("chatgpt",message.body);
+  }else if(message.actor==="human"&&message.kind==="feedback"){
+    renderMessage("user",message.body);
   }else if(message.actor==="qwen"&&message.kind==="result"){
     renderMessage("assistant",message.body);
   }else if(message.actor==="qwen"&&message.kind==="request_review"){
@@ -371,6 +373,87 @@ async function pollTask(){
     showTaskStatus(data.task?.status);
     if((data.messages||[]).length)void refreshTaskList();
   }catch(_){}
+}
+
+async function copyReviewPacket(){
+  if(!state.sessionId||!state.taskId){
+    $("reviewStatus").textContent="Сначала создай или открой исследовательскую задачу.";
+    return;
+  }
+  const sid=state.sessionId;
+  $("reviewStatus").textContent="Собираю журнал рецензии…";
+  try{
+    const response=await fetch("/api/comm/review-packet?session_id="+
+      encodeURIComponent(sid),{cache:"no-store"});
+    if(!response.ok)throw Error("HTTP "+response.status);
+    const data=await response.json();
+    if(state.sessionId!==sid)return;
+    const packet=data.packet||"";
+    if(!packet)throw Error("Пакет пустой");
+    try{
+      await navigator.clipboard.writeText(packet);
+      $("reviewStatus").textContent="Пакет скопирован. Вставь в обычный ChatGPT.";
+      $("reviewPacketText").hidden=true;
+    }catch(_){
+      const field=$("reviewPacketText");
+      field.hidden=false;
+      field.value=packet;
+      field.focus();
+      field.select();
+      $("reviewStatus").textContent="Буфер обмена запрещён. Скопируй выделенный текст Ctrl+C.";
+    }
+  }catch(err){
+    $("reviewStatus").textContent="Ошибка: "+String(err.message||err);
+  }
+}
+async function showEvidenceJournal(){
+  if(!state.sessionId||!state.taskId){
+    $("reviewStatus").textContent="Открой исследовательскую задачу.";
+    return;
+  }
+  const response=await fetch("/api/comm/evidence?session_id="+
+    encodeURIComponent(state.sessionId),{cache:"no-store"});
+  if(!response.ok){
+    $("reviewStatus").textContent="Журнал недоступен (HTTP "+response.status+").";
+    return;
+  }
+  const data=await response.json();
+  const out=$("evidenceOutput");
+  out.hidden=false;
+  out.textContent=JSON.stringify({
+    claimed_by_qwen_not_verified:data.claims||[],
+    controller_tool_receipts:data.tool_receipts||[],
+  },null,2);
+}
+async function submitReviewerFeedback(){
+  if(!state.sessionId||!state.taskId){
+    $("reviewStatus").textContent="Сначала открой задачу.";
+    return;
+  }
+  const text=$("reviewFeedbackInput").value.trim();
+  if(!text){
+    $("reviewStatus").textContent="Вставь замечания ChatGPT перед отправкой.";
+    return;
+  }
+  if(state.running)return;
+  busy(true);
+  const sid=state.sessionId;
+  try{
+    const result=await requestJson("/api/comm/reviewer-feedback",{
+      session_id:sid,
+      message:text,
+      event_key:"ui_review_"+Date.now()+"_"+Math.random().toString(36).slice(2),
+    });
+    if(state.sessionId!==sid)return;
+    renderMessage("user","Замечания рецензента (вручную):\n"+text);
+    state.lastSeq=Math.max(state.lastSeq,result.event_seq||0);
+    $("reviewFeedbackInput").value="";
+    $("reviewStatus").textContent="Замечания переданы. Qwen продолжит задачу из очереди.";
+    showTaskStatus("queued");
+    await refreshTaskList();
+  }catch(err){
+    $("reviewStatus").textContent="Ошибка отправки: "+String(err.message||err);
+  }finally{busy(false);}
 }
 function renderTools(tools,automatic=[],availableScanners=[]){
   const container=$("toolList");
@@ -453,6 +536,9 @@ function init(){
   });
   $("newSession").addEventListener("click",reset);
   $("refreshStatus").addEventListener("click",status);
+  $("copyReviewPacket").addEventListener("click",copyReviewPacket);
+  $("evidenceIndexButton").addEventListener("click",showEvidenceJournal);
+  $("sendReviewFeedback").addEventListener("click",submitReviewerFeedback);
   $("navTools").addEventListener("click",()=>toolsPanel($("inspector").hidden));
   $("navChat").addEventListener("click",()=>toolsPanel(false));
   $("menuToggle").addEventListener("click",()=>$("sidebar").classList.toggle("open"));
