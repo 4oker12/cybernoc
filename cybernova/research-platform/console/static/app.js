@@ -1294,6 +1294,7 @@ async function editCollabGoal(){
     }
     if(state.collabRun?.state!=="paused")return;
     $("collabGoalEdit").value=state.collabRun.goal||"";
+    $("collabCyclesEdit").value=String(state.collabRun.max_cycles||3);
     $("collabEditPanel").hidden=false;
     $("collabResume").hidden=true;
     $("collabGoalEdit").focus();
@@ -1309,17 +1310,18 @@ async function saveCollabGoalEdit(){
   if(!state.collabRun||state.collabRun.state!=="paused")return;
   const taskId=state.collabRun.task_id;
   const goal=$("collabGoalEdit").value.trim();
+  const cycles=Number($("collabCyclesEdit").value);
   if(!goal||goal.length>3000){
     $("collabStatus").textContent="Задача должна содержать от 1 до 3000 символов.";
     return;
   }
   $("collabGoalSave").disabled=true;
   try{
-    const run=await requestJson("/api/collab/goal",{task_id:taskId,goal});
+    const run=await requestJson("/api/collab/goal",{task_id:taskId,goal,cycles});
     if(state.collabRun?.task_id!==taskId)return;
     $("collabEditPanel").hidden=true;
     renderCollabRun(run);
-    $("collabStatus").textContent="Задача обновлена и записана в историю. Нажми «Продолжить».";
+    $("collabStatus").textContent="Задача обновлена; следующий пакет — "+run.max_cycles+" обменов. Нажми «Продолжить».";
     void refreshCollabRuns();
   }catch(err){
     $("collabStatus").textContent="Не удалось сохранить задачу: "+String(err.message||err);
