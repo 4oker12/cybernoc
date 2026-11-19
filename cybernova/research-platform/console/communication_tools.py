@@ -9,9 +9,11 @@ from __future__ import annotations
 try:
     from .communication import CommunicationStore, CommunicationError
     from .evidence import EvidenceJournal
+    from .developer_tools import DEV_TOOLS, DEV_NAMES, dev_call, DeveloperError
 except ImportError:
     from communication import CommunicationStore, CommunicationError
     from evidence import EvidenceJournal
+    from developer_tools import DEV_TOOLS, DEV_NAMES, dev_call, DeveloperError
 
 
 COMMUNICATION_TOOLS = [
@@ -77,9 +79,14 @@ class CommunicationToolClient:
         self.evidence = EvidenceJournal(store)
 
     def initialize(self) -> list[dict]:
-        return self.upstream.initialize() + COMMUNICATION_TOOLS
+        return self.upstream.initialize() + COMMUNICATION_TOOLS + DEV_TOOLS
 
     def call(self, name: str, arguments: dict) -> tuple[dict, bool]:
+        if name in DEV_NAMES:
+            try:
+                return dev_call(name, arguments, self.task_id), False
+            except (DeveloperError, TypeError, ValueError, OSError) as exc:
+                return {"ok": False, "error": str(exc)[:300]}, True
         if name not in COMMUNICATION_NAMES:
             return self.upstream.call(name, arguments)
         try:
