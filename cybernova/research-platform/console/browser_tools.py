@@ -11,6 +11,7 @@ import hashlib
 from html.parser import HTMLParser
 import http.client
 import ipaddress
+import os
 import re
 import socket
 import ssl
@@ -248,5 +249,9 @@ def browser_call(name: str, args: dict, upstream, *, extra_hosts=None, fetcher=N
     if not isinstance(scoped, list):
         raise ValueError("invalid_gateway_scope")
     authorized = {x for x in scoped if isinstance(x, str)}
+    # Server owner controls passive browser scope via a deployment setting.
+    # User/model supplied URLs cannot extend the allowlist themselves.
+    config = os.environ.get("CYBERNOVA_BROWSER_HOSTS", "")
+    authorized.update(x.strip() for x in config.split(",") if x.strip())
     authorized.update(extra_hosts or ())
     return _read_page(args["url"], authorized, fetcher=fetcher)
