@@ -39,10 +39,10 @@
     return result.some(Boolean)?result:null;
   }
   function divider(c){
-    return c&&c.length>0&&c.every(x=>/^:?-{2,}:?$/.test(x));
+    return c&&c.length>0&&c.every(x=>/^:?-{1,}:?$/.test(x));
   }
   function section(line){
-    const m=/^\s*(?:\*\*)?(Рекомендаци[яи]|Следующ(?:ий|ие)\s+шаг(?:и)?|Критери[йи]\s+успеха|Итог|Вывод|Факты|Гипотезы|Риски|Что проверить)(?:\*\*)?\s*[:—–-]?\s*(.*)$/i.exec(line);
+    const m=/^\s*(?:\*\*)?(Рекомендаци[яи](?:\s+Qwen)?|Следующ(?:ий|ие)\s+шаг(?:и)?|Критери[йи]\s+успеха|Итог|Вывод|Факты|Гипотезы|Риски|Что проверить)(?:\*\*)?\s*[:—–-]?\s*(.*)$/i.exec(line);
     if(!m)return null;
     return {title:m[1],detail:m[2]||"",kind:/рекомендац/i.test(m[1])?"recommendation":/шаг|провер/i.test(m[1])?"steps":/критери/i.test(m[1])?"criteria":"finding"};
   }
