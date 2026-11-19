@@ -408,3 +408,102 @@ html[data-density="relaxed"] .composer{padding:17px 18px 13px}
   .collab-setup{padding:13px}
   .collab-header h2{font-size:16px}
 }
+
+
+/* Readable documentation-style typography and corrected untruncated mode names. */
+:root{
+  --ui-font:Inter,"Segoe UI",Roboto,Arial,sans-serif;
+  --font-heading:#182334;
+  --font-secondary:#637183;
+  --font-border:#e1e7ee;
+}
+body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(15px * var(--font-scale,1));line-height:1.55}
+.sidebar:not(.collapsed){width:max(290px,var(--sidebar-width,260px));flex-basis:max(290px,var(--sidebar-width,260px));min-width:290px}
+.sidebar .mode-stack{gap:4px}
+.sidebar .mode-item{width:100%;box-sizing:border-box;min-height:40px;gap:10px;font-size:14px;line-height:1.35;font-weight:600}
+.sidebar .mode-item > .mode-name{
+  display:block;flex:1 1 auto;width:auto;height:auto;min-width:0;
+  max-width:none;overflow:visible;text-overflow:clip;white-space:normal;
+  font-size:14px;font-weight:600;line-height:1.35;
+  place-items:initial;border-radius:0;background:transparent;color:inherit;
+}
+:root[data-theme="light"] .sidebar .mode-item > .mode-name,
+:root[data-theme="dark"] .sidebar .mode-item > .mode-name{
+  display:block;flex:1 1 auto;width:auto;height:auto;min-width:0;max-width:none;
+  font-size:14px;font-weight:600;background:transparent;color:inherit;
+}
+.sidebar .mode-item > span:first-child{flex:none}
+.sidebar .sidebar-action{font-size:13px;font-weight:550}
+.sidebar .sidebar-label{font-size:11px;letter-spacing:.018em}
+.sidebar .session-item,.sidebar .task-item{font-size:13px;line-height:1.4}
+.sidebar .task-item{display:flex;flex-direction:column;align-items:stretch;gap:4px;max-width:100%;box-sizing:border-box;padding:10px 11px}
+.sidebar .task-title{font-size:13px;font-weight:600;line-height:1.42;min-width:0;max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar .task-preview{display:block;font-size:12px;font-weight:400;line-height:1.45;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.sidebar .task-item .task-state{font-size:11px;font-weight:450}
+.messages{max-width:min(var(--chat-width,1040px),1060px)}
+.model-title #modelName{font-size:17px;line-height:1.25;font-weight:650;letter-spacing:-.015em;max-width:340px}
+.message-meta{font-size:14px;line-height:1.3;font-weight:650}
+.message-body,.message-body .md-content,.collab-full .md-content{
+  font-family:var(--ui-font);font-size:16px;line-height:1.66;font-weight:400;letter-spacing:0;
+}
+.md-content h2,.collab-full .md-content h2{font-size:24px;line-height:1.3;font-weight:700;letter-spacing:-.02em;margin:26px 0 12px}
+.md-content h3,.collab-full .md-content h3{font-size:19px;line-height:1.38;font-weight:650;margin:22px 0 10px}
+.md-content h4,.collab-full .md-content h4{font-size:17px;font-weight:600;line-height:1.4;margin:18px 0 8px}
+.md-content strong{font-weight:650}
+.md-content>p{margin-bottom:14px}
+.md-note-title{font-size:15px!important;font-weight:650!important}
+.md-note p{font-size:15px;line-height:1.6}
+.md-table{font-size:14px;line-height:1.55}
+.md-table th{font-weight:650}
+.md-content li{line-height:1.65}
+.collab-header h2{font-size:22px;line-height:1.3;font-weight:700;letter-spacing:-.025em}
+.collab-header p{font-size:14px;line-height:1.6}
+.collab-setup label{font-size:13px;font-weight:600}
+.collab-setup textarea,.collab-setup select{font-size:14px}
+.collab-row{grid-template-columns:minmax(180px,1fr) 160px auto}
+
+/* Collapsed by default: one readable excerpt, complete Markdown on expansion. */
+#collabLog{display:flex;flex-direction:column;gap:10px;padding:4px 0 22px}
+.collab-entry{
+  border:1px solid var(--line);border-radius:12px;
+  padding:13px 16px;background:var(--panel);min-width:0;
+}
+.collab-author{display:flex;align-items:center;gap:10px;margin-bottom:8px;color:var(--text);font-size:14px;font-weight:650}
+.collab-author-icon{display:grid;place-items:center;width:23px;height:23px;flex:none;border-radius:8px;background:var(--hover);color:var(--accent);font-size:12px;font-weight:650}
+.collab-entry.collab-human{background:var(--hover)}
+.collab-full{min-width:0;font-size:16px;line-height:1.65;color:var(--text);overflow-wrap:anywhere;white-space:pre-wrap}
+.collab-full .md-content{white-space:normal}
+.collab-details{min-width:0}
+.collab-preview{display:flex;align-items:flex-start;gap:14px;cursor:pointer;list-style:none;padding:4px 0 2px}
+.collab-preview::-webkit-details-marker{display:none}
+.collab-snippet{flex:1;min-width:0;font-size:14px;line-height:1.65;font-weight:400;color:var(--text);overflow-wrap:anywhere}
+.collab-disclose{flex:none;font-size:12px;font-weight:600;color:#16836f;white-space:nowrap;padding-top:2px}
+.collab-disclose:before{content:"▸ ";font-size:12px}
+.collab-details[open] .collab-disclose:before{content:"▾ "}
+.collab-details[open] .collab-disclose{font-size:0}
+.collab-details[open] .collab-disclose:after{content:"Свернуть";font-size:12px}
+.collab-details[open] .collab-snippet{display:none}
+.collab-details[open] .collab-preview{justify-content:flex-end;border-bottom:1px solid var(--line);padding-bottom:9px;margin-bottom:12px}
+.collab-entry .md-content h2:first-child{margin-top:5px}
+.collab-setup{padding:19px 21px}
+.collab-setup .collab-row button{font-weight:600}
+:root[data-theme="light"] .collab-entry{background:#fff;border-color:#e0e7ef;box-shadow:0 1px 3px #1a2d4508}
+:root[data-theme="light"] .collab-entry.collab-human{background:#f4f7fa}
+:root[data-theme="light"] .collab-author{color:#253246}
+:root[data-theme="light"] .collab-snippet,:root[data-theme="light"] .collab-full{color:#303c4d}
+:root[data-theme="light"] .collab-author-icon{background:#e7f2ed;color:#187562}
+:root[data-theme="dark"] .collab-disclose{color:#97dbc4}
+@media(max-width:1100px){
+  .sidebar:not(.collapsed){width:290px;flex-basis:290px;min-width:290px}
+}
+@media(max-width:680px){
+  .sidebar:not(.collapsed),.sidebar.collapsed{min-width:0;width:min(290px,88vw)!important;flex-basis:min(290px,88vw)!important}
+  .model-title #modelName{font-size:14px;max-width:145px}
+  .message-body,.message-body .md-content,.collab-full .md-content{font-size:15px;line-height:1.6}
+  .md-content h2{font-size:21px}.md-content h3{font-size:18px}
+  .collab-header h2{font-size:20px}
+  .collab-preview{flex-direction:column;gap:5px}
+  .collab-disclose{align-self:flex-end}
+  .collab-entry{padding:12px 13px}
+  .collab-row{grid-template-columns:1fr 1fr}
+}
