@@ -181,20 +181,18 @@ def start(data: Path) -> dict:
         raise NativeError("run_install_first")
     if shutil.which("tmux") is None:
         return {"started":False,
-                "command":"python native.py run --data-dir "+str(data),
+                "command":"python native.py --data-dir "+str(data)+" run",
                 "reason":"tmux_unavailable; run in a dedicated terminal or use Docker"}
     if subprocess.run(["tmux","has-session","-t","cybernova-native"],
                       capture_output=True).returncode==0:
         raise NativeError("native_session_already_running")
-    env=os.environ.copy()
-    env.update(_load(data))
-    env["PYTHONPATH"]=str(ROOT)+(os.pathsep+env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     logfile=data/"runtime.log"
-    command="cd "+shlex.quote(str(ROOT))+" && exec "+shlex.quote(str(python))+(
-        " -u -m console.portable_runtime >>"+shlex.quote(str(logfile))+" 2>&1"
+    command="cd "+shlex.quote(str(ROOT))+" && exec "+(
+        shlex.quote(sys.executable)+" "+shlex.quote(str(Path(__file__).resolve()))+
+        " --data-dir "+shlex.quote(str(data))+" run >>"+shlex.quote(str(logfile))+" 2>&1"
     )
     check=subprocess.run(["tmux","new-session","-d","-s","cybernova-native",command],
-                         env=env,capture_output=True,text=True)
+                         capture_output=True,text=True)
     if check.returncode:
         raise NativeError("tmux_start_failed")
     time.sleep(2)
