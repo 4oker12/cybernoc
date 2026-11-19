@@ -1,7 +1,9 @@
 "use strict";
 /* Cybernova: local ChatGPT-like chat UI. No external JS, no model HTML. */
 const $=id=>document.getElementById(id);
-const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0};
+const MAX_UPLOAD_BYTES = 32 * 1024 * 1024;
+const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
+  uploadLimit:MAX_UPLOAD_BYTES};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка интерфейса",
@@ -221,8 +223,9 @@ function readSelectedFile(file,binary){
 }
 async function importArtifact(file){
   if(!file||state.running)return;
-  if(file.size>4_000_000){
-    $("uploadStatus").textContent="Файл слишком большой (максимум 4 МБ)";
+  if(file.size>state.uploadLimit){
+    $("uploadStatus").textContent="Файл слишком большой (максимум "+
+      Math.floor(state.uploadLimit/(1024*1024))+" МиБ)";
     return;
   }
   const binary=/\.(pcap|cap)$/i.test(file.name);
@@ -649,6 +652,8 @@ async function status(){
     const response=await fetch("/api/status",{cache:"no-store"});
     if(!response.ok)throw Error("HTTP "+response.status);
     const info=await response.json();
+    if(Number.isSafeInteger(info.upload_limit_bytes)&&info.upload_limit_bytes>0)
+      state.uploadLimit=info.upload_limit_bytes;
     const hosted=info.model_provider==="openai_compatible";
     const modelReady=hosted?!!info.model_remote_configured:!!info.ollama_ready;
     const ready=modelReady&&!!info.mcp_ready;
