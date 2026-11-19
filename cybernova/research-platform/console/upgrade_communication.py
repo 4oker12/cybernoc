@@ -257,12 +257,29 @@ def main():
         run(["node", "--check", ROOT / "console" / "static" / "app.js"], timeout=20)
     else:
         print("NODE_NOT_INSTALLED_JS_SYNTAX_CHECKED_BY_GITHUB_CI", flush=True)
-    # Verify an actual Chromium process can launch, not just an import.
-    run([VENV, "-c",
-         "from playwright.sync_api import sync_playwright; "
-         "p=sync_playwright().start(); "
-         "b=p.chromium.launch(headless=True,args=['--no-sandbox']); "
-         "b.close();p.stop()"], timeout=40)
+    # A downloaded browser is not necessarily executable on a fresh Vast
+    # image. Repair missing OS *shared libraries* only; never paper over
+    # arbitrary browser failures with package installation. Keep existing
+    # Cybernova services running while resolving host dependencies.
+    launch_check = [VENV, "-c",
+        "from playwright.sync_api import sync_playwright; "
+        "p=sync_playwright().start(); "
+        "b=p.chromium.launch(headless=True,args=['--no-sandbox']); "
+        "b.close();p.stop()"]
+    initial = subprocess.run([str(x) for x in launch_check],
+                             capture_output=True, text=True, timeout=40)
+    if initial.returncode:
+        output = (initial.stderr or "")[-6000:]
+        missing_lib = ("error while loading shared libraries:" in output or
+                       "Host system is missing dependencies" in output)
+        if not missing_lib or os.geteuid() != 0:
+            print("CHROMIUM_SMOKE_FAILED", output[-1800:], flush=True)
+            raise RuntimeError("chromium_launch_failed")
+        print("CHROMIUM_INSTALLING_MISSING_OS_LIBRARIES", flush=True)
+        run([VENV, "-m", "playwright", "install-deps", "chromium"],
+            timeout=480)
+        run(launch_check, timeout=40)
+    print("CHROMIUM_LAUNCH_VERIFIED", flush=True)
     backup_db()
     print("PREFLIGHT_PASSED", flush=True)
 
