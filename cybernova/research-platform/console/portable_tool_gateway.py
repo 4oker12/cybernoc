@@ -11,7 +11,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-GATEWAY_DIR = Path(__file__).resolve().parents[2] / "tool_gateway"
+GATEWAY_DIR = Path(__file__).resolve().parents[1] / "tool_gateway"
 if not (GATEWAY_DIR / "core.py").is_file():
     raise RuntimeError("portable_tool_gateway_sources_missing")
 sys.path.insert(0, str(GATEWAY_DIR))
