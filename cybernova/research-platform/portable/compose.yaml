@@ -5,6 +5,8 @@ services:
     build:
       context: ../../..
       dockerfile: cybernova/research-platform/portable/Dockerfile
+      args:
+        CYBERNOVA_GIT_SHA: ${CYBERNOVA_SOURCE_COMMIT:-unknown}
     image: cybernova/research-console:local
     env_file: .env
     environment:
