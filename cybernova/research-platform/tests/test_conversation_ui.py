@@ -40,7 +40,7 @@ class GPTConversationTests(unittest.TestCase):
 
     def test_gpt_api_uses_only_its_own_context_without_mcp(self):
         conversations=[]
-        def answer(model,history):
+        def answer(model,history,**kwargs):
             conversations.append(history)
             return {"answer":"GPT answer","model":model,"source":"chatgpt_plan_responses"}
         with patch.object(server,"gpt_chat_store",return_value=self.store),\
