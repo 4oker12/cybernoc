@@ -25,12 +25,14 @@ DEFAULT_SECRET_FILE = "/workspace/cybernova-comm-private/web_access.txt"
 ALLOWED_STATIC = frozenset({"/", "/static/styles.css", "/static/app.js", "/static/markdown.js"})
 ALLOWED_GET = frozenset({"/api/status", "/api/comm/tasks", "/api/comm/events",
     "/api/comm/review-packet", "/api/comm/evidence", "/api/siwc/status",
-    "/api/siwc/models", "/api/siwc/chats", "/api/siwc/chat", "/api/research/scope", "/api/profile-settings", "/auth/callback"})
+    "/api/siwc/models", "/api/siwc/chats", "/api/siwc/chat", "/api/research/scope", "/api/profile-settings",
+    "/api/collab/runs", "/api/collab/run", "/auth/callback"})
 ALLOWED_POST = frozenset({
     "/api/chat", "/api/import", "/api/approve", "/api/followups",
     "/api/reset", "/api/research/scope", "/api/comm/resume", "/api/comm/reviewer-feedback",
     "/api/siwc/start", "/api/siwc/disconnect", "/api/siwc/review", "/api/siwc/chat",
-    "/api/profile-settings",
+    "/api/profile-settings", "/api/collab/start", "/api/collab/step",
+    "/api/collab/stop", "/api/tools/run",
 })
 HOP_HEADERS = frozenset({
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
