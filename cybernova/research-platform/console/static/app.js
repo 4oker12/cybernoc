@@ -527,13 +527,13 @@ async function refreshChatGPT(){
     $("chatgptDisconnect").hidden=!connected;
     $("chatgptReview").disabled=!connected||!data.plan_usage||!state.taskId;
     const callbackResult=new URLSearchParams(window.location.search).get("chatgpt");
-    if(callbackResult==="error")statusLine.textContent="Вход ChatGPT не завершён — проверьте доступность подписки и повторите попытку.";
     if(callbackResult)window.history.replaceState(null,"",window.location.pathname);
     statusLine.textContent=connected?
       (data.plan_usage?"Подключён: "+(data.email||"аккаунт ChatGPT")+
          " · использование подписки разрешено":
        "Аккаунт подключён, но использование подписки не разрешено."):
       "Не подключён. Авторизация проходит в браузере OpenAI.";
+    if(callbackResult==="error")statusLine.textContent+=" Последняя авторизация не завершилась.";
     const picker=$("chatgptModel");
     picker.replaceChildren();
     picker.disabled=true;
