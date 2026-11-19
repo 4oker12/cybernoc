@@ -356,7 +356,7 @@ class Agent:
                             serialized = json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]
                             events.append({
                                 "type": "tool_result", "name": chosen,
-                                "arguments": {"url": requested_url.group(0)},
+                                "arguments": {"url": selected_url},
                                 "is_error": bool(error_flag),
                                 "result": observed,
                             })
