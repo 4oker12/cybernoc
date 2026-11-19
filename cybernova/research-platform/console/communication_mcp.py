@@ -15,10 +15,13 @@ from mcp.server.fastmcp import FastMCP
 
 try:
     from .communication import CommunicationStore
+    from .evidence import EvidenceJournal
 except ImportError:
     from communication import CommunicationStore
+    from evidence import EvidenceJournal
 
 store = CommunicationStore()
+evidence = EvidenceJournal(store)
 mcp = FastMCP(
     "Cybernova Communication",
     host="127.0.0.1",
@@ -93,8 +96,31 @@ def cybernova_evidence_index(task_id: str) -> dict:
     refs = list(dict.fromkeys(
         ref for item in dialog["messages"] for ref in item["evidence_refs"]
     ))
+    records = evidence.list_evidence(task_id, limit=100)
+    refs.extend(r["evidence_id"] for r in records if r["evidence_id"] not in refs)
     return {"task_id": task_id, "evidence_refs": refs[:100],
-            "note": "Reference index only; evidence payload retrieval requires a separate artifact provider"}
+            "note": "Qwen claims can be fetched with cybernova_get_evidence; tool receipts contain only cryptographic digests"}
+
+
+
+@mcp.tool()
+def cybernova_get_evidence(task_id: str, evidence_id: str) -> dict:
+    """Read one Qwen-reported, unverified, source-attributed evidence entry.
+
+    The entry is not proof that the named tool was executed. Cross-check the
+    controller's separately generated tool receipts before confirming facts.
+    """
+    return evidence.get_evidence(task_id, evidence_id)
+
+
+@mcp.tool()
+def cybernova_tool_receipts(task_id: str, limit: int = 50) -> dict:
+    """Read controller-generated tool execution metadata and SHA256 digests.
+
+    No tool results, credentials, captured traffic or raw payloads are returned.
+    """
+    rows = evidence.list_tool_receipts(task_id, limit=limit)
+    return {"task_id": task_id, "count": len(rows), "receipts": rows}
 
 
 if __name__ == "__main__":
