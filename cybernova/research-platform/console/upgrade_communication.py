@@ -96,7 +96,6 @@ def start_services():
             "CYBERNOVA_COMM_WORKER=1 " +
             "CYBERNOVA_SIWC_DIR=" + str(PRIVATE / "chatgpt-siwc") + " " +
             "CYBERNOVA_SIWC_CALLBACK_PORT=18795 " +
-            "CYBERNOVA_BROWSER_HOSTS=simnet.ua " +
             "PYTHONUNBUFFERED=1 " + str(VENV) +
             " -m " + module + " >>" + str(PRIVATE / filename) + " 2>&1"
         )
@@ -164,8 +163,8 @@ def check_health():
         raise RuntimeError("qwen_browser_tool_missing")
     if "browser_open" not in status.get("auto_executable", []):
         raise RuntimeError("qwen_browser_tool_not_executable")
-    if "simnet.ua" not in status.get("browser", {}).get("configured_hosts", []):
-        raise RuntimeError("expected_browser_scope_not_configured")
+    if status.get("research_scope", {}).get("type") != "owner_selected_per_task":
+        raise RuntimeError("research_scope_control_missing")
     if "comm_record_evidence" not in tools:
         raise RuntimeError("qwen_evidence_tool_missing")
     info = mcp_call("initialize", {
