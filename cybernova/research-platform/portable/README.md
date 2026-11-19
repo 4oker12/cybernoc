@@ -1,0 +1,161 @@
+# Cybernova Portable — установка и перенос
+
+Цель: Cybernova как переносимый самостоятельный продукт на Vast, VPS, Linux
+или Windows (Docker Desktop). Исходники и история релизов находятся в приватном
+GitHub, рабочие данные — в отдельном Docker-томе, резервные копии — вне сервера.
+
+## Архитектура
+
+В одном непривилегированном контейнере:
+- Cybernova Web UI, localhost:18794;
+- агент с 42 функциями (основные функции + офлайн адаптеры);
+- MCP Tool Gateway, localhost:18792;
+- Communication MCP, localhost:18796;
+- Basic-auth gateway, порт 18795 — единственный публикуемый порт.
+
+Отдельно запускается Ollama (опционально) либо используется удалённая модель
+с API /v1/chat/completions. В Git не хранятся модельные веса, секреты,
+незашифрованные дампы или исследования.
+
+## Установка — новый Vast/Linux
+
+Необходимы Docker + Compose, Python 3.10+, Git и доступ к приватному GitHub.
+
+~~~bash
+git clone --branch feature/cybernova-chat-console git@github.com:4oker12/cybernoc.git
+cd cybernoc/cybernova/research-platform/portable
+python3 manage.py wizard
+~~~
+
+Мастер предлагает Ollama (режим 1) или внешний OpenAI-совместимый API (режим 2),
+запрашивает модель, согласие на передачу данных внешнему провайдеру и скрытый
+ключ, затем может собрать и запустить Docker. Большие модели не скачиваются
+без отдельного согласия. Под Windows: py manage.py wizard после запуска Docker
+Desktop (Linux Containers / WSL2).
+
+Первая локальная тестовая модель в мастере: qwen2.5-coder:7b.
+Это НЕ кастомная Qwen3-Coder Heretic 30B, использовавшаяся на Vast.
+Её веса/Modelfile нужно переносить отдельно с проверкой SHA-256 и лицензии.
+
+Без мастера, Ollama:
+
+~~~bash
+python3 manage.py init --provider ollama --model qwen2.5-coder:7b
+python3 manage.py up
+python3 manage.py pull-model
+python3 manage.py doctor
+~~~
+
+С NVIDIA Container Toolkit: python3 manage.py up --gpu
+
+Внешний провайдер:
+
+~~~bash
+python3 manage.py init --provider openai_compatible --model MODEL_ID --base-url https://provider.example/v1
+python3 manage.py set-key
+python3 manage.py up
+python3 manage.py doctor
+~~~
+
+Подписка на сайт ChatGPT НЕ обеспечивает платный или бесплатный API-доступ.
+Удалённые API обычно оплачиваются и получают запросы, сообщения и результаты
+инструментов — не направляй конфиденциальные данные неподходящему провайдеру.
+Для локального vLLM / LM Studio тоже можно использовать OpenAI-совместимый
+API, если модель поддерживает нужные функции. Не все провайдеры полностью
+совместимы со всеми настройками tool calling.
+
+## Интерфейс
+
+На хосте: http://127.0.0.1:18795/ , логин cybernova.
+Пароль автоматически создаётся в Docker-томе /data/web_access.txt.
+Получить только локально:
+
+~~~bash
+docker compose exec -T cybernova cat /data/web_access.txt
+~~~
+
+SSH к удалённой машине:
+
+~~~bash
+ssh -L 18795:127.0.0.1:18795 USER@SERVER
+~~~
+
+В браузере того же ноутбука открыть http://127.0.0.1:18795/.
+
+Необязательный HTTPS Quick Tunnel: python3 manage.py up --tunnel
+Адрес появится в docker compose --profile tunnel logs cloudflared.
+Quick Tunnel временен; для постоянного доступа нужны стабильный домен,
+отдельная аутентификация (например Cloudflare Access/SSO/MFA) и политика ACL.
+Никогда не публиковать Ollama, внутренний MCP или SQLite наружу.
+
+## Git — код, версия и целостность
+
+~~~bash
+python3 manage.py verify-source
+python3 manage.py export-source --to /SECURE_OFFLINE/source
+~~~
+
+verify-source запускает git fsck и показывает SHA коммита. Docker-образ
+маркируется org.opencontainers.image.revision, а код проверяется GitHub CI.
+export-source создаёт проверяемый Git bundle с SHA-256 для офлайн-копии кода.
+
+Рекомендуется защитить main: PR, обязательный CI, review, запрет force-push,
+подписанные релизные теги и проверка обновлений. SHA-256 обнаруживает
+случайную порчу, но для защиты от подмены источника нужны доверенные ключи
+подписи и защищённые права GitHub.
+
+## Данные — зашифрованные копии, не Git
+
+Рабочая история: приватный именованный Docker-том cybernova_data.
+Запустить один раз создание ключа и ОБЯЗАТЕЛЬНО сохранить его ВНЕ Vast:
+
+~~~bash
+python3 manage.py init-backup-key
+python3 manage.py export-backup-key --to /SECURE_OFFLINE/cybernova-backup.key
+~~~
+
+Создать и проверить копию:
+
+~~~bash
+python3 manage.py backup --to /SECURE_OFFLINE/backups
+~~~
+
+SQLite online backup учитывает WAL и проходит integrity_check.
+Данные шифруются AES-256-GCM, манифест хранит SHA-256 зашифрованного архива.
+Пара файлов .cnbk и .cnbk.manifest.json переносится вместе. Без сохранённого
+backup.key архив не восстановить. Держи ключ и архив в РАЗНЫХ местах.
+
+На новой машине подготовь проект и Docker, затем:
+
+~~~bash
+python3 manage.py stage-restore --from /SECURE_OFFLINE/backups/cybernova-YYYYMMDDTHHMMSSZ.cnbk --key-file /SECURE_OFFLINE/cybernova-backup.key
+~~~
+
+Команда отправляет ключ и зашифрованный снимок в Docker через stdin,
+проверяет аутентичность/SQLite и создаёт НОВЫЙ файл
+/data/communications-restored.sqlite3. Действующую историю не перезаписывает.
+Перед активацией ОБЯЗАТЕЛЬНО остановить сервисы, сравнить восстановленные
+данные, сохранить старую базу и только затем выполнить контролируемый
+перенос. Автоматическая перезапись отключена намеренно.
+
+Облачный API-ключ не включён в бэкап БД; после переезда его вводят заново.
+Модельные веса хранят отдельно (не в Git). Снимок SQLite ограничен 128 MiB.
+Для больших PCAP/HAR нужен самостоятельный зашифрованный object storage.
+
+## Диагностика и ограничения
+
+~~~bash
+python3 manage.py doctor
+python3 manage.py logs
+python3 manage.py stop
+~~~
+
+doctor проверяет Web UI и MCP, но НЕ гарантирует авторизацию облачного API
+или реальную генерацию модели: отправь один безопасный тестовый вопрос.
+Для модели Heretic 30B потребуются её конкретные веса и подходящий GPU.
+
+GitHub CI собирает образ и запускает тесты. Это не равно проверенному
+переносу реальной базы на вторую машину: эксплуатационное acceptance
+тестирование новой системы и автоматизация offsite-копий — отдельная фаза.
+Сканерные бинарники НЕ включены в минимальный образ, одобрение внешних
+целей по умолчанию выключено. GitHub не заменяет резервные копии.
