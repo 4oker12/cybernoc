@@ -90,6 +90,16 @@ def generate_followups(
         return []
     if not safe[-1]["content"].strip():
         return []
+    try:
+        from .model_providers import provider_name, build_model_client
+    except ImportError:
+        from model_providers import provider_name, build_model_client
+    if provider_name() == "openai_compatible" and transport is post_json:
+        reply = build_model_client().chat(
+            [{"role": "system", "content": FOLLOWUP_SYSTEM}] + safe,
+            json_mode=True,
+        )
+        return normalize_questions(reply.get("content", ""))
     result = transport(endpoint, {
         "model": model,
         "messages": [{"role": "system", "content": FOLLOWUP_SYSTEM}] + safe,
