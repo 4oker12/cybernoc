@@ -278,6 +278,7 @@ class CollaborationActionRequest(BaseModel):
 
 class CollaborationGoalEditRequest(CollaborationActionRequest):
     goal: str = Field(min_length=1, max_length=3000)
+    cycles: int | None = Field(default=None, ge=1, le=12)
 
 
 class SharedToolRequest(BaseModel):
@@ -359,7 +360,7 @@ def collaboration_update_goal(payload: CollaborationGoalEditRequest):
     # The scope/permissions are managed separately and never expanded here.
     with collaboration_step_lock:
         try:
-            return collaboration_store().update_goal(payload.task_id, payload.goal)
+            return collaboration_store().update_goal(payload.task_id, payload.goal, payload.cycles)
         except (CollaborationError, CommunicationError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
 
