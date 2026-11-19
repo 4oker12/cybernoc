@@ -40,7 +40,7 @@ class GPTConversationTests(unittest.TestCase):
 
     def test_gpt_api_uses_only_its_own_context_without_mcp(self):
         conversations=[]
-        def answer(model,history):
+        def answer(model,history,**kwargs):
             conversations.append(history)
             return {"answer":"GPT answer","model":model,"source":"chatgpt_plan_responses"}
         with patch.object(server,"gpt_chat_store",return_value=self.store),\
@@ -71,6 +71,8 @@ class GPTConversationTests(unittest.TestCase):
         self.assertTrue(allowed_path("/api/siwc/chats","GET"))
         self.assertTrue(allowed_path("/api/siwc/chat?thread_id=gpt_AAA","GET"))
         self.assertTrue(allowed_path("/api/siwc/chat","POST"))
+        self.assertTrue(allowed_path("/api/profile-settings","GET"))
+        self.assertTrue(allowed_path("/api/profile-settings","POST"))
         self.assertTrue(allowed_path("/static/markdown.js","GET"))
         self.assertFalse(allowed_path("/api/siwc/tokens","GET"))
 

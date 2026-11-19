@@ -43,6 +43,7 @@ try:
     from .siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from .siwc_chat_store import GPTChatStore, GPTChatError
     from .research_scope import ResearchScopeStore, scope_profile
+    from .profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS
     from followups import generate_followups
@@ -65,6 +66,7 @@ except ImportError:
     from siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from siwc_chat_store import GPTChatStore, GPTChatError
     from research_scope import ResearchScopeStore, scope_profile
+    from profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -83,6 +85,12 @@ def communication_store() -> CommunicationStore:
 @lru_cache(maxsize=1)
 def gpt_chat_store() -> GPTChatStore:
     return GPTChatStore()
+
+
+@lru_cache(maxsize=1)
+def profile_settings_store() -> ProfileSettingsStore:
+    return ProfileSettingsStore()
+
 
 @lru_cache(maxsize=1)
 def research_scope_store() -> ResearchScopeStore:
@@ -235,7 +243,27 @@ class ChatGPTMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000)
 
 
+class ProfileSettingsRequest(BaseModel):
+    settings: dict
+
+
 gpt_turn_lock = RLock()
+
+
+@app.get("/api/profile-settings")
+def get_profile_settings():
+    try:
+        return {"settings": profile_settings_store().load()}
+    except ProfileSettingsError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from None
+
+
+@app.post("/api/profile-settings")
+def save_profile_settings(payload: ProfileSettingsRequest):
+    try:
+        return {"settings": profile_settings_store().save(payload.settings)}
+    except ProfileSettingsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 @app.get("/api/siwc/chats")
@@ -264,12 +292,19 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
         try:
             history = store.context(payload.thread_id) if payload.thread_id else []
             outgoing = history + [{"role": "user", "content": payload.message.strip()}]
-            outcome = chatgpt_chat(payload.model, outgoing)
+            profile = profile_settings_store().load()
+            outcome = chatgpt_chat(
+                payload.model, outgoing,
+                user_context=user_context_for(profile, "chatgpt"),
+                profile_instructions=mode_instructions_for(profile, "chatgpt"),
+            )
             thread_id = store.save_exchange(
                 payload.thread_id, payload.model, payload.message, outcome["answer"]
             )
         except GPTChatError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ProfileSettingsError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from None
         except SIWCError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
     return {"thread_id": thread_id, "model": payload.model,
@@ -327,7 +362,13 @@ def siwc_review(payload: ChatGPTReviewRequest):
         if not task_id:
             raise HTTPException(status_code=409, detail="task_not_selected")
     try:
-        outcome = chatgpt_review(payload.model, payload.prompt)
+        profile = profile_settings_store().load()
+        outcome = chatgpt_review(
+            payload.model, payload.prompt,
+            user_context=user_context_for(profile, "chatgpt"),
+        )
+    except ProfileSettingsError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from None
     except SIWCError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     if task_id:
@@ -509,11 +550,14 @@ def chat(payload: ChatRequest):
                     store, task_id,
                 ),
             )
+            profile = profile_settings_store().load()
             outcome = current_agent.run(
                 state["history"], payload.message,
                 public_get=True,
                 force_tools=True,
                 scope=state["scope"],
+                user_context=user_context_for(profile, "researcher"),
+                profile_instructions=mode_instructions_for(profile, "researcher"),
             )
         except Exception as exc:
             store.append(task_id, "controller", "system",

@@ -37,8 +37,8 @@ class DualChatTests(unittest.TestCase):
 
     def test_gpt_http_is_separate_from_qwen_tasks(self):
         calls=[]
-        def fake(model,messages):
-            calls.append(messages)
+        def fake(model,messages,**kwargs):
+            calls.append((messages,kwargs))
             return {"model":model,"answer":"ok","source":"offline"}
         with patch.object(server,"gpt_chat_store",return_value=self.store),\
              patch.object(server,"chatgpt_chat",side_effect=fake),\
@@ -49,7 +49,7 @@ class DualChatTests(unittest.TestCase):
             tid=r.json()["thread_id"]
             r=api.post("/api/siwc/chat",json={"thread_id":tid,"model":"gpt-6.2-sol","message":"А теперь?"})
             self.assertEqual(r.status_code,200,r.text)
-            self.assertEqual([x["role"] for x in calls[1]],["user","assistant","user"])
+            self.assertEqual([x["role"] for x in calls[1][0]],["user","assistant","user"])
             self.assertEqual(len(api.get("/api/siwc/chat",params={"thread_id":tid}).json()["messages"]),4)
             self.assertEqual(api.get("/api/siwc/chats").json()["threads"][0]["thread_id"],tid)
             qwen.assert_not_called()
@@ -71,8 +71,14 @@ class DualChatTests(unittest.TestCase):
         with patch.object(siwc_inference,"models",return_value=[{"slug":"gpt-6.2-sol"}]),\
              patch.object(siwc_inference.connection,"access",return_value="test"),\
              patch.object(siwc_inference.request,"build_opener",return_value=opener):
-            self.assertEqual(siwc_inference.chat("gpt-6.2-sol",messages)["answer"],"OK")
+            self.assertEqual(siwc_inference.chat(
+                "gpt-6.2-sol",messages,
+                user_context="SHARED USER PROFILE",
+                profile_instructions="CHATGPT CUSTOM INSTRUCTIONS",
+            )["answer"],"OK")
         self.assertEqual(opener.payload["input"],messages)
+        self.assertIn("SHARED USER PROFILE",opener.payload["instructions"])
+        self.assertIn("CHATGPT CUSTOM INSTRUCTIONS",opener.payload["instructions"])
         self.assertFalse(opener.payload["store"])
         self.assertNotIn("tools",opener.payload)
         with self.assertRaises(siwc.SIWCError):
@@ -80,13 +86,15 @@ class DualChatTests(unittest.TestCase):
 
     def test_routes_and_simple_ui(self):
         for path,method in (("/api/siwc/chat","POST"),("/api/siwc/chat?thread_id=one","GET"),
-                            ("/api/siwc/chats","GET"),("/static/markdown.js","GET")):
+                            ("/api/siwc/chats","GET"),("/api/profile-settings","GET"),
+                            ("/api/profile-settings","POST"),("/static/markdown.js","GET")):
             self.assertTrue(allowed_path(path,method))
         self.assertFalse(allowed_path("/api/siwc/tokens","GET"))
         html=(ROOT/"console/static/index.html").read_text()
         js=(ROOT/"console/static/app.js").read_text()
         for marker in ('id="modeQwen"','id="modeChatGPT"','id="gptThreadList"',
-                       'id="gptTopModel"','/static/markdown.js'):
+                       'id="gptTopModel"','id="navProfile"','id="profileDialog"',
+                       'data-profile-tab="chatgpt"','/static/markdown.js'):
             self.assertIn(marker,html)
         self.assertEqual(html.count('src="/static/markdown.js"'),1)
         self.assertIn('async function sendGPT()',js)

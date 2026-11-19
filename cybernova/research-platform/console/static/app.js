@@ -5,7 +5,7 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
   uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Активная модель",
   gptThreadId:null,gptConnected:false,gptPlanUsage:false,
-  researchScope:{hosts:[],capture_detail:"evidence"}};
+  researchScope:{hosts:[],capture_detail:"evidence"},profileSettings:null};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка интерфейса",
@@ -55,6 +55,7 @@ function renderMessage(role,content,pending=false,containerId="messages"){
 }
 function makeToolDetails(event){
   const d=node("details","");
+  d.open=!!state.profileSettings?.ui?.show_technical_details;
   const sum=node("summary","",event.name||event.type||"Событие");
   if(event.is_error)sum.textContent+=" · Ошибка";
   d.append(sum,node("pre","",JSON.stringify({
@@ -900,6 +901,122 @@ function toolsPanel(show){
   $("inspector").hidden= !show;
   if(show)status();
 }
+const DEFAULT_PROFILE_SETTINGS={
+  user:{display_name:"",role:"",about:"",preferences:""},
+  privacy:{share_with_researcher:true,share_with_chatgpt:true},
+  researcher:{description:"",instructions:""},
+  chatgpt:{description:"",instructions:""},
+  ui:{theme:"light",density:"comfortable",font_scale:100,sidebar_width:260,chat_width:1040,show_technical_details:false},
+};
+function applyInterfaceSettings(ui){
+  const root=document.documentElement;
+  if(!root)return;
+  root.dataset.theme=ui.theme==="dark"?"dark":"light";
+  root.dataset.density=["compact","comfortable","relaxed"].includes(ui.density)?ui.density:"comfortable";
+  root.style.setProperty("--font-scale",String((Number(ui.font_scale)||100)/100));
+  root.style.setProperty("--sidebar-width",(Number(ui.sidebar_width)||260)+"px");
+  root.style.setProperty("--chat-width",(Number(ui.chat_width)||1040)+"px");
+}
+function selectProfileTab(name){
+  document.querySelectorAll("[data-profile-tab]").forEach(button=>{
+    const active=button.dataset.profileTab===name;
+    button.classList.toggle("active",active);
+    button.setAttribute("aria-selected",String(active));
+  });
+  document.querySelectorAll("[data-profile-panel]").forEach(panel=>{
+    panel.hidden=panel.dataset.profilePanel!==name;
+  });
+}
+function populateProfileSettings(settings){
+  const d=DEFAULT_PROFILE_SETTINGS;
+  const value=settings||d;
+  const user=value.user||d.user, privacy=value.privacy||d.privacy;
+  const researcher=value.researcher||d.researcher, chatgpt=value.chatgpt||d.chatgpt;
+  const ui=value.ui||d.ui;
+  $("profileName").value=user.display_name||"";
+  $("profileRole").value=user.role||"";
+  $("profileAbout").value=user.about||"";
+  $("profilePreferences").value=user.preferences||"";
+  $("shareResearcher").checked=privacy.share_with_researcher!==false;
+  $("shareChatGPT").checked=privacy.share_with_chatgpt!==false;
+  $("researcherDescription").value=researcher.description||"";
+  $("researcherInstructions").value=researcher.instructions||"";
+  $("chatgptDescription").value=chatgpt.description||"";
+  $("chatgptInstructions").value=chatgpt.instructions||"";
+  $("uiTheme").value=ui.theme||"light";
+  $("uiDensity").value=ui.density||"comfortable";
+  $("uiFontScale").value=String(ui.font_scale||100);
+  $("uiSidebarWidth").value=String(ui.sidebar_width||260);
+  $("uiChatWidth").value=String(ui.chat_width||1040);
+  $("uiShowTechnical").checked=!!ui.show_technical_details;
+  applyInterfaceSettings(ui);
+}
+function collectProfileSettings(){
+  return {
+    user:{
+      display_name:$("profileName").value,
+      role:$("profileRole").value,
+      about:$("profileAbout").value,
+      preferences:$("profilePreferences").value,
+    },
+    privacy:{
+      share_with_researcher:$("shareResearcher").checked,
+      share_with_chatgpt:$("shareChatGPT").checked,
+    },
+    researcher:{
+      description:$("researcherDescription").value,
+      instructions:$("researcherInstructions").value,
+    },
+    chatgpt:{
+      description:$("chatgptDescription").value,
+      instructions:$("chatgptInstructions").value,
+    },
+    ui:{
+      theme:$("uiTheme").value,
+      density:$("uiDensity").value,
+      font_scale:Number($("uiFontScale").value),
+      sidebar_width:Number($("uiSidebarWidth").value),
+      chat_width:Number($("uiChatWidth").value),
+      show_technical_details:$("uiShowTechnical").checked,
+    },
+  };
+}
+async function loadProfileSettings(){
+  try{
+    const response=await fetch("/api/profile-settings",{cache:"no-store"});
+    const data=await response.json();
+    if(!response.ok)throw Error(data.detail||"Не удалось загрузить профиль");
+    state.profileSettings=data.settings||DEFAULT_PROFILE_SETTINGS;
+    populateProfileSettings(state.profileSettings);
+    $("profileSaveStatus").textContent="Настройки загружены.";
+  }catch(err){
+    state.profileSettings=DEFAULT_PROFILE_SETTINGS;
+    populateProfileSettings(DEFAULT_PROFILE_SETTINGS);
+    $("profileSaveStatus").textContent="Не удалось загрузить настройки: "+String(err.message||err);
+  }
+}
+async function openProfileSettings(){
+  if(!state.profileSettings)await loadProfileSettings();
+  selectProfileTab("user");
+  const dialog=$("profileDialog");
+  if(typeof dialog.showModal==="function")dialog.showModal();
+  else dialog.setAttribute("open","");
+}
+async function saveProfileSettings(){
+  if(state.running)return;
+  const button=$("profileSave");
+  button.disabled=true;
+  $("profileSaveStatus").textContent="Сохраняю настройки…";
+  try{
+    const result=await requestJson("/api/profile-settings",{settings:collectProfileSettings()});
+    state.profileSettings=result.settings;
+    populateProfileSettings(state.profileSettings);
+    $("profileSaveStatus").textContent="Сохранено. Новые инструкции применятся к следующим сообщениям.";
+    $("profileDialog").close();
+  }catch(err){
+    $("profileSaveStatus").textContent="Ошибка сохранения: "+String(err.message||err);
+  }finally{button.disabled=false;}
+}
 function init(){
   window.cybernovaWelcome=$("welcome").cloneNode(true);
   window.cybernovaGptWelcome=$("gptWelcome").cloneNode(true);
@@ -910,6 +1027,15 @@ function init(){
     if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}
   });
   $("newSession").addEventListener("click",reset);
+  $("navProfile").addEventListener("click",openProfileSettings);
+  $("profileClose").addEventListener("click",()=>$("profileDialog").close());
+  $("profileCancel").addEventListener("click",()=>$("profileDialog").close());
+  $("profileSave").addEventListener("click",saveProfileSettings);
+  $("profileTabs").addEventListener("click",event=>{
+    const tab=event.target.closest("[data-profile-tab]");
+    if(tab)selectProfileTab(tab.dataset.profileTab);
+  });
+  void loadProfileSettings();
   $("applyResearchScope").addEventListener("click",applyResearchScope);
   $("modeQwen").addEventListener("click",()=>setMode("qwen"));
   $("modeChatGPT").addEventListener("click",()=>setMode("gpt"));

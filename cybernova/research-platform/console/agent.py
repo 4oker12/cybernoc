@@ -203,12 +203,16 @@ class Agent:
         self.ollama = ollama
         self.mcp_factory = mcp_factory or (lambda: MCPClient())
 
-    def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True, scope: dict | None = None) -> dict:
+    def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True, scope: dict | None = None, user_context: str = "", profile_instructions: str = "") -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
         # Only client-visible role/content history enters the model; never forward
         # hidden arguments or previous tool outputs as executable instructions.
         context = [{"role": "system", "content": BASE_SYSTEM}]
+        if user_context:
+            context.append({"role": "system", "content": user_context[:8500]})
+        if profile_instructions:
+            context.append({"role": "system", "content": profile_instructions[:12500]})
         # Owner-selected scope is trusted policy metadata, not model output.
         # It describes targets and evidence mode; it is not a blanket
         # authorization for changing production systems.

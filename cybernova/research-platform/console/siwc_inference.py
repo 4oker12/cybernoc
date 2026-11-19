@@ -43,7 +43,7 @@ def models() -> list[dict]:
             and MODEL_NAME.fullmatch(row["slug"])]
 
 
-def review(model: str, prompt: str) -> dict:
+def review(model: str, prompt: str, *, user_context: str = "") -> dict:
     if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 12000:
         raise SIWCError("review_prompt_invalid")
     if not isinstance(model, str) or not MODEL_NAME.fullmatch(model):
@@ -59,6 +59,7 @@ def review(model: str, prompt: str) -> dict:
             "гипотезы и подтверждённые факты. Найди пробелы и альтернативы. "
             "Не утверждай, что запускал инструменты или сканировал объект. "
             "Сформулируй следующие разрешённые проверки и исправления."
+            + (("\n\n" + user_context[:8500]) if user_context else "")
         ),
         "input": [{"role": "user", "content": prompt.strip()}],
     }
@@ -111,7 +112,7 @@ def review(model: str, prompt: str) -> dict:
     return {"answer": answer, "model": model, "source": "chatgpt_plan_responses"}
 
 
-def chat(model: str, messages: list[dict]) -> dict:
+def chat(model: str, messages: list[dict], *, user_context: str = "", profile_instructions: str = "") -> dict:
     """Explicit stateless multi-turn GPT response, using the user's OAuth plan.
 
     The public HTTP Responses API in SIWC preview requires full history in
@@ -140,7 +141,9 @@ def chat(model: str, messages: list[dict]) -> dict:
             "Ты — ChatGPT в отдельном чате Cybernova. Поддерживай естественную "
             "многоходовую беседу, используй историю текущего GPT-диалога. "
             "Не заявляй, что вызывал инструменты, анализировал загруженные "
-            "файлы или получил задачи Qwen, если их нет в данном контексте."
+            "файлы или получил задачи исследовательской модели, если их нет в данном контексте."
+            + (("\n\n" + user_context[:8500]) if user_context else "")
+            + (("\n\n" + profile_instructions[:12500]) if profile_instructions else "")
         ),
         "input": [{"role": x["role"], "content": x["content"]} for x in messages],
     }

@@ -58,6 +58,21 @@ class AgentTests(unittest.TestCase):
         self.assertIn("РАЗБОР НЕЧЁТКОГО ЗАПРОСА", BASE_SYSTEM)
         self.assertNotIn("Рекомендация Qwen", BASE_SYSTEM)
 
+    def test_user_and_mode_profiles_are_added_as_system_context(self):
+        mcp=FakeMCP()
+        lm=FakeOllama([{"role":"assistant","content":"Готово."}])
+        Agent(lm,lambda:mcp).run(
+            [],"Привет",force_tools=False,
+            user_context="ОБЩИЙ ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ",
+            profile_instructions="ИНСТРУКЦИИ РЕЖИМА",
+        )
+        system_text="\n".join(
+            item["content"] for item in lm.prompts[0][0]
+            if item.get("role")=="system"
+        )
+        self.assertIn("ОБЩИЙ ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ",system_text)
+        self.assertIn("ИНСТРУКЦИИ РЕЖИМА",system_text)
+
     def test_reasoning_content_is_kept_in_agent_tool_loop(self):
         mcp=FakeMCP()
         first=calls(("ip_network_summary",{"cidr":"192.0.2.7/24"}))
