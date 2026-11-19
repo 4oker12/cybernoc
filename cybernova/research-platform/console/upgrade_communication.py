@@ -161,6 +161,19 @@ def check_health():
     tools = status.get("tools") or []
     if "browser_network" not in tools or "browser_network" not in status.get("auto_executable", []):
         raise RuntimeError("qwen_devtools_network_not_executable")
+    development_tools = {"dev_workspace", "dev_list", "dev_read", "dev_search",
+                         "dev_edit", "dev_delete", "dev_move", "dev_diff",
+                         "dev_test", "dev_commit", "dev_command", "dev_push",
+                         "dev_open_pr"}
+    if not development_tools.issubset(set(tools)):
+        raise RuntimeError("qwen_developer_tools_missing")
+    executable = set(status.get("auto_executable", []))
+    if not {"dev_workspace", "dev_read", "dev_edit", "dev_test", "dev_commit"}.issubset(executable):
+        raise RuntimeError("qwen_developer_core_not_executable")
+    if {"dev_command", "dev_push", "dev_open_pr"} & executable:
+        raise RuntimeError("qwen_developer_sensitive_action_no_approval")
+    if status.get("developer", {}).get("mode") != "task_isolated_git_worktree":
+        raise RuntimeError("qwen_developer_workspace_not_isolated")
     if "browser_open" not in tools:
         raise RuntimeError("qwen_browser_tool_missing")
     if "browser_open" not in status.get("auto_executable", []):
@@ -231,6 +244,7 @@ def check_health():
         "browser": "scoped_https_html_ready",
         "devtools_network": "chromium_ready",
         "owner_scope": "user_selected_per_task",
+        "qwen_developer": "13_registered_tools_separate_git_worktrees",
     }, ensure_ascii=False), flush=True)
 
 
