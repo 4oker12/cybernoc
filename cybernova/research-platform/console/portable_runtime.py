@@ -8,6 +8,7 @@ two copies against the same SQLite database or local GPU simultaneously.
 from __future__ import annotations
 
 import os
+import secrets
 from pathlib import Path
 import signal
 import subprocess
@@ -19,6 +20,7 @@ MODULES = (
     "console.portable_tool_gateway",
     "console.communication_mcp",
     "console.server",
+    "console.tunnel_access",
 )
 STOP_SECONDS = 7
 
@@ -29,7 +31,17 @@ def main():
     os.environ.setdefault("CYBERNOVA_COMM_WORKER", "1")
     state = Path(os.environ["CYBERNOVA_COMM_DB"]).expanduser()
     state.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # Ports must bind loopback; web users connect via SSH or authenticated proxy.
+    # Only the Basic-auth gateway is published; MCP/model stay loopback.
+    auth_path = Path(os.environ.get("CYBERNOVA_ACCESS_SECRET_FILE", "/data/web_access.txt"))
+    auth_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not auth_path.exists():
+        fd = os.open(auth_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as secret_out:
+            secret_out.write("cybernova\n" + secrets.token_urlsafe(36) + "\n")
+            secret_out.flush()
+            os.fsync(secret_out.fileno())
+    if auth_path.is_symlink():
+        raise RuntimeError("access_credentials_symlink_forbidden")
     processes = []
     stopping = False
 
