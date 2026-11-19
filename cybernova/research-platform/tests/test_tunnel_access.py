@@ -29,9 +29,11 @@ class TunnelAccessTests(unittest.TestCase):
 
     def test_route_allowlist(self):
         for path in ("/", "/static/app.js", "/static/styles.css",
-                     "/api/status", "/api/comm/events?after_seq=2", "/api/comm/tasks"):
+                     "/api/status", "/api/comm/events?after_seq=2", "/api/comm/tasks",
+                     "/api/comm/review-packet?session_id=test", "/api/comm/evidence"):
             self.assertTrue(allowed_path(path, "GET"), path)
-        for path in ("/api/chat", "/api/import", "/api/approve", "/api/comm/resume"):
+        for path in ("/api/chat", "/api/import", "/api/approve", "/api/comm/resume",
+                     "/api/comm/reviewer-feedback"):
             self.assertTrue(allowed_path(path, "POST"))
         for path in ("/mcp", "/api/tags", "/api/generate", "//mcp", "/api/admin",
                      "/api/chat/../../mcp", "/static/../../etc/passwd"):
