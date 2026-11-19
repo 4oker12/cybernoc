@@ -176,7 +176,7 @@ def javascript():
 
 def _ollama_health() -> bool:
     parsed = parse.urlsplit(OLLAMA_URL)
-    if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1"}:
+    if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1", "ollama"}:
         return False
     try:
         opener = request.build_opener(request.ProxyHandler({}))
@@ -197,7 +197,9 @@ def status():
     tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + COMMUNICATION_TOOLS]
     return {
         "model": MODEL,
-        "ollama_ready": _ollama_health(),
+        "ollama_ready": _ollama_health() if os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama") == "ollama" else False,
+        "model_provider": os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama"),
+        "model_remote_configured": os.environ.get("CYBERNOVA_LLM_PROVIDER") == "openai_compatible",
         "mcp_ready": mcp_ok,
         "tools": tools,
         "auto_executable": sorted(set(tools) & REVIEWED_TOOLS),
