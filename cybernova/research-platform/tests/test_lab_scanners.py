@@ -58,9 +58,12 @@ class ScannerTests(unittest.TestCase):
         self.root_patch.start()
         self.addCleanup(self.root_patch.stop)
 
-    def test_all_eight_famous_engines_advertised(self):
+    def test_all_scanner_engines_are_advertised(self):
         names = [x["name"] for x in SCANNER_TOOLS]
-        self.assertEqual(len(names), 9)  # 8 scanners + inventory
+        self.assertEqual(len(names), len(SCANNER_NAMES) + 1)  # scanners + inventory
+        self.assertIn("lab_zap_active", names)
+        self.assertIn("lab_gitleaks", names)
+        self.assertIn("lab_bandit", names)
         for tool in SCANNER_NAMES:
             self.assertIn(tool, names)
 
@@ -113,6 +116,40 @@ class ScannerTests(unittest.TestCase):
                     self.assertEqual(plan["target_id"], args.get("target_id", args.get("project_id")))
                     self.assertNotIn("sh", plan)
                     self.assertNotIn("-e", plan["command"])
+
+    def test_zap_active_profile_is_explicit_and_bounded(self):
+        with patch("console.lab_scanners.shutil.which", return_value="/usr/bin/zap-full-scan.py"):
+            with tempfile.TemporaryDirectory() as tmp:
+                plan = _plan("lab_zap_active", {"target_id": "demo"}, self.config, Path(tmp))
+        self.assertEqual(plan["command"][0], "/usr/bin/zap-full-scan.py")
+        self.assertIn("-m", plan["command"])
+        self.assertIn("1", plan["command"])
+        self.assertEqual(plan["network"], True)
+
+    def test_gitleaks_summary_never_returns_secret_material(self):
+        secret = "ghp_SUPER_SECRET_VALUE_123456"
+        report = json.dumps([{
+            "RuleID": "github-pat", "File": "/lab/project/config.env",
+            "StartLine": 12, "Fingerprint": "abcdef0123456789",
+            "Secret": secret, "Match": "TOKEN=" + secret,
+        }]).encode()
+        result = lab_scanners._summary("lab_gitleaks", "", report)
+        self.assertEqual(result["finding_count"], 1)
+        self.assertEqual(result["findings"][0]["rule_id"], "github-pat")
+        self.assertNotIn(secret, json.dumps(result))
+
+    def test_bandit_summary_returns_rule_metadata_not_source_lines(self):
+        report = json.dumps({"results": [{
+            "test_id": "B602", "issue_severity": "HIGH",
+            "issue_confidence": "MEDIUM", "filename": "/lab/project/app.py",
+            "line_number": 22, "issue_text": "dangerous source line",
+            "code": "password = 'do-not-leak'",
+        }]}).encode()
+        result = lab_scanners._summary("lab_bandit", "", report)
+        self.assertEqual(result["finding_count"], 1)
+        self.assertEqual(result["findings"][0]["rule_id"], "B602")
+        self.assertNotIn("do-not-leak", json.dumps(result))
+        self.assertNotIn("dangerous source line", json.dumps(result))
 
     def test_mock_nmap_executes_fixed_command_summarizes_xml_without_raw(self):
         commands = []
