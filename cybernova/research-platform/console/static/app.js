@@ -935,7 +935,7 @@ const DEFAULT_PROFILE_SETTINGS={
   privacy:{share_with_researcher:true,share_with_chatgpt:true},
   researcher:{description:"",instructions:""},
   chatgpt:{description:"",instructions:""},
-  ui:{theme:"light",density:"comfortable",font_scale:100,sidebar_width:260,chat_width:1040,show_technical_details:false},
+  ui:{theme:"light",density:"comfortable",font_scale:100,sidebar_width:300,chat_width:1040,show_technical_details:false},
 };
 function applyInterfaceSettings(ui){
   const root=document.documentElement;
@@ -943,7 +943,7 @@ function applyInterfaceSettings(ui){
   root.dataset.theme=ui.theme==="dark"?"dark":"light";
   root.dataset.density=["compact","comfortable","relaxed"].includes(ui.density)?ui.density:"comfortable";
   root.style.setProperty("--font-scale",String((Number(ui.font_scale)||100)/100));
-  root.style.setProperty("--sidebar-width",(Number(ui.sidebar_width)||260)+"px");
+  root.style.setProperty("--sidebar-width",(Number(ui.sidebar_width)||300)+"px");
   root.style.setProperty("--chat-width",(Number(ui.chat_width)||1040)+"px");
 }
 function selectProfileTab(name){
@@ -975,7 +975,7 @@ function populateProfileSettings(settings){
   $("uiTheme").value=ui.theme||"light";
   $("uiDensity").value=ui.density||"comfortable";
   $("uiFontScale").value=String(ui.font_scale||100);
-  $("uiSidebarWidth").value=String(ui.sidebar_width||260);
+  $("uiSidebarWidth").value=String(ui.sidebar_width||300);
   $("uiChatWidth").value=String(ui.chat_width||1040);
   $("uiShowTechnical").checked=!!ui.show_technical_details;
   applyInterfaceSettings(ui);
