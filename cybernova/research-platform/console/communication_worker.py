@@ -76,6 +76,7 @@ class CommunicationWorker:
             history, prompt = current
             outcome = self._agent_for(task_id).run(
                 history, prompt, public_get=True, force_tools=True,
+                scope=ResearchScopeStore().load(task_id),
             )
             if not isinstance(outcome, dict):
                 raise ValueError("unexpected_agent_output")
