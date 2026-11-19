@@ -507,3 +507,17 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
   .collab-entry{padding:12px 13px}
   .collab-row{grid-template-columns:1fr 1fr}
 }
+
+/* Respect the saved width selector; the text-fit fix works down to 220px. */
+:root{--sidebar-width:300px}
+.sidebar:not(.collapsed){
+  width:var(--sidebar-width,300px);flex-basis:var(--sidebar-width,300px);
+  min-width:220px;
+}
+@media(max-width:680px){
+  .sidebar:not(.collapsed),.sidebar.collapsed{
+    width:min(var(--sidebar-width,300px),88vw)!important;
+    flex-basis:min(var(--sidebar-width,300px),88vw)!important;
+    min-width:0;
+  }
+}
