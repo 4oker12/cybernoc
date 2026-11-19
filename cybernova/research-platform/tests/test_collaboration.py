@@ -94,12 +94,12 @@ class CollaborationTests(unittest.TestCase):
             calls.append((messages, kwargs))
             return {"answer": "Наставник: поставь гипотезу и проверь источник.",
                     "model": model, "source": "offline"}
-        with patch.object(server, "communication_store", return_value=self.comm), \\
-             patch.object(server, "collaboration_store", return_value=self.collab), \\
-             patch.object(server, "profile_settings_store", return_value=self.profile), \\
-             patch.object(server, "chatgpt_models", return_value=[{"slug":"gpt-test"}]), \\
-             patch.object(server, "chatgpt_chat", side_effect=fake_gpt), \\
-             patch.object(server, "Agent", FakeResearchAgent), \\
+        with patch.object(server, "communication_store", return_value=self.comm), \
+             patch.object(server, "collaboration_store", return_value=self.collab), \
+             patch.object(server, "profile_settings_store", return_value=self.profile), \
+             patch.object(server, "chatgpt_models", return_value=[{"slug":"gpt-test"}]), \
+             patch.object(server, "chatgpt_chat", side_effect=fake_gpt), \
+             patch.object(server, "Agent", FakeResearchAgent), \
              patch.object(server, "gpt_tool_preflight",
                           return_value={"context": "", "events": []}):
             client = TestClient(server.app, base_url="http://127.0.0.1:18794")
