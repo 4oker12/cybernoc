@@ -8,6 +8,9 @@ All runtime state and secrets live OUTSIDE Git, in a user-selected data dir.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+from io import BytesIO
+import zipfile
 import getpass
 import json
 import os
@@ -223,6 +226,89 @@ def wizard(data: Path):
     return start(data)
 
 
+def _app_command(data: Path, arguments: list[str], *, binary_stdin: bytes | None = None) -> str:
+    env=os.environ.copy()
+    env.update(_load(data))
+    env["PYTHONPATH"]=str(ROOT)+(os.pathsep+env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    python=_python(data)
+    if not python.is_file():
+        raise NativeError("run_install_first")
+    process=subprocess.run(
+        [str(python),*arguments],cwd=ROOT,env=env,
+        input=binary_stdin,capture_output=True,
+    )
+    if process.returncode:
+        # Do not return process stderr as it could include sensitive provider data.
+        raise NativeError("native_app_command_failed")
+    return process.stdout.decode(errors="replace")
+
+
+def init_backup_key(data: Path) -> dict:
+    _app_command(data,["-m","console.backup","init-key"])
+    return {"backup_key_created":True,
+            "warning":"Export key securely OFF this machine immediately"}
+
+
+def export_backup_key(data: Path, destination: Path) -> dict:
+    key=data/"backup.key"
+    if not key.is_file() or key.is_symlink():
+        raise NativeError("backup_key_missing")
+    target=destination.expanduser().resolve()
+    if target.exists() or target.is_symlink():
+        raise NativeError("backup_key_export_target_exists")
+    target.parent.mkdir(parents=True,exist_ok=True)
+    fd=os.open(target,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    with os.fdopen(fd,"wb") as output:
+        output.write(key.read_bytes())
+        output.flush()
+        os.fsync(output.fileno())
+    return {"backup_key_exported":str(target),
+            "warning":"Do not commit to Git or leave beside backups"}
+
+
+def backup_data(data: Path, directory: Path) -> dict:
+    dst=directory.expanduser().resolve()
+    dst.mkdir(parents=True,exist_ok=True,mode=0o700)
+    name="cybernova-"+datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")+".cnbk"
+    backup_file=dst/name
+    _app_command(data,["-m","console.backup","backup","--output",str(backup_file)])
+    _app_command(data,["-m","console.backup","verify",str(backup_file)])
+    return {"backup":str(backup_file),
+            "manifest":str(backup_file)+".manifest.json",
+            "warning":"Move encrypted files to a different machine or offsite storage"}
+
+
+def stage_restore(data: Path, archive: Path, key_file: Path) -> dict:
+    archive=archive.expanduser().resolve()
+    key_file=key_file.expanduser().resolve()
+    manifest=Path(str(archive)+".manifest.json")
+    if not archive.is_file() or not manifest.is_file() or not key_file.is_file():
+        raise NativeError("backup_or_key_missing")
+    if any(x.is_symlink() for x in (archive,manifest,key_file)):
+        raise NativeError("symlinks_forbidden")
+    key=key_file.read_bytes()
+    if len(key)!=32:
+        raise NativeError("invalid_backup_key_length")
+    installed=data/"backup.key"
+    if installed.exists():
+        import hmac
+        if not hmac.compare_digest(installed.read_bytes(),key):
+            raise NativeError("different_backup_key_already_installed")
+    else:
+        fd=os.open(installed,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+        with os.fdopen(fd,"wb") as output:
+            output.write(key)
+    blob=BytesIO()
+    with zipfile.ZipFile(blob,"w",compression=zipfile.ZIP_STORED) as z:
+        z.writestr("snapshot.cnbk",archive.read_bytes())
+        z.writestr("snapshot.cnbk.manifest.json",manifest.read_bytes())
+    response=_app_command(data,["-m","console.portable_restore"],
+                          binary_stdin=blob.getvalue())
+    value=json.loads(response.strip().splitlines()[-1])
+    return {"staged":True,"result":value,
+            "note":"Existing communications.sqlite3 remains unchanged"}
+
+
 def main():
     p=argparse.ArgumentParser(description="Native Cybernova installer (no Docker)")
     p.add_argument("--data-dir",type=Path,default=DEFAULT_DATA)
@@ -232,8 +318,15 @@ def main():
     x.add_argument("--provider",required=True,choices=["ollama","openai_compatible"])
     x.add_argument("--model",required=True)
     x.add_argument("--base-url",default="")
-    for command in ("install","set-key","run","start","doctor","stop"):
+    for command in ("install","set-key","run","start","doctor","stop","init-backup-key"):
         sub.add_parser(command)
+    x=sub.add_parser("export-backup-key")
+    x.add_argument("--to",type=Path,required=True)
+    x=sub.add_parser("backup")
+    x.add_argument("--to",type=Path,required=True)
+    x=sub.add_parser("stage-restore")
+    x.add_argument("--from",dest="archive",type=Path,required=True)
+    x.add_argument("--key-file",type=Path,required=True)
     args=p.parse_args()
     data=args.data_dir.expanduser().resolve()
     try:
@@ -251,6 +344,14 @@ def main():
             value=start(data)
         elif args.cmd=="doctor":
             value=doctor(data)
+        elif args.cmd=="init-backup-key":
+            value=init_backup_key(data)
+        elif args.cmd=="export-backup-key":
+            value=export_backup_key(data,args.to)
+        elif args.cmd=="backup":
+            value=backup_data(data,args.to)
+        elif args.cmd=="stage-restore":
+            value=stage_restore(data,args.archive,args.key_file)
         elif args.cmd=="stop":
             if shutil.which("tmux") is None:
                 raise NativeError("tmux_unavailable")
