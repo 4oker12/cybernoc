@@ -1472,6 +1472,10 @@ function openQuickTasks(fieldId){
 async function openQuickTaskForMode(){
   if(state.mode==="gpt")return;
   if(state.mode==="collab"){
+    // A completed or blocked run is immutable. Start a new draft rather than
+    // inserting a preset into a hidden editor for the old conversation.
+    if(state.collabRun && ["completed","blocked"].includes(state.collabRun.state))
+      await newCollab();
     if(state.collabRun && ["active","paused"].includes(state.collabRun.state)){
       if($("collabEditPanel").hidden)await editCollabGoal();
       if($("collabEditPanel").hidden)return;
