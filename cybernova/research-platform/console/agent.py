@@ -174,6 +174,18 @@ def _arguments(name: str, value) -> dict:
 
 
 def _safe_args(name: str, args: dict) -> dict:
+    if name == "google_search":
+        try:
+            from .research_web import sanitize_search_query
+        except ImportError:
+            from research_web import sanitize_search_query
+        try:
+            return {"query": sanitize_search_query(args.get("query", ""))}
+        except ValueError:
+            return {"query": "[redacted or invalid query]"}
+    if name == "research_source_open":
+        u = parse.urlsplit(args.get("url", ""))
+        return {"url": (u.scheme + "://" + (u.hostname or "") + (u.path or "/"))[:360]}
     if name == "http_get":
         u = parse.urlsplit(args.get("url", ""))
         return {"url": (u.scheme + "://" + (u.hostname or "") + (u.path or "/"))[:240]}
