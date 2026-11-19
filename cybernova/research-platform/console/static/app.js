@@ -596,6 +596,7 @@ async function reviewWithChatGPT(){
   }
   const model=$("chatgptModel").value;
   if(!model||state.running)return;
+  const sid=state.sessionId, task=state.taskId;
   busy(true);
   $("chatgptStatus").textContent="Получаю пакет исследования…";
   try{
@@ -608,8 +609,12 @@ async function reviewWithChatGPT(){
     // Explicit user click; never upload task context automatically.
     $("chatgptStatus").textContent="Отправляю выбранную задачу в GPT для рецензии…";
     const answer=await requestJson("/api/siwc/review",{
-      session_id:state.sessionId,model,prompt:data.packet
+      session_id:sid,model,prompt:data.packet
     });
+    if(state.sessionId!==sid||state.taskId!==task||answer.task_id!==task){
+      $("chatgptStatus").textContent="Рецензия сохранена в исходной задаче. Откройте её для просмотра.";
+      return;
+    }
     lastGptReview=answer.answer||null;
     state.lastSeq=Math.max(state.lastSeq,answer.event_seq||0);
     renderMessage("chatgpt",answer.answer||"Ответ GPT пуст.");
