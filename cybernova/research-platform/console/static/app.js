@@ -1,7 +1,7 @@
 "use strict";
 /* Cybernova: local ChatGPT-like chat UI. No external JS, no model HTML. */
 const $=id=>document.getElementById(id);
-const state={sessionId:null,running:false,turns:0};
+const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка интерфейса",
@@ -21,10 +21,13 @@ function toBottom(){
   scroller.scrollTop=scroller.scrollHeight;
 }
 function renderMessage(role,content,pending=false){
-  const wrap=node("article","chat-msg "+(role==="user"?"from-user":"from-agent")+(pending?" working":""));
+  const author=role==="chatgpt"?"ChatGPT":role==="user"?"Вы":"Qwen";
+  const wrap=node("article","chat-msg "+
+    (role==="user"?"from-user":role==="chatgpt"?"from-chatgpt":"from-agent")+
+    (pending?" working":""));
   const meta=node("div","message-meta");
-  meta.append(node("span","avatar "+(role==="user"?"user":""),role==="user"?"U":"◈"),
-              node("span","",role==="user"?"Вы":"Cybernova"));
+  meta.append(node("span","avatar "+(role==="user"?"user":""),role==="user"?"U":role==="chatgpt"?"G":"◈"),
+              node("span","",author));
   const body=node("div","message-body",content);
   wrap.append(meta,body);
   $("messages").append(wrap);toBottom();
@@ -205,6 +208,8 @@ async function importArtifact(file){
       session_id:state.sessionId,kind,content
     });
     state.sessionId=result.session_id;
+    state.taskId=result.task_id||state.taskId;
+    void refreshTaskList();
     $("welcome")?.remove();
     renderMessage("user","Импортирован файл: "+file.name+
       "\nТип: "+kind+" · SHA-256: "+result.source_sha256.slice(0,16)+
@@ -252,6 +257,8 @@ async function send(){
       session_id:state.sessionId,message:text,
     });
     state.sessionId=result.session_id;
+    state.taskId=result.task_id||state.taskId;
+    state.lastSeq=Math.max(state.lastSeq,result.event_seq||0);
     state.turns=result.turn||state.turns+1;
     pending.wrap.classList.remove("working");
     pending.body.textContent=result.answer||"Ответ модели пуст.";
@@ -260,6 +267,12 @@ async function send(){
     // A pending approval is the next user decision, not a generic follow-up.
     if(!result.events?.some(e=>e.type==="approval_required")){
       void loadFollowups(result.session_id,result.turn,pending);
+    }
+    if(result.task_id)void refreshTaskList();
+    if(result.events?.some(e=>e.name==="comm_request_review"&&e.result?.ok)){
+      showTaskStatus("needs_review");
+    }else{
+      showTaskStatus("completed");
     }
     if(state.turns===1){
       const label=text.length>32?text.substring(0,31)+"…":text;
@@ -274,6 +287,90 @@ async function send(){
   }finally{
     busy(false);$("messageInput").focus();toBottom();
   }
+}
+async function refreshTaskList(){
+  try{
+    const response=await fetch("/api/comm/tasks",{cache:"no-store"});
+    if(!response.ok)return;
+    const body=await response.json();
+    const list=$("taskList");
+    list.replaceChildren();
+    for(const task of (body.tasks||[]).slice(0,25)){
+      const button=node("button","task-item"+(task.task_id===state.taskId?" selected":""));
+      button.type="button";
+      button.dataset.taskId=task.task_id;
+      const text=node("span","task-title",task.title||"Исследование");
+      const status=node("span","task-state",task.status||"idle");
+      button.append(text,status);
+      button.addEventListener("click",()=>resumeTask(task.task_id));
+      list.append(button);
+    }
+    if(!list.childNodes.length)list.append(node("p","muted","Пока нет исследований."));
+  }catch(_){}
+}
+function showTaskStatus(status){
+  $("commState").textContent=status==="needs_review"?
+    "Нужна рецензия ChatGPT":status==="running"?"Qwen исследует":
+    status==="queued"?"В очереди Qwen":status==="blocked"?"Задача остановлена":
+    status==="completed"?"Исследование завершено":status||"Общая очередь";
+}
+function displayTaskEvent(message){
+  if(!message)return;
+  if(message.actor==="chatgpt"&&(message.kind==="feedback"||message.kind==="instruction")){
+    renderMessage("chatgpt",message.body);
+  }else if(message.actor==="qwen"&&message.kind==="result"){
+    renderMessage("assistant",message.body);
+  }else if(message.actor==="qwen"&&message.kind==="request_review"){
+    renderMessage("assistant","Запрос независимой рецензии ChatGPT: "+message.body);
+  }else if(message.actor==="controller"&&message.kind==="system"){
+    renderMessage("assistant","Состояние задачи: "+message.body);
+  }
+}
+async function resumeTask(taskId){
+  if(state.running)return;
+  busy(true);
+  try{
+    const result=await requestJson("/api/comm/resume",{task_id:taskId});
+    state.sessionId=result.session_id;
+    state.taskId=result.task.task_id;
+    state.turns=result.turn||0;
+    state.lastSeq=0;
+    $("messages").replaceChildren();
+    const messages=result.messages||[];
+    for(const message of messages){
+      if(message.actor==="human"&&message.kind==="instruction"){
+        renderMessage("user",message.body);
+      }else{
+        displayTaskEvent(message);
+      }
+      state.lastSeq=Math.max(state.lastSeq,message.seq||0);
+    }
+    $("sessionItem").textContent=result.task.title;
+    showTaskStatus(result.task.status);
+    $("sidebar").classList.remove("open");
+    await refreshTaskList();
+  }catch(err){
+    $("sendStatus").textContent="Ошибка открытия задачи: "+String(err.message||err);
+  }finally{
+    busy(false);toBottom();
+  }
+}
+async function pollTask(){
+  if(!state.sessionId||!state.taskId||state.running)return;
+  const sid=state.sessionId,task=state.taskId;
+  try{
+    const response=await fetch("/api/comm/events?session_id="+encodeURIComponent(sid)+
+      "&after_seq="+state.lastSeq,{cache:"no-store"});
+    if(!response.ok)return;
+    const data=await response.json();
+    if(state.sessionId!==sid||state.taskId!==task||state.running)return;
+    for(const message of data.messages||[]){
+      displayTaskEvent(message);
+      state.lastSeq=Math.max(state.lastSeq,message.seq||0);
+    }
+    showTaskStatus(data.task?.status);
+    if((data.messages||[]).length)void refreshTaskList();
+  }catch(_){}
 }
 function renderTools(tools,automatic=[],availableScanners=[]){
   const container=$("toolList");
@@ -314,6 +411,7 @@ async function status(){
     $("backendStatus").textContent=ready?"Qwen и MCP подключены":
       info.ollama_ready?"Qwen подключена · MCP недоступен":"Проверь Ollama";
     renderTools(Array.isArray(info.tools)?info.tools:[],info.auto_executable||[],info.lab_scanners?.engines||[]);
+    if(!state.taskId)showTaskStatus(info.communication?.enabled?"Общая очередь":"Шлюз недоступен");
   }catch(_){
     $("backendDot").className="dot bad";
     $("backendStatus").textContent="Нет подключения к серверу";
@@ -329,7 +427,11 @@ async function reset(){
     catch(exc){$("sendStatus").textContent="Ошибка сброса сессии";return;}
   }
   state.sessionId=null;
+  state.taskId=null;
+  state.lastSeq=0;
   state.turns=0;
+  showTaskStatus("Общая очередь");
+  void refreshTaskList();
   $("sessionItem").textContent="Новый диалог";
   $("messages").replaceChildren(window.cybernovaWelcome.cloneNode(true));
   showEvents([],0,"none");
@@ -362,5 +464,8 @@ function init(){
     }
   });
   status();
+  void refreshTaskList();
+  window.setInterval(()=>{void pollTask();},5000);
+  window.setInterval(()=>{void refreshTaskList();},15000);
 }
 document.addEventListener("DOMContentLoaded",init);
