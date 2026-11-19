@@ -34,6 +34,8 @@ try:
     from .devtools_network import NETWORK_TOOLS
     from .research_web import RESEARCH_WEB_TOOLS
     from .safe_terminal import TERMINAL_TOOLS, safe_terminal
+    from .research_web import research_web_call
+    from .collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -59,6 +61,8 @@ except ImportError:
     from devtools_network import NETWORK_TOOLS
     from research_web import RESEARCH_WEB_TOOLS
     from safe_terminal import TERMINAL_TOOLS, safe_terminal
+    from research_web import research_web_call
+    from collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -99,6 +103,14 @@ def profile_settings_store() -> ProfileSettingsStore:
 @lru_cache(maxsize=1)
 def research_scope_store() -> ResearchScopeStore:
     return ResearchScopeStore()
+
+
+@lru_cache(maxsize=1)
+def collaboration_store() -> CollaborationStore:
+    return CollaborationStore(communication_store())
+
+
+collaboration_step_lock = RLock()
 
 
 @asynccontextmanager
@@ -251,7 +263,154 @@ class ProfileSettingsRequest(BaseModel):
     settings: dict
 
 
+class CollaborationStartRequest(BaseModel):
+    goal: str = Field(min_length=1, max_length=3000)
+    model: str = Field(min_length=1, max_length=160)
+    cycles: int = Field(default=2, ge=1, le=3)
+    session_id: str | None = Field(default=None, min_length=16, max_length=100)
+
+
+class CollaborationActionRequest(BaseModel):
+    task_id: str = Field(min_length=12, max_length=100)
+
+
+class SharedToolRequest(BaseModel):
+    name: str = Field(pattern="^(google_search|research_source_open|safe_terminal)$")
+    argument: str = Field(min_length=1, max_length=1600)
+
+
 gpt_turn_lock = RLock()
+
+
+@app.get("/api/collab/runs")
+def collaboration_runs():
+    return {"runs": collaboration_store().list_runs()}
+
+
+@app.get("/api/collab/run")
+def collaboration_run(task_id: str, after: int = 0):
+    try:
+        return collaboration_store().read(task_id, after=after)
+    except (CollaborationError, CommunicationError, ValueError):
+        raise HTTPException(status_code=404, detail="collaboration_not_found") from None
+
+
+@app.post("/api/collab/start")
+def collaboration_start(payload: CollaborationStartRequest):
+    # Starting is a deliberate browser action. This authorizes a limited
+    # number of calls to the user's connected ChatGPT plan and DeepSeek.
+    try:
+        available = {m["slug"] for m in chatgpt_models()}
+        if payload.model not in available:
+            raise HTTPException(status_code=409, detail="collab_model_unavailable")
+        scope = scope_profile([])
+        if payload.session_id:
+            with sessions_lock:
+                active_session = sessions.get(payload.session_id)
+            if active_session is None:
+                raise HTTPException(status_code=404, detail="session_not_found")
+            with active_session["lock"]:
+                scope = scope_profile(active_session["scope"]["hosts"],
+                                      active_session["scope"]["capture_detail"])
+        return collaboration_store().create(payload.goal, payload.model,
+                                            payload.cycles, scope=scope)
+    except (SIWCError, ProfileSettingsError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except (CollaborationError, ValueError, CommunicationError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+@app.post("/api/collab/stop")
+def collaboration_stop(payload: CollaborationActionRequest):
+    try:
+        return collaboration_store().halt(payload.task_id)
+    except (CollaborationError, CommunicationError):
+        raise HTTPException(status_code=404, detail="collaboration_not_found") from None
+
+
+@app.post("/api/collab/step")
+def collaboration_step(payload: CollaborationActionRequest):
+    # Sequential browser-driven turn: no unbounded background loops.
+    # A concurrent stop can mark the run stopped during model I/O.
+    with collaboration_step_lock:
+        store = collaboration_store()
+        try:
+            run = store.read(payload.task_id)
+            if run["state"] != "active":
+                raise HTTPException(status_code=409, detail="collaboration_not_active")
+            role = run["next_actor"]
+            profile = profile_settings_store().load()
+            tool_count = 0
+            blocked = False
+            if role == "chatgpt":
+                outcome = chatgpt_chat(
+                    run["model"], mentor_messages(run),
+                    user_context=user_context_for(profile, "chatgpt"),
+                    profile_instructions=MENTOR_PROFILE + "\n\n" +
+                                         mode_instructions_for(profile, "chatgpt"),
+                )
+            else:
+                history, prompt = researcher_messages(run)
+                scope = ResearchScopeStore(communication_store().path).load(payload.task_id)
+                engine = Agent(
+                    ollama=agent.ollama,
+                    mcp_factory=lambda: CommunicationToolClient(
+                        TrafficToolClient(MCPClient(), {}, scope=scope),
+                        communication_store(), payload.task_id,
+                    ),
+                )
+                outcome = engine.run(
+                    history, prompt, scope=scope, public_get=True, force_tools=True,
+                    user_context=user_context_for(profile, "researcher"),
+                    profile_instructions=(
+                        "Ты исследователь DeepSeek. ChatGPT выступает старшим инженером "
+                        "и наставником. Выполняй разрешённые задания и передавай "
+                        "проверяемые результаты, логику диагностики, ограничения и "
+                        "реальные доказательства. Не выдумывай результаты.\n\n" +
+                        mode_instructions_for(profile, "researcher")
+                    ),
+                )
+                tool_count = outcome.get("tool_calls", 0)
+                EvidenceJournal(communication_store()).record_tool_events(
+                    payload.task_id, outcome.get("events") or [],
+                )
+                blocked = bool(outcome.get("approval_requests"))
+            answer = str(outcome.get("answer", "")).strip()
+            if blocked:
+                answer += (
+                    "\n\nТребуются отдельные разрешения на инструмент. "
+                    "Автоматический обмен остановлен; действие не выполнялось."
+                )
+            next_run = store.advance(payload.task_id, role, answer, blocked=blocked)
+            return {"run": next_run, "actor": role, "answer": answer,
+                    "tool_calls": tool_count}
+        except HTTPException:
+            raise
+        except (CollaborationError, CommunicationError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except (SIWCError, ProfileSettingsError) as exc:
+            store.fail(payload.task_id, type(exc).__name__)
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except Exception as exc:
+            store.fail(payload.task_id, type(exc).__name__)
+            raise HTTPException(status_code=502,
+                                detail="collaboration_step_failed:" + type(exc).__name__) from exc
+
+
+@app.post("/api/tools/run")
+def run_shared_utility(payload: SharedToolRequest):
+    # Same three bounded read-only tools for both modes; no arbitrary shell.
+    args = ({"query": payload.argument} if payload.name == "google_search"
+            else {"url": payload.argument} if payload.name == "research_source_open"
+            else {"command": payload.argument})
+    try:
+        if payload.name == "safe_terminal":
+            result = safe_terminal(args["command"])
+        else:
+            result, _ = research_web_call(payload.name, args)
+        return {"tool": payload.name, "result": result}
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)[:160]) from None
 
 
 @app.get("/api/profile-settings")
