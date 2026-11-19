@@ -26,3 +26,7 @@
 **/.pytest_cache
 **/models
 **/.cache
+
+**/portable/config
+**/portable/secrets
+**/config/scope.json
