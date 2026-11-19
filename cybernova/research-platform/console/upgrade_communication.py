@@ -10,6 +10,8 @@ import base64
 import json
 import os
 import shutil
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 import sys
@@ -47,6 +49,34 @@ def running(name):
     ).returncode == 0
 
 
+
+def backup_db():
+    """Consistent SQLite online backup before any service restart."""
+    if not DB.is_file() or DB.is_symlink():
+        raise RuntimeError("communication_database_missing_or_symlink")
+    backup_dir = PRIVATE / "upgrade-backups"
+    if backup_dir.is_symlink():
+        raise RuntimeError("backup_directory_symlink")
+    backup_dir.mkdir(mode=0o700, exist_ok=True)
+    backup_dir.chmod(0o700)
+    target = backup_dir / ("communications-pre-upgrade-" +
+                            datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") +
+                            ".sqlite3")
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.close(fd)
+    try:
+        with sqlite3.connect("file:" + str(DB) + "?mode=ro", uri=True) as source:
+            with sqlite3.connect(str(target)) as dest:
+                source.backup(dest)
+                integrity = dest.execute("PRAGMA integrity_check").fetchone()[0]
+                if integrity != "ok":
+                    raise RuntimeError("database_backup_integrity_failed")
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    print("COMM_DB_BACKUP_VERIFIED", target.name, flush=True)
+
+
 def stop_services():
     for name, _, _ in reversed(SESSIONS):
         if running(name):
@@ -58,7 +88,10 @@ def start_services():
         command = (
             "cd " + str(ROOT) + " && " +
             "CYBERNOVA_COMM_DB=" + str(DB) + " " +
-            "CYBERNOVA_COMM_WORKER=1 PYTHONUNBUFFERED=1 " + str(VENV) +
+            "CYBERNOVA_COMM_WORKER=1 " +
+            "CYBERNOVA_SIWC_DIR=" + str(PRIVATE / "chatgpt-siwc") + " " +
+            "CYBERNOVA_SIWC_CALLBACK_PORT=18795 " +
+            "PYTHONUNBUFFERED=1 " + str(VENV) +
             " -m " + module + " >>" + str(PRIVATE / filename) + " 2>&1"
         )
         run(["tmux", "new-session", "-d", "-s", name, command], timeout=15)
@@ -160,6 +193,8 @@ def main():
         raise RuntimeError("password_file_missing")
     if not VENV.is_file():
         raise RuntimeError("venv_missing")
+    run([VENV, "-m", "pip", "install", "--disable-pip-version-check", "-q",
+         "-r", ROOT / "console" / "requirements.txt"], timeout=210)
     run([VENV, "-m", "compileall", "-q", ROOT / "console"], timeout=20)
     run([VENV, "-m", "unittest", "discover", "-s", ROOT / "tests",
          "-p", "test_*.py", "-q"], cwd=ROOT, timeout=100)
@@ -167,6 +202,7 @@ def main():
         run(["node", "--check", ROOT / "console" / "static" / "app.js"], timeout=20)
     else:
         print("NODE_NOT_INSTALLED_JS_SYNTAX_CHECKED_BY_GITHUB_CI", flush=True)
+    backup_db()
     print("PREFLIGHT_PASSED", flush=True)
 
     changed = False
