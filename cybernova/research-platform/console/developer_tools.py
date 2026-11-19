@@ -11,7 +11,10 @@ import hashlib
 import os
 from pathlib import Path
 import re
-import resource
+try:
+    import resource  # POSIX process limits; unavailable on native Windows.
+except ImportError:  # pragma: no cover - exercised on Windows
+    resource = None
 import shutil
 import subprocess
 import sys
@@ -19,10 +22,14 @@ import tempfile
 import threading
 
 SOURCE = Path(os.environ.get(
-    "CYBERNOVA_DEV_SOURCE", "/workspace/cybernova-chat-communication"
+    "CYBERNOVA_DEV_SOURCE",
+    str(Path(__file__).resolve().parents[3]) if os.name == "nt"
+    else "/workspace/cybernova-chat-communication"
 )).resolve()
 WORKSPACES = Path(os.environ.get(
-    "CYBERNOVA_DEV_WORKSPACES", "/workspace/cybernova-dev-workspaces"
+    "CYBERNOVA_DEV_WORKSPACES",
+    str(Path.home() / ".local" / "share" / "cybernova" / "dev-workspaces")
+    if os.name == "nt" else "/workspace/cybernova-dev-workspaces"
 )).resolve()
 MAX_EDIT_BYTES = 150_000
 MAX_RESULT = 14500
@@ -82,28 +89,44 @@ def _run(argv, *, cwd=SOURCE, timeout=25, env=None, uid=None):
         not isinstance(x, str) or len(x) > 1500 for x in argv
     ):
         raise DeveloperError("invalid_argv")
+    is_windows = os.name == "nt"
     clean_env = {
-        "PATH": "/usr/local/bin:/usr/bin:/bin",
-        "HOME": "/tmp",
+        "PATH": os.environ.get("PATH", "") if is_windows else "/usr/local/bin:/usr/bin:/bin",
+        "HOME": os.environ.get("USERPROFILE", str(Path.home())) if is_windows else "/tmp",
         "LANG": "C.UTF-8",
         "PYTHONDONTWRITEBYTECODE": "1",
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_CONFIG_NOSYSTEM": "1",
     }
+    if is_windows:
+        clean_env["USERPROFILE"] = os.environ.get("USERPROFILE", str(Path.home()))
+        clean_env["TEMP"] = os.environ.get("TEMP", tempfile.gettempdir())
+        clean_env["TMP"] = os.environ.get("TMP", tempfile.gettempdir())
     clean_env.update(env or {})
+
     def child():
         os.setsid()
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-        resource.setrlimit(resource.RLIMIT_CPU, (min(timeout + 5, 180), min(timeout + 5, 180)))
+        if resource is not None:
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+            resource.setrlimit(
+                resource.RLIMIT_CPU,
+                (min(timeout + 5, 180), min(timeout + 5, 180)),
+            )
         if uid is not None and os.geteuid() == 0:
             os.setgroups([])
             os.setgid(uid)
             os.setuid(uid)
+
+    run_options = {}
+    if not is_windows:
+        run_options["preexec_fn"] = child
     try:
-        p = subprocess.run(list(argv), cwd=str(cwd), env=clean_env,
-                           capture_output=True, text=True, errors="replace",
-                           timeout=timeout, preexec_fn=child)
-    except subprocess.TimeoutExpired as exc:
+        p = subprocess.run(
+            list(argv), cwd=str(cwd), env=clean_env,
+            capture_output=True, text=True, errors="replace",
+            timeout=timeout, **run_options,
+        )
+    except subprocess.TimeoutExpired:
         return {"ok": False, "error": "command_timeout", "timeout": timeout}
     except OSError as exc:
         return {"ok": False, "error": type(exc).__name__}
@@ -184,6 +207,11 @@ def _diff(root):
 
 
 def _unprivileged(argv, root, timeout):
+    # Native Windows cannot provide the POSIX UID drop used by this runner.
+    # Refuse test/custom execution rather than silently run model-controlled
+    # code with the operator's Windows account privileges.
+    if os.name == "nt":
+        raise DeveloperError("unprivileged_execution_unavailable_on_windows_use_wsl_or_linux")
     tmp = tempfile.mkdtemp(prefix="cybernova-dev-test-")
     try:
         uid = 65534 if os.geteuid() == 0 else None
