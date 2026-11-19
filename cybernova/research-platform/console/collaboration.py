@@ -108,6 +108,22 @@ class CollaborationStore:
             raise CollaborationError("collaboration_not_found")
         run = {key: row[key] for key in row.keys()}
         dialog = self.comm.read_dialog(task_id, after=after, limit=100)
+        # A process can terminate between committing a message and updating
+        # the run cursor. Never replay that model call or silently duplicate a
+        # turn on recovery: require manual review instead.
+        if after == 0:
+            observed = sum(
+                1 for m in dialog["messages"] if
+                (m["actor"] == "chatgpt" and m["kind"] == "feedback") or
+                (m["actor"] == "qwen" and m["kind"] == "result")
+            )
+            if observed != run["step"] and run["state"] == "active":
+                with self.comm._lock, self.comm._connection() as db:
+                    db.execute(
+                        "UPDATE collaboration_runs SET state='blocked',updated_at=?"
+                        " WHERE task_id=? AND state='active'", (_utc(), task_id),
+                    )
+                run["state"] = "blocked"
         # Recovery is fail-closed: the communications worker may have marked a
         # formerly running task blocked after a restart.
         if dialog["task"]["status"] == "blocked" and run["state"] == "active":
