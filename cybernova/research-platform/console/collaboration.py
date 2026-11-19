@@ -191,7 +191,7 @@ class CollaborationStore:
                     )
                 self.comm.append(task_id, "controller", "system",
                                  "Диалог приостановлен пользователем.",
-                                 status="running")
+                                 status="idle")
             return self.read(task_id)
 
     def resume(self, task_id: str) -> dict:
@@ -209,6 +209,9 @@ class CollaborationStore:
                     "WHERE task_id=? AND state='paused'",
                     (next_pause, _utc(), task_id),
                 )
+            self.comm.append(task_id, "controller", "system",
+                             "Диалог продолжен по запросу пользователя.",
+                             status="running")
             return self.read(task_id)
 
     def finish(self, task_id: str) -> dict:
@@ -240,7 +243,7 @@ class CollaborationStore:
             step = run["step"] + 1
             paused = step >= run["pause_at"]
             state = "blocked" if blocked else "paused" if paused else "active"
-            status = "blocked" if blocked else "running"
+            status = "blocked" if blocked else "idle" if paused else "running"
             kind = "result" if actor == "qwen" else "feedback"
             self.comm.append(task_id, actor, kind, answer[:12000], status=status)
             with self.comm._lock, self.comm._connection() as db:
