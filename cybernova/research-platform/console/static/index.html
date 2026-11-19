@@ -63,12 +63,20 @@
         <select id="gptTopModel" class="gpt-top-model" hidden disabled aria-label="Модель GPT"><option value="">Подключите ChatGPT</option></select>
       </div>
       <div class="topbar-right">
+        <button type="button" id="quickTaskOpen" class="header-button" title="Собрать задачу по готовым сценариям">Сценарии</button>
+        <button type="button" id="conversationCopy" class="header-button" title="Скопировать всю историю диалога">Копировать</button>
+        <button type="button" id="conversationExport" class="header-button" title="Сохранить все сообщения в файл">Экспорт</button>
+        <label class="sr-only" for="conversationExportFormat">Формат экспорта</label>
+        <select id="conversationExportFormat" class="conversation-export-format" aria-label="Формат экспорта">
+          <option value="md">MD</option><option value="json">JSON</option>
+        </select>
         <span class="connection-label"><span id="ollamaState">…</span> · <span id="mcpState">…</span> · <span id="commState">Общая очередь</span></span>
         <button type="button" id="navProfile" class="header-button">Профиль</button>
         <button type="button" id="navChatGPT" class="header-button">Аккаунт GPT</button>
         <button type="button" id="navTools" class="header-button">Инструменты <span id="toolCount">0</span></button>
       </div>
     </header>
+    <div id="conversationExportStatus" class="export-status" role="status" hidden></div>
 
     <section class="conversation" aria-label="Чат">
       <div id="messages" class="messages">
@@ -88,6 +96,7 @@
           <div id="collabForm">
             <label for="collabGoal">Цель исследования</label>
             <textarea id="collabGoal" maxlength="3000" rows="3" placeholder="Опиши задачу, ограничения и ожидаемый результат…"></textarea>
+            <button type="button" id="quickTaskStart" class="quick-task-inline">Выбрать направления исследования</button>
             <div class="collab-row">
               <label>Модель наставника <select id="collabModel"><option value="">Подключите ChatGPT</option></select></label>
               <label>Обменов до паузы <select id="collabCycles"><option value="1">1 обмен</option><option value="3">3 обмена</option><option value="5" selected>5 обменов</option><option value="7">7 обменов</option><option value="10">10 обменов</option><option value="12">12 обменов</option></select></label>
@@ -105,6 +114,7 @@
           <div id="collabEditPanel" class="collab-edit-panel" hidden>
             <label for="collabGoalEdit">Новая редакция задачи</label>
             <textarea id="collabGoalEdit" maxlength="3000" rows="5" placeholder="Уточни цель, ограничения или направление исследования…"></textarea>
+            <button type="button" id="quickTaskEdit" class="quick-task-inline">Добавить направления</button>
             <label for="collabCyclesEdit">Обменов до следующей паузы</label>
             <select id="collabCyclesEdit"><option value="1">1 обмен</option><option value="3">3 обмена</option><option value="5">5 обменов</option><option value="7">7 обменов</option><option value="10">10 обменов</option><option value="12">12 обменов</option></select>
             <p class="muted">Изменение сохранится в истории и начнёт действовать при продолжении диалога. Разрешённые цели и права инструментов не меняются.</p>
@@ -266,6 +276,26 @@
         <span id="profileSaveStatus" role="status">Настройки сохраняются локально в каталоге данных Cybernova.</span>
         <div><button type="button" id="profileCancel" class="header-button">Отмена</button><button type="button" id="profileSave" class="profile-save">Сохранить</button></div>
       </div>
+    </div>
+  </dialog>
+  <dialog id="quickTaskDialog" class="quick-task-dialog" aria-labelledby="quickTaskTitle">
+    <div class="quick-task-shell">
+      <div class="quick-task-heading">
+        <div>
+          <h2 id="quickTaskTitle">Конструктор исследовательской задачи</h2>
+          <p>Отметь нужные направления — они добавятся в текст задачи и останутся редактируемыми.</p>
+        </div>
+        <button type="button" id="quickTaskClose" class="icon-button" aria-label="Закрыть сценарии">×</button>
+      </div>
+      <div id="quickTaskOptions" class="quick-task-grid"></div>
+      <p class="quick-task-safety">Выбор сценария формирует только текст. Инструменты и проверки сами не запускаются. Текущие разрешения и scope сохраняются.</p>
+      <div class="quick-task-footer">
+        <span id="quickTaskCount">Выбрано: 0</span>
+        <button type="button" id="quickTaskClear" class="refresh-button">Снять выбор</button>
+        <button type="button" id="quickTaskApply" class="profile-save">Добавить в задачу</button>
+        <button type="button" id="quickTaskCancel" class="refresh-button">Отмена</button>
+      </div>
+      <p id="quickTaskStatus" role="status" class="muted"></p>
     </div>
   </dialog>
 </body>
