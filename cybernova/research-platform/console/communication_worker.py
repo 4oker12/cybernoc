@@ -74,10 +74,12 @@ class CommunicationWorker:
                                   status="blocked")
                 return {"task_id": task_id, "status": "blocked"}
             history, prompt = current
-            outcome = self._agent_for(task_id).run(
-                history, prompt, public_get=True, force_tools=True,
-                scope=ResearchScopeStore().load(task_id),
-            )
+            options = {"public_get": True, "force_tools": True}
+            # Third-party/test agent factories retain their prior run API.
+            # The default research agent always receives its persisted scope.
+            if self.agent_factory is None:
+                options["scope"] = ResearchScopeStore().load(task_id)
+            outcome = self._agent_for(task_id).run(history, prompt, **options)
             if not isinstance(outcome, dict):
                 raise ValueError("unexpected_agent_output")
             answer = str(outcome.get("answer") or "").strip()[:12000]
