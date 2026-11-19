@@ -35,8 +35,6 @@ def main():
 
     def stop(*_):
         nonlocal stopping
-        if stopping:
-            return
         stopping = True
         for process in processes:
             if process.poll() is None:
