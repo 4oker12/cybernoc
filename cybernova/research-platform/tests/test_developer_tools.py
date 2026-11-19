@@ -94,7 +94,8 @@ class DeveloperToolsTests(unittest.TestCase):
         class Upstream:
             def initialize(self):return []
             def call(self,*args):return {},True
-        client=CommunicationToolClient(Upstream(),Store(),self.task)
+        with patch("console.communication_tools.EvidenceJournal"):
+            client=CommunicationToolClient(Upstream(),Store(),self.task)
         names={x["name"] for x in client.initialize()}
         self.assertIn("dev_workspace",names)
         self.assertIn("dev_edit",names)
