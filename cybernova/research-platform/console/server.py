@@ -37,7 +37,8 @@ try:
     from .evidence import EvidenceJournal
     from .upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from .siwc import connection as chatgpt_connection, SIWCError
-    from .siwc_inference import models as chatgpt_models, review as chatgpt_review
+    from .siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
+    from .siwc_chat_store import GPTChatStore, GPTChatError
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS
     from followups import generate_followups
@@ -54,7 +55,8 @@ except ImportError:
     from evidence import EvidenceJournal
     from upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from siwc import connection as chatgpt_connection, SIWCError
-    from siwc_inference import models as chatgpt_models, review as chatgpt_review
+    from siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
+    from siwc_chat_store import GPTChatStore, GPTChatError
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -68,6 +70,11 @@ agent = Agent()
 @lru_cache(maxsize=1)
 def communication_store() -> CommunicationStore:
     return CommunicationStore()
+
+
+@lru_cache(maxsize=1)
+def gpt_chat_store() -> GPTChatStore:
+    return GPTChatStore()
 
 
 @asynccontextmanager
@@ -197,6 +204,53 @@ class ChatGPTReviewRequest(BaseModel):
     model: str = Field(min_length=1, max_length=160)
     prompt: str = Field(min_length=1, max_length=12000)
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
+
+
+class ChatGPTMessageRequest(BaseModel):
+    thread_id: str | None = Field(default=None, min_length=20, max_length=100)
+    model: str = Field(min_length=1, max_length=160)
+    message: str = Field(min_length=1, max_length=10000)
+
+
+gpt_turn_lock = RLock()
+
+
+@app.get("/api/siwc/chats")
+def siwc_chats():
+    """List separate saved GPT dialogs. Not Qwen task sessions."""
+    return {"threads": gpt_chat_store().list_threads()}
+
+
+@app.get("/api/siwc/chat")
+def siwc_chat_thread(thread_id: str):
+    try:
+        return gpt_chat_store().get_thread(thread_id)
+    except GPTChatError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+
+
+@app.post("/api/siwc/chat")
+def siwc_chat_message(payload: ChatGPTMessageRequest):
+    """Explicit user turn, no implicit Qwen history/tools or external fetch.
+
+    Lock ensures two browser tabs cannot interleave turns in the same
+    conversation. Commit the user+assistant pair only after a complete reply.
+    """
+    with gpt_turn_lock:
+        store = gpt_chat_store()
+        try:
+            history = store.context(payload.thread_id) if payload.thread_id else []
+            outgoing = history + [{"role": "user", "content": payload.message.strip()}]
+            outcome = chatgpt_chat(payload.model, outgoing)
+            thread_id = store.save_exchange(
+                payload.thread_id, payload.model, payload.message, outcome["answer"]
+            )
+        except GPTChatError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except SIWCError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+    return {"thread_id": thread_id, "model": payload.model,
+            "answer": outcome["answer"], "source": outcome["source"]}
 
 
 @app.get("/api/siwc/status")
