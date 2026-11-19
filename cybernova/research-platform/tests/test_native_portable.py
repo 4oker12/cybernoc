@@ -47,7 +47,10 @@ class NativeInstallerTests(unittest.TestCase):
 
     def test_backups_are_never_activated_implicitly(self):
         native.init(self.data,"ollama","test:latest")
-        info=native.doctor(self.data)
+        # The unit test must not probe a real Cybernova UI on the test host.
+        # A live Vast deployment may legitimately be listening on localhost.
+        with patch.object(native,"build_opener",side_effect=OSError("isolated_test")):
+            info=native.doctor(self.data)
         self.assertFalse(info["web_ui_up"])
         self.assertFalse((self.data/"communications-restored.sqlite3").exists())
 
