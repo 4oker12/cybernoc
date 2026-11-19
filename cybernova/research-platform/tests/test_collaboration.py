@@ -76,7 +76,7 @@ class CollaborationTests(unittest.TestCase):
             self.collab.advance(run["task_id"], "qwen", "Нельзя")
         with self.assertRaisesRegex(CollaborationError, "invalid_collaboration_cycles"):
             self.collab.create("Анализ", "gpt-test", 5)
-        self.assertIn("старший инженер", MENTOR_PROFILE)
+        self.assertIn("ведущий инженер", MENTOR_PROFILE)
 
     def test_http_real_two_model_turns_with_mocked_inference(self):
         class FakeResearchAgent:
