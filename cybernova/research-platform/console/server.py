@@ -303,6 +303,8 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
             )
         except GPTChatError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ProfileSettingsError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from None
         except SIWCError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
     return {"thread_id": thread_id, "model": payload.model,
@@ -365,6 +367,8 @@ def siwc_review(payload: ChatGPTReviewRequest):
             payload.model, payload.prompt,
             user_context=user_context_for(profile, "chatgpt"),
         )
+    except ProfileSettingsError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from None
     except SIWCError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     if task_id:
