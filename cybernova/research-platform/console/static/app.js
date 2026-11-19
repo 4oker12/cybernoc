@@ -238,6 +238,7 @@ async function importArtifact(file){
     });
     state.sessionId=result.session_id;
     state.taskId=result.task_id||state.taskId;
+    void refreshChatGPT();
     void refreshTaskList();
     $("welcome")?.remove();
     renderMessage("user","Импортирован файл: "+file.name+
@@ -364,6 +365,7 @@ async function resumeTask(taskId){
     const result=await requestJson("/api/comm/resume",{task_id:taskId});
     state.sessionId=result.session_id;
     state.taskId=result.task.task_id;
+    void refreshChatGPT();
     state.turns=result.turn||0;
     state.lastSeq=0;
     $("messages").replaceChildren();
