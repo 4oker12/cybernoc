@@ -75,6 +75,8 @@ def init(provider: str, model: str, base_url: str = "") -> dict:
     CONFIG.mkdir(parents=True,exist_ok=True)
     if not SCOPE.exists():
         _write_new(SCOPE,'{\n  "allowed_hosts": []\n}\n')
+    if os.name != "nt":
+        SCOPE.chmod(0o644)  # Host allowlist is not secret; container is UID 10001.
     env = (
         "# Cybernova portable config. NEVER commit this file.\n"
         "CYBERNOVA_LLM_PROVIDER=" + provider + "\n"
@@ -107,7 +109,7 @@ def set_key(rotate: bool = False) -> dict:
                "python","-m","console.portable_credentials","import-model-key"]
     if rotate:
         command.append("--rotate")
-    process = subprocess.run(command,cwd=ROOT,input=key+"\\n",
+    process = subprocess.run(command,cwd=ROOT,input=key+"\n",
                              text=True,capture_output=True)
     if process.returncode:
         raise InstallError("api_key_import_failed")
@@ -199,7 +201,8 @@ def main():
     commands.add_parser("logs",help="Show last service logs (may contain task content)")
     commands.add_parser("stop",help="Stop containers, preserve volumes")
     commands.add_parser("init-backup-key",help="Generate an encryption key")
-    commands.add_parser("export-backup-key",help="Copy key to a private local path")
+    x=commands.add_parser("export-backup-key",help="Copy backup key to offline file")
+    x.add_argument("--to",required=True,type=Path)
     x=commands.add_parser("backup",help="Online encrypted DB snapshot to a host directory")
     x.add_argument("--to",type=Path,required=True)
     args=p.parse_args()
@@ -230,7 +233,23 @@ def main():
             exec_in_container("python","-m","console.backup","init-key",capture=False)
             result={"key_initialized":True,"reminder":"Export key to another machine"}
         elif args.cmd=="export-backup-key":
-            raise InstallError("specify_exact_destination_in_next_version_use_docker_cp_manually")
+            dst=args.to.expanduser().resolve()
+            if dst.exists() or dst.is_symlink():
+                raise InstallError("backup_key_destination_exists")
+            dst.parent.mkdir(parents=True,exist_ok=True)
+            cid=_compose("ps","-q",APP,capture=True).strip()
+            if not cid:
+                raise InstallError("container_not_running")
+            process=subprocess.run(
+                ["docker","cp",cid+":/data/backup.key",str(dst)],
+                text=True,capture_output=True,
+            )
+            if process.returncode:
+                raise InstallError("backup_key_export_failed")
+            if os.name!="nt":
+                dst.chmod(0o600)
+            result={"key_exported":str(dst),
+                    "warning":"Keep it OFF this machine and never commit to Git"}
         else:
             result=backup_to_host(args.to.expanduser().resolve())
         print(json.dumps(result,ensure_ascii=False,indent=2))
