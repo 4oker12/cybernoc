@@ -73,10 +73,13 @@ class CollaborationTests(unittest.TestCase):
         self.collab.advance(tid, "chatgpt", "Первый план")
         self.collab.advance(tid, "qwen", "Первый ответ")
         self.collab.halt(tid)
-        run = self.collab.update_goal(tid, "Новая задача для аудита API")
+        run = self.collab.update_goal(tid, "Новая задача для аудита API", cycles=7)
         self.assertEqual(run["goal"], "Новая задача для аудита API")
+        self.assertEqual(run["max_cycles"], 7)
         self.assertEqual(run["state"], "paused")
         self.assertEqual(run["step"], 2)
+        self.assertEqual(self.collab.resume(tid)["pause_at"], 16)
+        self.collab.halt(tid)
         bodies = [m["body"] for m in run["messages"]]
         self.assertIn("Исходная задача", bodies)
         self.assertIn("Первый план", bodies)
@@ -214,17 +217,18 @@ class CollaborationTests(unittest.TestCase):
             self.assertEqual(client.post("/api/collab/step",
                                          json={"task_id":task_id}).status_code,409)
             revised=client.post("/api/collab/goal",json={
-                "task_id":task_id, "goal":"Изучить только безопасный контракт API"
+                "task_id":task_id, "goal":"Изучить только безопасный контракт API", "cycles":7
             })
             self.assertEqual(revised.status_code,200,revised.text)
             self.assertEqual(revised.json()["state"],"paused")
+            self.assertEqual(revised.json()["max_cycles"],7)
             self.assertIn("Изучить только безопасный контракт API",
                           [m["body"] for m in revised.json()["messages"]][-1])
             self.assertEqual(client.post("/api/collab/goal",json={
                 "task_id":task_id, "goal":" "}).status_code,409)
             resumed=client.post("/api/collab/resume",json={"task_id":task_id})
             self.assertEqual(resumed.status_code,200,resumed.text)
-            self.assertEqual(resumed.json()["pause_at"],4)
+            self.assertEqual(resumed.json()["pause_at"],16)
             for _ in range(2):
                 response=client.post("/api/collab/step",json={"task_id":task_id})
                 self.assertEqual(response.status_code,200,response.text)
