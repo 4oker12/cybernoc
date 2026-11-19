@@ -191,9 +191,42 @@ def backup_to_host(directory: Path) -> dict:
             "warning":"Copy both files AND backup.key to another machine/storage securely"}
 
 
+def wizard() -> dict:
+    print("Cybernova Portable — мастер первого запуска")
+    print("1 — своя модель через Ollama (локально / Vast)")
+    print("2 — внешняя модель через OpenAI-совместимый API")
+    selection=input("Режим [1/2]: ").strip()
+    if selection not in {"1","2"}:
+        raise InstallError("invalid_wizard_selection")
+    if selection=="1":
+        model=input("Модель Ollama [qwen2.5-coder:7b]: ").strip() or "qwen2.5-coder:7b"
+        result=init("ollama",model)
+    else:
+        model=input("Идентификатор модели у провайдера: ").strip()
+        url=input("HTTPS API base URL (пример https://api.example/v1): ").strip()
+        print("ВНИМАНИЕ: запросы, история и результаты инструмента могут")
+        print("передаваться выбранному удалённому провайдеру модели.")
+        if input("Понимаю и разрешаю внешний инференс? [yes/NO]: ").strip()!="yes":
+            raise InstallError("cloud_inference_not_approved")
+        result=init("openai_compatible",model,url)
+        set_key()
+    if input("Собрать и запустить контейнеры? [yes/NO]: ").strip()=="yes":
+        tunnel=input("Cloudflare Quick Tunnel? [yes/NO]: ").strip()=="yes"
+        gpu=False
+        if selection=="1":
+            gpu=input("Есть NVIDIA Container Toolkit? GPU режим? [yes/NO]: ").strip()=="yes"
+        up(tunnel=tunnel,gpu=gpu)
+        result["containers_started"]=True
+        if selection=="1" and input("Скачать модель Ollama сейчас? Это может быть много ГБ. [yes/NO]: ").strip()=="yes":
+            _compose("--profile","local-ollama","exec","-T","ollama","ollama","pull",model)
+            result["model_downloaded"]=model
+    return result
+
+
 def main():
     p=argparse.ArgumentParser(description="Portable Cybernova deployment")
     commands=p.add_subparsers(dest="cmd",required=True)
+    commands.add_parser("wizard",help="Interactive first-run setup with clear privacy/cost prompts")
     x=commands.add_parser("init",help="Create local config and empty allowlist")
     x.add_argument("--provider",choices=["ollama","openai_compatible"],required=True)
     x.add_argument("--model",default="qwen2.5-coder:7b")
@@ -214,7 +247,9 @@ def main():
     x.add_argument("--to",type=Path,required=True)
     args=p.parse_args()
     try:
-        if args.cmd=="init":
+        if args.cmd=="wizard":
+            result=wizard()
+        elif args.cmd=="init":
             result=init(args.provider,args.model,args.base_url)
         elif args.cmd=="set-key":
             result=set_key(args.rotate)
