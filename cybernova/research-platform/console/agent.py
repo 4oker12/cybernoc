@@ -25,6 +25,10 @@ try:
     from .research_mission import RESEARCH_MISSION
 except ImportError:
     from research_mission import RESEARCH_MISSION
+try:
+    from .dialogue_strategy import DIALOGUE_STRATEGY
+except ImportError:
+    from dialogue_strategy import DIALOGUE_STRATEGY
 
 OLLAMA_URL = os.environ.get("CYBERNOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MCP_URL = os.environ.get("CYBERNOVA_MCP_URL", "http://127.0.0.1:18792/mcp")
@@ -69,7 +73,7 @@ traffic_hypotheses и traffic_report для последовательного �
 Не утверждай CVE/уязвимость из одной версии ПО или отсутствия HTTP-заголовка.
 Если инструменты недоступны, скажи об этом явно. Пиши на русском.
 """
-BASE_SYSTEM += "\n" + RESEARCH_MISSION
+BASE_SYSTEM += "\n" + RESEARCH_MISSION + "\n" + DIALOGUE_STRATEGY
 
 
 class BackendError(RuntimeError):
