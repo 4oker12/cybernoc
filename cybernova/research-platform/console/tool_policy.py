@@ -33,7 +33,7 @@ REVIEWED_OFFLINE = frozenset({
     "comm_record_evidence",
     # Coding agent: edits and commits only in a separate Qwen task worktree.
     "dev_workspace", "dev_list", "dev_read", "dev_search",
-    "dev_edit", "dev_diff", "dev_test", "dev_commit",
+    "dev_edit", "dev_delete", "dev_move", "dev_diff", "dev_test", "dev_commit",
 })
 REVIEWED_SCOPED = frozenset({"http_get", "scoped_dns_resolve", "scoped_tls_inspect", "browser_open", "browser_network"})
 REVIEWED_TOOLS = REVIEWED_OFFLINE | REVIEWED_SCOPED
