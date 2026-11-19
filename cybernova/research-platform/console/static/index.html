@@ -18,9 +18,13 @@
     </div>
     <div class="sidebar-label">Ваши диалоги</div>
     <button class="session-item active" type="button" id="sessionItem">Новый диалог</button>
+    <div class="sidebar-label">Исследовательские задачи</div>
+    <div class="task-list" id="taskList" aria-label="Сохранённые задачи">
+      <p class="muted">Загрузка задач…</p>
+    </div>
     <div class="sidebar-bottom">
       <div class="connection"><span id="backendDot" class="dot"></span><span id="backendStatus">Проверяем подключение…</span></div>
-      <div class="side-note">Локальная Qwen · Vast.ai</div>
+      <div class="side-note">Локальная Qwen · Vast.ai · Общая очередь ChatGPT</div>
     </div>
   </aside>
 
@@ -31,7 +35,7 @@
         <div class="model-title">Cybernova <span id="modelName">Qwen3-Coder 30B</span></div>
       </div>
       <div class="topbar-right">
-        <span class="connection-label"><span id="ollamaState">…</span> · <span id="mcpState">…</span></span>
+        <span class="connection-label"><span id="ollamaState">…</span> · <span id="mcpState">…</span> · <span id="commState">Общая очередь</span></span>
         <button type="button" id="navTools" class="header-button">Инструменты <span id="toolCount">0</span></button>
       </div>
     </header>
