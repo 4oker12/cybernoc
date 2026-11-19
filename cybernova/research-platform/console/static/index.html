@@ -90,14 +90,15 @@
             <textarea id="collabGoal" maxlength="3000" rows="3" placeholder="Опиши задачу, ограничения и ожидаемый результат…"></textarea>
             <div class="collab-row">
               <label>Модель наставника <select id="collabModel"><option value="">Подключите ChatGPT</option></select></label>
-              <label>Циклы проверки <select id="collabCycles"><option value="1">1 цикл</option><option value="2" selected>2 цикла</option><option value="3">3 цикла</option></select></label>
+              <label>Обменов до паузы <select id="collabCycles"><option value="1">1 обмен</option><option value="3">3 обмена</option><option value="5" selected>5 обменов</option><option value="7">7 обменов</option><option value="10">10 обменов</option><option value="12">12 обменов</option></select></label>
               <button type="button" id="collabStart" class="profile-save">Начать</button>
             </div>
           </div>
           <div id="collabActiveBar" class="collab-active-bar" hidden>
             <span id="collabStatus" role="status">Готов</span>
-            <button type="button" id="collabResume" class="refresh-button" hidden>Продолжить</button>
-            <button type="button" id="collabStop" class="refresh-button">Остановить</button>
+            <button type="button" id="collabResume" class="refresh-button" hidden>Продолжить ещё пакет</button>
+            <button type="button" id="collabStop" class="refresh-button">Пауза</button>
+            <button type="button" id="collabFinish" class="refresh-button" hidden>Завершить диалог</button>
             <button type="button" id="collabNew" class="refresh-button">Новая задача</button>
           </div>
         </section>
