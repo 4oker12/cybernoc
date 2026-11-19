@@ -197,6 +197,7 @@ def status():
     tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + COMMUNICATION_TOOLS]
     return {
         "model": MODEL,
+        "source_commit": os.environ.get("CYBERNOVA_SOURCE_COMMIT","unknown"),
         "ollama_ready": _ollama_health() if os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama") == "ollama" else False,
         "model_provider": os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama"),
         "model_remote_configured": os.environ.get("CYBERNOVA_LLM_PROVIDER") == "openai_compatible",
