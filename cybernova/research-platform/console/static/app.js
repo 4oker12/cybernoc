@@ -383,6 +383,7 @@ async function refreshGPTThreads(){
 }
 async function openGPTThread(threadId){
   if(state.running)return;
+  setMode("gpt");
   busy(true);
   try{
     const response=await fetch("/api/siwc/chat?thread_id="+encodeURIComponent(threadId),{cache:"no-store"});
@@ -396,7 +397,7 @@ async function openGPTThread(threadId){
     const model=data.thread?.model;
     if(model&&[...$("gptTopModel").options].some(x=>x.value===model))
       $("gptTopModel").value=model;
-    setMode("gpt");
+    $("sidebar").classList.remove("open");
   }catch(err){
     $("sendStatus").textContent="Ошибка загрузки GPT: "+String(err.message||err);
   }finally{busy(false);toBottom();}
