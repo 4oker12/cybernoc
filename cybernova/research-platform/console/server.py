@@ -34,6 +34,7 @@ try:
     from .communication import CommunicationStore, CommunicationError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
     from .communication_worker import CommunicationWorker
+    from .evidence import EvidenceJournal
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL
     from followups import generate_followups
@@ -47,6 +48,7 @@ except ImportError:
     from communication import CommunicationStore, CommunicationError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
     from communication_worker import CommunicationWorker
+    from evidence import EvidenceJournal
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -319,6 +321,9 @@ def chat(payload: ChatRequest):
                                 type(exc).__name__) from exc
         # Raw arguments are never exposed in the chat response.
         requests = outcome.pop("approval_requests", [])
+        EvidenceJournal(store).record_tool_events(
+            task_id, outcome.get("events") or [],
+        )
         state["pending_approvals"].clear()
         for item in requests[:6]:
             state["pending_approvals"][item["request_id"]] = {
@@ -381,6 +386,9 @@ def approve(payload: ApprovalRequest):
         state["pending_approvals"].clear()
         communication_store().append(state["task_id"], "human", "decision",
                                      "Разрешён один вызов " + item["tool"])
+        EvidenceJournal(communication_store()).record_tool_events(
+            state["task_id"], result.get("events") or [],
+        )
         communication_store().append(state["task_id"], "qwen", "result",
                                      str(result["answer"])[:12000],
                                      status="completed")
@@ -403,6 +411,72 @@ def communication_updates(session_id: str, after_seq: int = 0):
         )
     except CommunicationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+
+@app.get("/api/comm/review-packet")
+def communication_review_packet(session_id: str):
+    """Copyable, provenance-aware task packet for an independent reviewer."""
+    with sessions_lock:
+        state = sessions.get(session_id)
+    if state is None or not state.get("task_id"):
+        raise HTTPException(status_code=404, detail="session_or_task_not_found")
+    try:
+        return {
+            "task_id": state["task_id"],
+            "packet": EvidenceJournal(communication_store()).review_packet(
+                state["task_id"]
+            ),
+        }
+    except CommunicationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class ReviewerFeedbackRequest(BaseModel):
+    session_id: str = Field(min_length=16, max_length=100)
+    message: str = Field(min_length=1, max_length=6000)
+    event_key: str | None = Field(default=None, min_length=12, max_length=100)
+
+
+@app.post("/api/comm/reviewer-feedback")
+def communication_reviewer_feedback(payload: ReviewerFeedbackRequest):
+    """User relays ChatGPT feedback; never impersonates authenticated ChatGPT.
+
+    This is an explicit manual fallback on personal ChatGPT plans without a
+    writable custom MCP connection. The Qwen worker resumes the same task.
+    """
+    with sessions_lock:
+        state = sessions.get(payload.session_id)
+    if state is None or not state.get("task_id"):
+        raise HTTPException(status_code=404, detail="session_or_task_not_found")
+    try:
+        store = communication_store()
+        item = store.append(
+            state["task_id"], "human", "feedback",
+            "Комментарий рецензента, переданный пользователем:\n" + payload.message,
+            event_key=payload.event_key, status="queued",
+        )
+        return {
+            "task_id": state["task_id"], "event_seq": item["seq"],
+            "status": store.get_task(state["task_id"])["status"],
+            "note": "Qwen worker will process this when available",
+        }
+    except CommunicationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/comm/evidence")
+def communication_evidence(session_id: str):
+    with sessions_lock:
+        state = sessions.get(session_id)
+    if state is None or not state.get("task_id"):
+        raise HTTPException(status_code=404, detail="session_or_task_not_found")
+    journal = EvidenceJournal(communication_store())
+    return {
+        "task_id": state["task_id"],
+        "claims": journal.list_evidence(state["task_id"], limit=50),
+        "tool_receipts": journal.list_tool_receipts(state["task_id"], limit=50),
+    }
 
 
 @app.get("/api/comm/tasks")
