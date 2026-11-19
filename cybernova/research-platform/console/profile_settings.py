@@ -90,11 +90,11 @@ def normalize_settings(value: object) -> dict:
                     raise ProfileSettingsError("invalid_profile_privacy_" + key)
                 result[section][key] = item
             elif section == "ui" and key == "theme":
-                if item not in {"light", "dark"}:
+                if not isinstance(item, str) or item not in {"light", "dark"}:
                     raise ProfileSettingsError("invalid_ui_theme")
                 result[section][key] = item
             elif section == "ui" and key == "density":
-                if item not in {"compact", "comfortable", "relaxed"}:
+                if not isinstance(item, str) or item not in {"compact", "comfortable", "relaxed"}:
                     raise ProfileSettingsError("invalid_ui_density")
                 result[section][key] = item
             elif section == "ui" and key in {"font_scale", "sidebar_width", "chat_width"}:
