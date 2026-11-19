@@ -18,10 +18,11 @@ from urllib.parse import urlsplit
 DEFAULT_PORT = 18795
 DEFAULT_SECRET_FILE = "/workspace/cybernova-comm-private/web_access.txt"
 ALLOWED_STATIC = frozenset({"/", "/static/styles.css", "/static/app.js"})
-ALLOWED_GET = frozenset({"/api/status", "/api/comm/tasks", "/api/comm/events"})
+ALLOWED_GET = frozenset({"/api/status", "/api/comm/tasks", "/api/comm/events",
+    "/api/comm/review-packet", "/api/comm/evidence"})
 ALLOWED_POST = frozenset({
     "/api/chat", "/api/import", "/api/approve", "/api/followups",
-    "/api/reset", "/api/comm/resume",
+    "/api/reset", "/api/comm/resume", "/api/comm/reviewer-feedback",
 })
 HOP_HEADERS = frozenset({
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
