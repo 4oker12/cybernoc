@@ -1,22 +1,26 @@
 # Cybernova Lab Scanner Arsenal
 
-Eight implemented, fixed-profile scanner adapters plus one real inventory function.
+Eleven implemented, fixed-profile scanner adapters plus one real inventory function.
 
 | Cybernova tool | Engine | Bounded profile |
 |---|---|---|
 | lab_nmap | Nmap | TCP Connect, service/version light, single declared lab port, max 90 seconds, no NSE |
 | lab_nuclei | ProjectDiscovery Nuclei | Operator-reviewed local templates, <=3 requests/s, concurrency 1, no OOB or raw request records |
-| lab_zap_baseline | OWASP ZAP Baseline | Passive checks and 1-minute crawler, JSON output, not ZAP full active scanner |
+| lab_zap_baseline | OWASP ZAP Baseline | Passive checks and 1-minute crawler, JSON output |
+| lab_zap_active | OWASP ZAP Full Scan | Active attack checks, 1-minute spider, 125-second hard timeout; isolated lab only |
 | lab_nikto | Nikto | Config checks, 90 seconds, JSON report |
 | lab_testssl | testssl.sh | HTTPS-only TLS review, fast profile |
 | lab_ffuf | ffuf | Fixed small lab-only wordlist, 3 requests/s, 2 workers, 60-second limit |
 | lab_semgrep | Semgrep | Local rules and source SAST without telemetry |
 | lab_trivy | Trivy | Offline filesystem dependency and IaC review using local DB |
+| lab_gitleaks | Gitleaks | Local secret detection; report redacted to rule/file/line/fingerprint only |
+| lab_bandit | Bandit | Offline Python SAST; source snippets and issue text discarded |
 | lab_scanner_inventory | Engine presence/target IDs | No scan or network requests |
 
-All eight scanner wrappers build fixed argv lists, call the executable without
+All eleven scanner wrappers build fixed argv lists, call the executable without
 a shell, enforce a wall-clock timeout, and return only structured findings and
-a SHA-256 fingerprint. Qwen chooses the scanner. Active scans are never
+a SHA-256 fingerprint. ZAP Active is explicitly an attack scan and is restricted
+to the isolated lab; it is never a production-safe passive check. Qwen chooses the scanner. Active scans are never
 auto-approved; each requires one-time user approval for exact parameters.
 
 ## First initialize the lab
@@ -78,11 +82,14 @@ Official sources:
 - Nmap: https://nmap.org/download.html
 - Nuclei: https://github.com/projectdiscovery/nuclei
 - OWASP ZAP baseline: https://www.zaproxy.org/docs/docker/baseline-scan/
+- OWASP ZAP full active scan: https://www.zaproxy.org/docs/docker/full-scan/
 - Nikto: https://github.com/sullo/nikto
 - testssl.sh: https://github.com/testssl/testssl.sh
 - ffuf: https://github.com/ffuf/ffuf
 - Semgrep: https://semgrep.dev/docs/getting-started/
 - Trivy: https://trivy.dev/docs/latest/getting-started/installation/
+- Gitleaks: https://github.com/gitleaks/gitleaks
+- Bandit: https://bandit.readthedocs.io/
 
 Some systems have Nmap, Nikto and testssl.sh in apt. Nuclei and ffuf offer
 official Go/release installations, Semgrep a Python installation, and Trivy
@@ -95,7 +102,8 @@ To inspect readiness without initiating scans:
     python -m console.lab_setup --check
 
 The Cybernova chat also has lab_scanner_inventory. It lists engine
-availability, configured lab target IDs and project IDs. No invented output.
+availability (including ZAP Active, Gitleaks and Bandit), configured lab target
+IDs and project IDs. No invented output.
 Source code projects live under /workspace/cybernova-lab/projects.
 Rule files and wordlists are operator-controlled and never downloaded on demand
 during Qwen inference.
@@ -125,7 +133,9 @@ lab scope.
 
 Ask Qwen to list its engines using lab_scanner_inventory. Then request a
 bounded scan of a synthetic container in your isolated network and check that
-it asks for approval instead of launching the scan automatically. Compare
+it asks for approval instead of launching the scan automatically. For source
+projects, run Gitleaks and Bandit against a disposable synthetic fixture first;
+verify that no secret value or source line appears in the returned summary. Compare
 observations with independent operator diagnostics before declaring a finding.
 
 No active scanner tests against simnet.ua or real subscriber/ISP assets are

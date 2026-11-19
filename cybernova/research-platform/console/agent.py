@@ -174,6 +174,14 @@ def _arguments(name: str, value) -> dict:
 
 
 def _safe_args(name: str, args: dict) -> dict:
+    if name == "google_search":
+        # Actual sanitized query is returned by the search adapter; never
+        # persist model-supplied free text in the event's argument preview.
+        return {"query": "[privacy-filtered query]"}
+    if name == "research_source_open":
+        u = parse.urlsplit(args.get("url", ""))
+        path = re.sub(r"(?i)(?:[0-9a-f]{16,}|[A-Za-z0-9_-]{32,}|\d{5,})", "{id}", u.path or "/")
+        return {"url": (u.scheme + "://" + (u.hostname or "") + path)[:360]}
     if name == "http_get":
         u = parse.urlsplit(args.get("url", ""))
         return {"url": (u.scheme + "://" + (u.hostname or "") + (u.path or "/"))[:240]}
@@ -276,6 +284,40 @@ class Agent:
                                 selected_by = "model_json_fallback"
                     except (ValueError, TypeError, AttributeError):
                         events.append({"type": "tool_selection_error", "message": "Active model did not return valid JSON"})
+                if not executed and not pending_requests and mcp and tools and round_no == 0:
+                    # Security cases should be grounded in public advisories and
+                    # real incidents. Ensure one privacy-filtered search is part
+                    # of the first tool batch, even if the model selected another
+                    # tool or ignored native/JSON tool selection.
+                    wants_research = bool(re.search(
+                        r"(?i)(?:google|гугл|найди.{0,30}(?:интернет|сети|кейс|случа|форум)|"
+                        r"поищи|пошукай|найди|знайди|реальн.{0,20}(?:кейс|инцидент)|похож.{0,20}(?:случ|кейс)|"
+                        r"форум|CVE-\d{4}-\d+|\bCVE\b|уязвимост|вразлив|vulnerabilit|"
+                        r"exploit|security advisory|incident report|bug bounty)",
+                        text,
+                    ))
+                    already_searching = any(
+                        isinstance(item, dict)
+                        and (item.get("function") or {}).get("name") == "google_search"
+                        for item in (calls if isinstance(calls, list) else [])
+                    )
+                    if wants_research and "google_search" in descriptors and not already_searching:
+                        try:
+                            from .research_web import sanitize_search_query
+                        except ImportError:
+                            from research_web import sanitize_search_query
+                        try:
+                            query = sanitize_search_query(text, blocked_hosts=scope_hosts)
+                        except ValueError:
+                            query = ""
+                        if query:
+                            if not isinstance(calls, list):
+                                calls = []
+                            calls.append({"function": {
+                                "name": "google_search",
+                                "arguments": {"query": query},
+                            }})
+                            selected_by = "google_research_fallback"
                 if not calls and not executed and not pending_requests and mcp and tools:
                     # On unambiguous, scoped website research tasks a weak local
                     # model may ignore native tool calls AND JSON fallback.
