@@ -66,6 +66,13 @@ class DeveloperToolsTests(unittest.TestCase):
         created=self.call("dev_edit", {"path":"docs/architecture.md","content":"# Architecture\n"})
         self.assertTrue(created["ok"])
         self.assertIn("docs/architecture.md",self.call("dev_list")["files"])
+        renamed=self.call("dev_move", {"path":"docs/architecture.md",
+                                       "destination":"docs/design.md"})
+        self.assertTrue(renamed["ok"])
+        self.assertIn("docs/design.md",self.call("dev_list")["files"])
+        deleted=self.call("dev_delete", {"path":"docs/design.md"})
+        self.assertTrue(deleted["ok"])
+        self.assertNotIn("docs/design.md",self.call("dev_list")["files"])
         for path in ("../private.txt", "/tmp/file", ".git/config", ".env",
                      "secrets.txt", "folder/id_ed25519", "dir/../README.md"):
             with self.assertRaises(dev.DeveloperError,msg=path):
