@@ -175,6 +175,34 @@ class AgentTests(unittest.TestCase):
         self.assertNotIn("10.0.0.4",query)
         self.assertEqual(out["answer"],"Нашёл официальный advisory.")
 
+    def test_google_research_is_added_even_when_model_selects_another_tool(self):
+        class ResearchMCP(FakeMCP):
+            def initialize(self):
+                return TOOLS + [{
+                    "name": "google_search", "description": "Public Google search",
+                    "inputSchema": {"type": "object", "properties": {
+                        "query": {"type": "string"}}, "required": ["query"],
+                        "additionalProperties": False},
+                }]
+            def call(self, name, args):
+                if name == "google_search":
+                    self.calls.append((name, args))
+                    return {"ok": True, "result_count": 1, "results": []}, False
+                return super().call(name, args)
+        mcp=ResearchMCP()
+        lm=FakeOllama([
+            calls(("ip_network_summary",{"cidr":"192.168.1.0/24"})),
+            {"role":"assistant","content":"Параллельно проверил публичные advisories."},
+        ])
+        out=Agent(lm,lambda:mcp).run(
+            [],"Оцени потенциальную уязвимость CVE-2026-12345 и найди реальные кейсы.",
+            scope={"hosts":["internal.example"]},
+        )
+        self.assertEqual([name for name,_ in mcp.calls],
+                         ["gateway_status","ip_network_summary","google_search"])
+        self.assertEqual(out["tool_calls"],2)
+        self.assertIn("CVE-2026-12345",mcp.calls[-1][1]["query"])
+
     def test_json_fallback_is_model_selected_and_validated(self):
         mcp=FakeMCP()
         lm=FakeOllama([
