@@ -16,9 +16,9 @@ from console.server import ImportRequest
 
 
 class ArtifactSizeTests(unittest.TestCase):
-    def test_32_mib_limit_and_base64_transport_budget(self):
+    def test_50_mib_limit_and_base64_transport_budget(self):
         raw = upload_limits.MAX_UPLOAD_FILE_BYTES
-        self.assertEqual(raw, 32 * 1024 * 1024)
+        self.assertEqual(raw, 50 * 1024 * 1024)
         self.assertEqual(upload_limits.MAX_PCAP_BASE64_CHARS, 4 * ((raw + 2) // 3))
         self.assertGreater(
             upload_limits.MAX_IMPORT_HTTP_BODY_BYTES,
@@ -76,7 +76,7 @@ class ArtifactSizeTests(unittest.TestCase):
 
     def test_browser_limit_matches_shared_backend_limit(self):
         js = (ROOT / "console/static/app.js").read_text(encoding="utf-8")
-        self.assertIn("const MAX_UPLOAD_BYTES = 32 * 1024 * 1024", js)
+        self.assertIn("const MAX_UPLOAD_BYTES = 50 * 1024 * 1024", js)
         self.assertIn("upload_limit_bytes", js)
         self.assertIn("file.size>state.uploadLimit", js)
 
