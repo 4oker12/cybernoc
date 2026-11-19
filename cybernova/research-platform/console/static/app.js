@@ -1454,7 +1454,9 @@ function initQuickTasks(){
       check.value=description;
       check.addEventListener("change",updateQuickTaskCount);
       quickTaskBoxes.push(check);
-      item.append(check,node("span","",label));
+      const text=node("span","quick-task-option-text");
+      text.append(node("strong","",label),node("small","",description));
+      item.append(check,text);
       item.title=description;
       group.append(item);
     }
