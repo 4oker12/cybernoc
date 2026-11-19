@@ -159,6 +159,8 @@ def check_health():
     if status.get("upload_limit_bytes") != MAX_UPLOAD_FILE_BYTES:
         raise RuntimeError("upload_size_not_deployed")
     tools = status.get("tools") or []
+    if "browser_network" not in tools or "browser_network" not in status.get("auto_executable", []):
+        raise RuntimeError("qwen_devtools_network_not_executable")
     if "browser_open" not in tools:
         raise RuntimeError("qwen_browser_tool_missing")
     if "browser_open" not in status.get("auto_executable", []):
@@ -227,6 +229,8 @@ def check_health():
         "gpt_regular_chat": "available",
         "markdown_rendering": "ready",
         "browser": "scoped_https_html_ready",
+        "devtools_network": "chromium_ready",
+        "owner_scope": "user_selected_per_task",
     }, ensure_ascii=False), flush=True)
 
 
@@ -244,6 +248,8 @@ def main():
         raise RuntimeError("venv_missing")
     run([VENV, "-m", "pip", "install", "--disable-pip-version-check", "-q",
          "-r", ROOT / "console" / "requirements.txt"], timeout=210)
+    # Install browser binaries while old Web UI is still online.
+    run([VENV, "-m", "playwright", "install", "chromium"], timeout=240)
     run([VENV, "-m", "compileall", "-q", ROOT / "console"], timeout=20)
     run([VENV, "-m", "unittest", "discover", "-s", ROOT / "tests",
          "-p", "test_*.py", "-q"], cwd=ROOT, timeout=100)
@@ -251,6 +257,12 @@ def main():
         run(["node", "--check", ROOT / "console" / "static" / "app.js"], timeout=20)
     else:
         print("NODE_NOT_INSTALLED_JS_SYNTAX_CHECKED_BY_GITHUB_CI", flush=True)
+    # Verify an actual Chromium process can launch, not just an import.
+    run([VENV, "-c",
+         "from playwright.sync_api import sync_playwright; "
+         "p=sync_playwright().start(); "
+         "b=p.chromium.launch(headless=True,args=['--no-sandbox']); "
+         "b.close();p.stop()"], timeout=40)
     backup_db()
     print("PREFLIGHT_PASSED", flush=True)
 
