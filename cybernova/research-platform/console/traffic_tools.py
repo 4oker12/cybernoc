@@ -52,10 +52,14 @@ LOCAL_NAMES = frozenset(t["name"] for t in LOCAL_TOOLS)
 
 class TrafficToolClient:
     """Composite client delegating existing real MCP calls and 8 local analyzers."""
-    def __init__(self, upstream, artifacts: dict, scope: dict | None = None):
+    def __init__(self, upstream, artifacts: dict, scope: dict | None = None,
+                 browser_state: dict | None = None):
         self.upstream = upstream
         self.artifacts = artifacts
         self.scope = scope or {"hosts": [], "capture_detail": "metadata"}
+        # Shared session dict survives across chat turns; the browser itself is
+        # created lazily only when the user/model first invokes a browser tool.
+        self.browser_state = browser_state
 
     def initialize(self) -> list[dict]:
         try:
@@ -64,18 +68,21 @@ class TrafficToolClient:
             from .lab_scanners import SCANNER_TOOLS
             from .browser_tools import BROWSER_TOOLS
             from .devtools_network import NETWORK_TOOLS
+            from .browser_control import BROWSER_CONTROL_TOOLS
         except ImportError:
             from domain_tools import DOMAIN_TOOLS
             from scoped_network_tools import SCOPED_TOOLS
             from lab_scanners import SCANNER_TOOLS
             from browser_tools import BROWSER_TOOLS
             from devtools_network import NETWORK_TOOLS
+            from browser_control import BROWSER_CONTROL_TOOLS
         try:
             remote = self.upstream.initialize()
         except Exception:
             # Offline artifact reasoning remains possible if remote MCP is down.
             remote = []
-        return remote + LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS
+        return (remote + LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS +
+                SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + BROWSER_CONTROL_TOOLS)
 
     def _reports(self) -> list[dict]:
         return list(self.artifacts.values())[:MAX_ARTIFACTS]
@@ -94,12 +101,22 @@ class TrafficToolClient:
             from .lab_scanners import SCANNER_TOOL_NAMES, dispatch_scanner
             from .browser_tools import BROWSER_NAMES, browser_call
             from .devtools_network import NETWORK_NAMES, network_call
+            from .browser_control import BROWSER_CONTROL_NAMES, BrowserSession, browser_control_call
         except ImportError:
             from domain_tools import DOMAIN_NAMES, domain_call
             from scoped_network_tools import SCOPED_NAMES, scoped_call
             from lab_scanners import SCANNER_TOOL_NAMES, dispatch_scanner
             from browser_tools import BROWSER_NAMES, browser_call
             from devtools_network import NETWORK_NAMES, network_call
+            from browser_control import BROWSER_CONTROL_NAMES, BrowserSession, browser_control_call
+        if name in BROWSER_CONTROL_NAMES:
+            if self.browser_state is None:
+                return {"ok": False, "error": "browser_session_state_unavailable"}, True
+            session = self.browser_state.get("browser_session")
+            if session is None:
+                session = BrowserSession()
+                self.browser_state["browser_session"] = session
+            return browser_control_call(name, args, session)
         if name in NETWORK_NAMES:
             try:
                 return network_call(name, args, self.upstream,

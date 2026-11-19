@@ -37,6 +37,49 @@ class ModelProviderTests(unittest.TestCase):
             self.assertEqual(backend.endpoint,"https://llm.example/v1/chat/completions")
             self.assertEqual(backend.model,"hosted-test-model")
 
+    def test_deepseek_preset_defaults_and_thinking_tool_protocol(self):
+        transmitted=[]
+        def transport(payload):
+            transmitted.append(payload)
+            return {"choices":[{"message":{
+                "content":"",
+                "reasoning_content":"internal provider field",
+                "tool_calls":[{"id":"ds_call_1","type":"function",
+                    "function":{"name":"browser_snapshot","arguments":"{}"}}],
+            }}]}
+        with patch.dict(os.environ,{
+            "CYBERNOVA_LLM_PROVIDER":"deepseek",
+            "CYBERNOVA_LLM_BASE_URL":"",
+            "CYBERNOVA_LLM_API_KEY":"test-deepseek-key",
+            "CYBERNOVA_LLM_API_KEY_FILE":"",
+            "CYBERNOVA_MODEL":"",
+            "CYBERNOVA_DEEPSEEK_THINKING":"enabled",
+            "CYBERNOVA_DEEPSEEK_REASONING_EFFORT":"high",
+            "CYBERNOVA_LLM_TOKEN_PARAMETER":"",
+        }):
+            backend=build_model_client()
+            self.assertIsInstance(backend,OpenAICompatibleClient)
+            self.assertEqual(backend.endpoint,"https://api.deepseek.com/chat/completions")
+            self.assertEqual(backend.model,"deepseek-flash")
+            answer=backend.chat([{"role":"user","content":"Open a page"}],
+                tools=[{"type":"function","function":{"name":"browser_snapshot",
+                    "parameters":{"type":"object","properties":{}}}}])
+        self.assertEqual(answer["reasoning_content"],"internal provider field")
+        self.assertEqual(answer["tool_calls"][0]["function"]["name"],"browser_snapshot")
+        self.assertEqual(transmitted[0]["thinking"],{"type":"enabled"})
+        self.assertEqual(transmitted[0]["reasoning_effort"],"high")
+        self.assertEqual(transmitted[0]["tools"][0]["function"]["name"],"browser_snapshot")
+
+    def test_reasoning_content_survives_tool_history_normalization(self):
+        messages=[
+            {"role":"assistant","content":"","reasoning_content":"provider reasoning",
+             "tool_calls":[{"id":"call_r","function":{"name":"browser_snapshot","arguments":{}}}]},
+            {"role":"tool","tool_name":"browser_snapshot","content":"{}"},
+        ]
+        converted=_normalize_context(messages)
+        self.assertEqual(converted[0]["reasoning_content"],"provider reasoning")
+        self.assertEqual(converted[1]["tool_call_id"],"call_r")
+
     def test_remote_https_required_and_bad_urls_rejected(self):
         for value in ("http://llm.example/v1",
                       "https://name:pass@llm.example/v1",

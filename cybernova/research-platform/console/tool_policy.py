@@ -35,7 +35,15 @@ REVIEWED_OFFLINE = frozenset({
     "dev_workspace", "dev_list", "dev_read", "dev_search",
     "dev_edit", "dev_delete", "dev_move", "dev_diff", "dev_test", "dev_commit",
 })
-REVIEWED_SCOPED = frozenset({"http_get", "scoped_dns_resolve", "scoped_tls_inspect", "browser_open", "browser_network"})
+REVIEWED_SCOPED = frozenset({
+    "http_get", "scoped_dns_resolve", "scoped_tls_inspect",
+    "browser_open", "browser_network",
+    # Isolated Chromium: public navigation, observation and form preparation.
+    # browser_submit is intentionally excluded and always requires consent.
+    "browser_navigate", "browser_snapshot", "browser_follow_link",
+    "browser_fill", "browser_select", "browser_click_button",
+    "browser_back", "browser_wait",
+})
 REVIEWED_TOOLS = REVIEWED_OFFLINE | REVIEWED_SCOPED
 
 

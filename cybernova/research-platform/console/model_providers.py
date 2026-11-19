@@ -22,7 +22,7 @@ class ModelConfigError(ValueError):
 
 def provider_name() -> str:
     name = os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama").strip().lower()
-    if name not in {"ollama", "openai_compatible"}:
+    if name not in {"ollama", "openai_compatible", "deepseek"}:
         raise ModelConfigError("unsupported_model_provider")
     return name
 
@@ -73,6 +73,8 @@ def _normalize_context(messages: list[dict]) -> list[dict]:
         role = message.get("role")
         if role in {"system", "user", "assistant"}:
             item = {"role": role, "content": str(message.get("content") or "")}
+            if role == "assistant" and isinstance(message.get("reasoning_content"), str):
+                item["reasoning_content"] = message["reasoning_content"]
             if role == "assistant" and message.get("tool_calls"):
                 calls = []
                 for i, call in enumerate(message["tool_calls"][:16]):
@@ -108,9 +110,13 @@ class OpenAICompatibleClient:
 
     def __init__(self, base_url: str | None = None, model: str | None = None,
                  api_key: str | None = None, transport=None):
-        base = base_url or os.environ.get("CYBERNOVA_LLM_BASE_URL", "")
+        selected_provider = provider_name()
+        default_base = "https://api.deepseek.com" if selected_provider == "deepseek" else ""
+        default_model = "deepseek-flash" if selected_provider == "deepseek" else ""
+        base = base_url or os.environ.get("CYBERNOVA_LLM_BASE_URL", "") or default_base
+        self.provider = selected_provider
         self.endpoint = _endpoint(base)
-        self.model = model or os.environ.get("CYBERNOVA_MODEL", "")
+        self.model = model or os.environ.get("CYBERNOVA_MODEL", "") or default_model
         if not self.model:
             raise ModelConfigError("llm_model_required")
         self.api_key = api_key if api_key is not None else _key()
@@ -164,6 +170,16 @@ class OpenAICompatibleClient:
             except ValueError:
                 raise ModelConfigError("invalid_llm_temperature") from None
             payload["temperature"] = temperature
+        if self.provider == "deepseek":
+            thinking = os.environ.get("CYBERNOVA_DEEPSEEK_THINKING", "enabled").strip().lower()
+            if thinking not in {"enabled", "disabled"}:
+                raise ModelConfigError("invalid_deepseek_thinking_mode")
+            payload["thinking"] = {"type": thinking}
+            if thinking == "enabled":
+                effort = os.environ.get("CYBERNOVA_DEEPSEEK_REASONING_EFFORT", "high").strip().lower()
+                if effort not in {"low", "high", "max"}:
+                    raise ModelConfigError("invalid_deepseek_reasoning_effort")
+                payload["reasoning_effort"] = effort
         if tools:
             payload["tools"] = tools
         if json_mode:
@@ -194,8 +210,14 @@ class OpenAICompatibleClient:
                 part.get("text", "") for part in content
                 if isinstance(part, dict) and isinstance(part.get("text"), str)
             )
-        return {"content": content if isinstance(content, str) else "",
-                "tool_calls": calls}
+        reasoning = message.get("reasoning_content")
+        response_message = {
+            "content": content if isinstance(content, str) else "",
+            "tool_calls": calls,
+        }
+        if self.provider == "deepseek" and isinstance(reasoning, str):
+            response_message["reasoning_content"] = reasoning
+        return response_message
 
 
 def build_model_client():
