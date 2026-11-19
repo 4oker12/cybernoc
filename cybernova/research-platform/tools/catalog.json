@@ -5,7 +5,9 @@
     "deployed_mcp": "Previously observed deployed on Vast MCP; not necessarily exposed in Open WebUI",
     "planned_adapter": "Specification only: not installed or implemented",
     "planned_rename_of_local_webui_health": "Existing local_webui_health remains live; proposed generic replacement is not deployed",
-    "implemented_offline_not_deployed": "Real offline Python functionality exists in core/ or cli.py, but is not registered in running MCP and does not execute external actions."
+    "implemented_offline_not_deployed": "Real offline Python functionality exists in core/ or cli.py, but is not registered in running MCP and does not execute external actions.",
+    "implemented_adapter_not_installed": "Runtime adapter is registered in the research-platform toolset, but its external scanner binary is not guaranteed installed; target scope, isolation and per-action approval still apply.",
+    "implemented_public_readonly": "Read-only public web research adapter is registered; it does not scan or change target systems."
   },
   "execution_default": "deny",
   "modes": [
@@ -508,24 +510,24 @@
       "family": "source_supply_chain",
       "mode": "offline",
       "engine": "Semgrep/Trivy/Gitleaks/OSV/Grype/Syft/Checkov",
-      "status": "planned_adapter",
-      "description": "SAST по предоставленному исходному коду"
+      "status": "implemented_adapter_not_installed",
+      "description": "Offline source scanning through Semgrep and Bandit adapters; binary presence is checked at runtime."
     },
     {
       "name": "dependency_audit",
       "family": "source_supply_chain",
       "mode": "offline",
       "engine": "Semgrep/Trivy/Gitleaks/OSV/Grype/Syft/Checkov",
-      "status": "planned_adapter",
-      "description": "SCA: версии, SBOM, CVE/OSV с проверкой достижимости"
+      "status": "implemented_adapter_not_installed",
+      "description": "Offline filesystem dependency and IaC review through Trivy; local vulnerability DB must already exist."
     },
     {
       "name": "secret_scan",
       "family": "source_supply_chain",
       "mode": "offline",
       "engine": "Semgrep/Trivy/Gitleaks/OSV/Grype/Syft/Checkov",
-      "status": "planned_adapter",
-      "description": "Поиск секретов только в разрешённых репозиториях и файлах"
+      "status": "implemented_adapter_not_installed",
+      "description": "Local secret detection through Gitleaks; summaries expose rule/file/line/fingerprint only, never secret values."
     },
     {
       "name": "container_image_audit",
@@ -651,9 +653,9 @@
       "name": "vulnerability_scan",
       "family": "web_controls",
       "mode": "controlled_active",
-      "engine": "Planned generic adapter",
-      "status": "planned_adapter",
-      "description": "Authorized scanning engine adapter (Nuclei/ZAP etc), by default disabled; template allowlist and request budgets mandatory"
+      "engine": "Nmap / Nuclei / ZAP Baseline + Active / Nikto / testssl.sh / ffuf",
+      "status": "implemented_adapter_not_installed",
+      "description": "11 bounded scanner adapters are registered; network scans require isolated lab scope and one-time approval, binaries may not be installed."
     },
     {
       "name": "oast_observation",
@@ -710,6 +712,22 @@
       "engine": "Cybernova offline research.py",
       "status": "implemented_offline_not_deployed",
       "description": "Coverage, verified severity, confidence axes; never a fake 100-point security grade"
+    },
+    {
+      "name": "google_search",
+      "family": "discovery",
+      "mode": "passive_public",
+      "engine": "Google public Search HTML adapter",
+      "status": "implemented_public_readonly",
+      "description": "Поиск публичных CVE/advisories/инцидентов и технических кейсов с privacy-фильтрацией; выдача — недоверенные источники"
+    },
+    {
+      "name": "research_source_open",
+      "family": "discovery",
+      "mode": "passive_public",
+      "engine": "Cybernova pinned HTTPS reader",
+      "status": "implemented_public_readonly",
+      "description": "Чтение одного публичного HTTPS первоисточника без JavaScript, cookies, авторизации и state-changing запросов"
     }
   ]
 }
