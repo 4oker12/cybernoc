@@ -154,14 +154,14 @@ def _safe_path(root, relative, *, must_exist=False):
 def _list(root, prefix="", limit=160):
     if prefix:
         _safe_path(root, prefix)
-    limit = max(1, min(int(limit), 400))
+    limit = max(1, min(int(limit), 6000))
     files = []
     for base, dirs, names in os.walk(root, followlinks=False):
         dirs[:] = [d for d in sorted(dirs) if d not in BLOCKED and not SENSITIVE.search(d)
                    and not (Path(base) / d).is_symlink()]
         for name in sorted(names):
             p = Path(base) / name
-            if p.is_symlink() or SENSITIVE.search(name):
+            if p.is_symlink() or name in BLOCKED or SENSITIVE.search(name):
                 continue
             rel = p.relative_to(root).as_posix()
             if prefix and not rel.startswith(prefix):
