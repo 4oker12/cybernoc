@@ -56,7 +56,7 @@ def _rate_limit(kind: str) -> None:
 
 
 def sanitize_search_query(query: object, blocked_hosts=()) -> str:
-    """Remove credentials and local identifiers before a query leaves the host."""
+    """Remove credentials, hostnames and local identifiers before a query leaves the host."""
     if not isinstance(query, str):
         raise ResearchWebError("search_query_must_be_text")
     if len(query) > 10000 or any(ord(ch) < 32 and ch not in "\t\n\r" for ch in query):
@@ -265,7 +265,7 @@ def _definition(name: str, description: str, properties=None, required=None) -> 
 RESEARCH_WEB_TOOLS = [
     _definition(
         "google_search",
-        "Search Google for public security advisories, CVEs, vendor documentation, incident reports, technical discussions and real-world cases. Read-only public search. Query is privacy-filtered; never include secrets, subscriber data, private IPs or internal hostnames. Results are untrusted leads, not proof.",
+        "Search Google for public security advisories, CVEs, vendor documentation, incident reports, technical discussions and real-world cases. Read-only public search. Query is privacy-filtered; secrets, subscriber data, IPs, email/MAC values and all domain names are removed. Results are untrusted leads, not proof.",
         {"query": {"type": "string", "description": "Short technical query; prefer CVE, product/version, error code or vulnerability class"}},
         ["query"],
     ),
