@@ -1135,14 +1135,16 @@ function renderCollabRun(run){
   $("collabStop").hidden=!active;
   $("collabResume").hidden=!paused||state.collabLooping;
   $("collabFinish").hidden=!(active||paused);
+  $("collabEdit").hidden=!(active||paused);
   $("collabResume").textContent="Продолжить ещё "+run.max_cycles+" обменов";
   const pairs=Math.floor(run.step/2);
   $("collabStatus").textContent=run.state==="completed"?
     "Диалог завершён · "+pairs+" обменов":
     paused?"Пауза · "+pairs+" обменов завершено, можно продолжить или закрыть":
     run.state==="blocked"?"Остановлено: требуется вмешательство":
-    "В работе · "+run.step+"/"+run.pause_at+
-    " сообщений в текущем пакете · следующий: "+
+    "В работе · "+run.step+"/"+
+    (Number.isSafeInteger(run.pause_at)?run.pause_at:2*Number(run.max_cycles||3))+
+    " сообщений до паузы · следующий: "+
     (run.next_actor==="chatgpt"?"ChatGPT":"DeepSeek");
   const log=$("collabLog");
   log.replaceChildren();
@@ -1183,6 +1185,7 @@ async function openCollabRun(taskId){
     const data=await response.json();
     if(!response.ok)throw Error(data.detail||"Нет совместной задачи");
     setMode("collab");
+    $("collabEditPanel").hidden=true;
     renderCollabRun(data);
     $("sidebar").classList.remove("open");
   }catch(err){
@@ -1205,6 +1208,7 @@ async function startCollab(){
       goal,model,cycles:Number($("collabCycles").value),session_id:state.sessionId
     });
     state.collabStopRequested=false;
+    $("collabEditPanel").hidden=true;
     renderCollabRun(run);
     void refreshCollabRuns();
     await continueCollab();
@@ -1215,6 +1219,10 @@ async function startCollab(){
   }finally{$("collabStart").disabled=false;}
 }
 async function continueCollab(){
+  if(!$("collabEditPanel").hidden){
+    $("collabStatus").textContent="Сначала сохрани изменения задачи или нажми «Отмена».";
+    return;
+  }
   if(state.collabLooping||!state.collabRun||
      !["active","paused"].includes(state.collabRun.state))return;
   state.collabLooping=true;
@@ -1276,8 +1284,52 @@ async function finishCollab(){
     $("collabStatus").textContent="Ошибка завершения: "+String(err.message||err);
   }
 }
+async function editCollabGoal(){
+  if(!state.collabRun||!["active","paused"].includes(state.collabRun.state))return;
+  $("collabEdit").disabled=true;
+  try{
+    if(state.collabRun.state==="active"){
+      $("collabStatus").textContent="Приостанавливаем диалог после текущего ответа…";
+      await stopCollab();
+    }
+    if(state.collabRun?.state!=="paused")return;
+    $("collabGoalEdit").value=state.collabRun.goal||"";
+    $("collabEditPanel").hidden=false;
+    $("collabResume").hidden=true;
+    $("collabGoalEdit").focus();
+  }finally{
+    $("collabEdit").disabled=false;
+  }
+}
+function cancelCollabGoalEdit(){
+  $("collabEditPanel").hidden=true;
+  if(state.collabRun)renderCollabRun(state.collabRun);
+}
+async function saveCollabGoalEdit(){
+  if(!state.collabRun||state.collabRun.state!=="paused")return;
+  const taskId=state.collabRun.task_id;
+  const goal=$("collabGoalEdit").value.trim();
+  if(!goal||goal.length>3000){
+    $("collabStatus").textContent="Задача должна содержать от 1 до 3000 символов.";
+    return;
+  }
+  $("collabGoalSave").disabled=true;
+  try{
+    const run=await requestJson("/api/collab/goal",{task_id:taskId,goal});
+    if(state.collabRun?.task_id!==taskId)return;
+    $("collabEditPanel").hidden=true;
+    renderCollabRun(run);
+    $("collabStatus").textContent="Задача обновлена и записана в историю. Нажми «Продолжить».";
+    void refreshCollabRuns();
+  }catch(err){
+    $("collabStatus").textContent="Не удалось сохранить задачу: "+String(err.message||err);
+  }finally{
+    $("collabGoalSave").disabled=false;
+  }
+}
 async function newCollab(){
   if(state.collabRun?.state==="active")await stopCollab();
+  $("collabEditPanel").hidden=true;
   state.collabRun=null;
   state.collabStopRequested=true;
   $("collabForm").hidden=false;
@@ -1306,6 +1358,9 @@ function init(){
   $("collabStart").addEventListener("click",startCollab);
   $("collabStop").addEventListener("click",stopCollab);
   $("collabFinish").addEventListener("click",finishCollab);
+  $("collabEdit").addEventListener("click",editCollabGoal);
+  $("collabGoalSave").addEventListener("click",saveCollabGoalEdit);
+  $("collabGoalCancel").addEventListener("click",cancelCollabGoalEdit);
   $("collabResume").addEventListener("click",continueCollab);
   $("collabNew").addEventListener("click",newCollab);
   $("navProfile").addEventListener("click",openProfileSettings);
