@@ -15,11 +15,13 @@ try:
     from .agent import Agent, MCPClient
     from .communication import CommunicationStore
     from .communication_tools import CommunicationToolClient
+    from .evidence import EvidenceJournal
     from .traffic_tools import TrafficToolClient
 except ImportError:
     from agent import Agent, MCPClient
     from communication import CommunicationStore
     from communication_tools import CommunicationToolClient
+    from evidence import EvidenceJournal
     from traffic_tools import TrafficToolClient
 
 
@@ -76,6 +78,9 @@ class CommunicationWorker:
             answer = str(outcome.get("answer") or "").strip()[:12000]
             if not answer:
                 answer = "Qwen did not produce an answer."
+            receipts = EvidenceJournal(self.store).record_tool_events(
+                task_id, outcome.get("events") or [],
+            )
             needs_approval = bool(outcome.get("approval_requests"))
             # Qwen may have called comm_request_review to mark the task needs_review.
             current_status = self.store.get_task(task_id)["status"]
@@ -95,7 +100,8 @@ class CommunicationWorker:
                 )
             return {"task_id": task_id, "status": new_status,
                     "message_seq": result["seq"],
-                    "tool_calls": outcome.get("tool_calls", 0)}
+                    "tool_calls": outcome.get("tool_calls", 0),
+                    "receipts": len(receipts)}
         except Exception as exc:
             self.store.append(
                 task_id, "controller", "system",
