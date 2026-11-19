@@ -278,7 +278,7 @@ function busy(on){
   $("sendStatus").textContent=on?(state.mode==="gpt"?"ChatGPT отвечает…":"Qwen выполняет запрос…"):"Готов";
   $("modeQwen").disabled=on;
   $("modeChatGPT").disabled=on;
-  $("gptTopModel").disabled=on||!state.gptConnected||!state.gptPlanUsage;
+  $("gptTopModel").disabled=on||!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
 }
 async function requestJson(path,data){
   const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -871,7 +871,7 @@ function init(){
   $("sendReviewFeedback").addEventListener("click",submitReviewerFeedback);
   $("navChatGPT").addEventListener("click",()=>{
     toolsPanel(true);
-    $("chatgptConnect").scrollIntoView({block:"center",behavior:"smooth"});
+    document.querySelector(".chatgpt-connection").scrollIntoView({block:"start",behavior:"smooth"});
   });
   $("chatgptConnect").addEventListener("click",connectChatGPT);
   $("chatgptDisconnect").addEventListener("click",disconnectChatGPT);
