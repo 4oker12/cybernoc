@@ -41,7 +41,7 @@ DEFAULT_SETTINGS = {
         "theme": "light",
         "density": "comfortable",
         "font_scale": 100,
-        "sidebar_width": 260,
+        "sidebar_width": 300,
         "chat_width": 1040,
         "show_technical_details": False,
     },

@@ -26,7 +26,7 @@ except ImportError:
     from profile_settings import user_context_for, mode_instructions_for
 
 
-MAX_CYCLES = 3
+MAX_CYCLES = 12
 MAX_GOAL = 3000
 MENTOR_PROFILE = (
     "Ты — ведущий инженер и технический наставник исследовательской лаборатории "
@@ -69,12 +69,28 @@ class CollaborationStore:
                     model TEXT NOT NULL,
                     goal TEXT NOT NULL,
                     max_cycles INTEGER NOT NULL,
+                    pause_at INTEGER NOT NULL DEFAULT 0,
                     step INTEGER NOT NULL DEFAULT 0,
                     state TEXT NOT NULL DEFAULT 'active',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
             """)
+            # Upgrade databases created by the earlier 1–3 cycle prototype
+            # without deleting existing conversations.
+            columns = {row["name"] for row in db.execute(
+                "PRAGMA table_info(collaboration_runs)"
+            ).fetchall()}
+            if "pause_at" not in columns:
+                db.execute(
+                    "ALTER TABLE collaboration_runs ADD COLUMN pause_at INTEGER "
+                    "NOT NULL DEFAULT 0"
+                )
+            db.execute(
+                "UPDATE collaboration_runs SET pause_at = "
+                "CASE WHEN step >= 2 * max_cycles THEN step ELSE 2 * max_cycles END "
+                "WHERE pause_at = 0"
+            )
 
     def create(self, goal: str, model: str, max_cycles: int,
                scope: dict | None = None) -> dict:
@@ -91,9 +107,9 @@ class CollaborationStore:
             now = _utc()
             with self.comm._lock, self.comm._connection() as db:
                 db.execute(
-                    "INSERT INTO collaboration_runs(task_id,model,goal,max_cycles,step,state,created_at,updated_at)"
-                    " VALUES(?,?,?,?,0,'active',?,?)",
-                    (task_id, model, goal.strip(), max_cycles, now, now),
+                    "INSERT INTO collaboration_runs(task_id,model,goal,max_cycles,pause_at,step,state,created_at,updated_at)"
+                    " VALUES(?,?,?,?,?,0,'active',?,?)",
+                    (task_id, model, goal.strip(), max_cycles, 2 * max_cycles, now, now),
                 )
             self.comm.append(task_id, "human", "instruction", goal.strip(), status="running")
             return self.read(task_id)
@@ -107,16 +123,34 @@ class CollaborationStore:
         if row is None:
             raise CollaborationError("collaboration_not_found")
         run = {key: row[key] for key in row.keys()}
-        dialog = self.comm.read_dialog(task_id, after=after, limit=100)
+        if after == 0:
+            # Show the most recent hundred messages even after many resumed
+            # batches; older content remains intact and pageable in SQLite.
+            task = self.comm.get_task(task_id)
+            with self.comm._connection() as db:
+                rows = db.execute(
+                    "SELECT * FROM messages WHERE task_id=? "
+                    "ORDER BY seq DESC LIMIT 100", (task_id,),
+                ).fetchall()
+            rows = list(reversed(rows))
+            dialog = {
+                "task": task,
+                "messages": [self.comm._message(r) for r in rows],
+                "next_after": rows[-1]["seq"] if rows else 0,
+            }
+        else:
+            dialog = self.comm.read_dialog(task_id, after=after, limit=100)
         # A process can terminate between committing a message and updating
         # the run cursor. Never replay that model call or silently duplicate a
         # turn on recovery: require manual review instead.
         if after == 0:
-            observed = sum(
-                1 for m in dialog["messages"] if
-                (m["actor"] == "chatgpt" and m["kind"] == "feedback") or
-                (m["actor"] == "qwen" and m["kind"] == "result")
-            )
+            with self.comm._connection() as db:
+                observed = db.execute(
+                    "SELECT COUNT(*) FROM messages WHERE task_id=? AND "
+                    "((actor='chatgpt' AND kind='feedback') OR "
+                    "(actor='qwen' AND kind='result'))",
+                    (task_id,),
+                ).fetchone()[0]
             if observed != run["step"] and run["state"] == "active":
                 with self.comm._lock, self.comm._connection() as db:
                     db.execute(
@@ -137,22 +171,62 @@ class CollaborationStore:
     def list_runs(self, limit=20) -> list[dict]:
         with self.comm._connection() as db:
             rows = db.execute(
-                "SELECT task_id,model,goal,max_cycles,step,state,updated_at"
+                "SELECT task_id,model,goal,max_cycles,pause_at,step,state,updated_at,"
+                "(SELECT substr(body,1,180) FROM messages AS m "
+                "WHERE m.task_id=collaboration_runs.task_id AND "
+                "m.actor IN ('chatgpt','qwen') ORDER BY seq DESC LIMIT 1) AS last_preview"
                 " FROM collaboration_runs ORDER BY updated_at DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(row) for row in rows]
 
     def halt(self, task_id: str) -> dict:
+        """Manual pause; a subsequent explicit resume continues the same chat."""
         with self.lock:
             run = self.read(task_id)
             if run["state"] == "active":
                 with self.comm._lock, self.comm._connection() as db:
                     db.execute(
-                        "UPDATE collaboration_runs SET state='stopped',updated_at=?"
-                        " WHERE task_id=? AND state='active'", (_utc(), task_id),
+                        "UPDATE collaboration_runs SET state='paused',updated_at=? "
+                        "WHERE task_id=? AND state='active'", (_utc(), task_id),
                     )
                 self.comm.append(task_id, "controller", "system",
-                                 "Совместный диалог остановлен пользователем.",
+                                 "Диалог приостановлен пользователем.",
+                                 status="idle")
+            return self.read(task_id)
+
+    def resume(self, task_id: str) -> dict:
+        """One intentional action grants one more bounded batch of turns."""
+        with self.lock:
+            run = self.read(task_id)
+            if run["state"] != "paused":
+                raise CollaborationError("collaboration_not_paused")
+            # Pause on an even step, i.e. after DeepSeek has answered, so a
+            # new batch starts with the mentor rather than leaving half a pair.
+            next_pause = run["step"] + 2 * run["max_cycles"] + (run["step"] % 2)
+            with self.comm._lock, self.comm._connection() as db:
+                db.execute(
+                    "UPDATE collaboration_runs SET state='active',pause_at=?,updated_at=? "
+                    "WHERE task_id=? AND state='paused'",
+                    (next_pause, _utc(), task_id),
+                )
+            self.comm.append(task_id, "controller", "system",
+                             "Диалог продолжен по запросу пользователя.",
+                             status="running")
+            return self.read(task_id)
+
+    def finish(self, task_id: str) -> dict:
+        """Only the owner explicitly closes the durable conversation."""
+        with self.lock:
+            run = self.read(task_id)
+            if run["state"] in {"active", "paused"}:
+                with self.comm._lock, self.comm._connection() as db:
+                    db.execute(
+                        "UPDATE collaboration_runs SET state='completed',updated_at=? "
+                        "WHERE task_id=? AND state IN ('active','paused')",
+                        (_utc(), task_id),
+                    )
+                self.comm.append(task_id, "controller", "system",
+                                 "Диалог окончательно завершён пользователем.",
                                  status="completed")
             return self.read(task_id)
 
@@ -167,9 +241,9 @@ class CollaborationStore:
             if run["next_actor"] != actor:
                 raise CollaborationError("collaboration_actor_mismatch")
             step = run["step"] + 1
-            final = step >= 2 * run["max_cycles"] + 1
-            state = "blocked" if blocked else "completed" if final else "active"
-            status = "blocked" if blocked else "completed" if final else "running"
+            paused = step >= run["pause_at"]
+            state = "blocked" if blocked else "paused" if paused else "active"
+            status = "blocked" if blocked else "idle" if paused else "running"
             kind = "result" if actor == "qwen" else "feedback"
             self.comm.append(task_id, actor, kind, answer[:12000], status=status)
             with self.comm._lock, self.comm._connection() as db:
@@ -208,12 +282,9 @@ def mentor_messages(run: dict) -> list[dict]:
                             "Отчёт DeepSeek по твоему заданию:\n" + text})
     if run["step"] > 0 and history[-1]["role"] == "assistant":
         raise CollaborationError("mentor_waits_for_researcher")
-    if run["step"] >= 2 * run["max_cycles"]:
-        history[-1]["content"] += (
-            "\n\nЭто финальная рецензия. Заверши диалог итоговым отчётом, "
-            "не выдавай новых заданий."
-        )
-    return history[-2 * MAX_CYCLES - 2:]
+    # A batch only pauses; the owner alone decides whether the discussion
+    # is finished. Preserve initial goal plus bounded recent model turns.
+    return history if len(history) <= 13 else history[:1] + history[-12:]
 
 
 def researcher_messages(run: dict) -> tuple[list[dict], str]:

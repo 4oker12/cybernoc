@@ -104,7 +104,8 @@ const fetch=async path=>({
    return {};
  }
 });
-vm.runInNewContext(app,{document,window,fetch,URLSearchParams,console});
+const context={document,window,fetch,URLSearchParams,console};
+vm.runInNewContext(app,context);
 if(typeof callbacks.DOMContentLoaded!=='function')throw Error('Init handler missing');
 callbacks.DOMContentLoaded();
 for(const id of ['sendButton','newSession','modeQwen','modeChatGPT','navChatGPT','navTools']){
@@ -125,6 +126,28 @@ if(byId('sidebarExpand').hidden)
 byId('sidebarExpand').listeners.click();
 if(!byId('sidebarExpand').hidden)
  throw Error('Sidebar could not be expanded');
+if(typeof byId('collabFinish').listeners.click!=='function')
+ throw Error('Finish button not wired');
+const largeMessage='Full technical evidence paragraph. '.repeat(25);
+const run={
+ task_id:'task_test',goal:'Test',state:'paused',step:10,max_cycles:5,
+ pause_at:10,next_actor:null,messages:[
+  {seq:101,actor:'human',kind:'instruction',body:'User task'},
+  {seq:102,actor:'chatgpt',kind:'feedback',body:largeMessage}
+ ]};
+context.renderCollabRun(run);
+if(byId('collabResume').hidden || byId('collabFinish').hidden)
+ throw Error('Pause must offer Resume and Finish controls');
+const cards=byId('collabLog').children;
+if(cards.length!==2)throw Error('Expected two compact messages');
+const detail=cards[1].children.find(child=>child.className==='collab-details');
+if(!detail)throw Error('Long model answer was not collapsible');
+const excerpt=detail.children[0].children[0].textContent;
+if(!excerpt.endsWith('…') || excerpt.length>180)
+ throw Error('Preview is not a short excerpt: '+excerpt);
+detail.open=true;detail.listeners.toggle();
+if(detail.children[1].textContent!==largeMessage)
+ throw Error('Expansion lost the full original answer');
 """
         run=subprocess.run(["node","-e",script,html,app],
                            capture_output=True,text=True,timeout=20)

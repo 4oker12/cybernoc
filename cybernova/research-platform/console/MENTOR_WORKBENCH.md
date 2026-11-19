@@ -17,19 +17,22 @@ the communications SQLite database.
 ## Collaboration flow
 
 Start from the **Совместно** tab. Select a ChatGPT model from the
-actually-connected SIWC account, enter a goal and choose 1–3 research cycles.
+actually-connected SIWC account, enter a goal and choose 1–12 exchanges per batch (5–7 are the recommended defaults).
 
-A two-cycle run uses:
-
-1. ChatGPT (initial hypotheses and first assignment)
-2. DeepSeek (evidence and technical analysis)
-3. ChatGPT (review, challenge and next assignment)
-4. DeepSeek (retest or continuation)
-5. ChatGPT (final report)
+Each exchange is one pair: ChatGPT sets or updates a task, then DeepSeek responds.
+For a batch of five exchanges, there are ten model messages. After the last
+DeepSeek reply, the run automatically enters **paused** state. At that point
+the operator chooses **Продолжить ещё пакет** (another five exchanges) or
+**Завершить диалог** (permanent finish). The final report is not automatically
+forced at the batch boundary. The current goal and complete SQLite history
+remain available between batches. The UI shows compact message excerpts by
+default; opening a message reveals its full Markdown text.
 
 The browser invokes `/api/collab/step` one step at a time, displays each
 completed response, and persists the sequence to the same private database as
-the existing communication queue. This is *turn-by-turn*, not word-by-word
+the existing communication queue. A database migration adds the pause cursor
+without deleting older runs. Paused tasks are marked idle so a controller
+restart does not falsely classify them as interrupted work. This is *turn-by-turn*, not word-by-word
 token streaming. Each model request can take time. The operator can stop the
 run; an in-flight API call may finish, but its reply does not trigger new turns.
 
@@ -79,7 +82,9 @@ scope and approval policy.
 
 - POST `/api/collab/start` — creates bounded run.
 - POST `/api/collab/step` — one real model inference response.
-- POST `/api/collab/stop` — prevent subsequent steps.
+- POST `/api/collab/stop` — pause the current run.
+- POST `/api/collab/resume` — explicitly start another bounded batch.
+- POST `/api/collab/finish` — permanently close the run.
 - GET `/api/collab/runs` — persisted conversation index.
 - GET `/api/collab/run?task_id=...` — persisted role-attributed timeline.
 - POST `/api/tools/run` — strict allowlist for three safe shared tools.
