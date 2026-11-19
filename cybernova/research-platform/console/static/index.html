@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
   <meta name="theme-color" content="#212121">
-  <title>Cybernova — Чат с Qwen</title>
+  <title>Cybernova — Qwen и ChatGPT</title>
   <link rel="stylesheet" href="/static/styles.css">
   <script defer src="/static/app.js"></script>
 </head>
@@ -17,7 +17,11 @@
       <button type="button" id="newSession" class="sidebar-action"><span aria-hidden="true">＋</span> Новый чат</button>
     </div>
     <div class="sidebar-label">Ваши диалоги</div>
-    <button class="session-item active" type="button" id="sessionItem">Новый диалог</button>
+    <button class="session-item active" type="button" id="sessionItem">Qwen · Новый диалог</button>
+    <div class="sidebar-label">Чаты ChatGPT</div>
+    <div id="gptThreadList" class="task-list" aria-label="Сохранённые диалоги ChatGPT">
+      <p class="muted">Выбери ChatGPT для просмотра диалогов.</p>
+    </div>
     <div class="sidebar-label">Исследовательские задачи</div>
     <div class="task-list" id="taskList" aria-label="Сохранённые задачи">
       <p class="muted">Загрузка задач…</p>
@@ -33,6 +37,12 @@
       <div class="topbar-left">
         <button type="button" id="menuToggle" class="icon-button mobile-menu" aria-label="Показать меню">☰</button>
         <div class="model-title">Cybernova <span id="modelName">Qwen3-Coder 30B</span></div>
+        <div class="model-switch" role="group" aria-label="Выбор собеседника">
+          <button type="button" class="switch-active" id="modeQwen" aria-pressed="true">Qwen · исследователь</button>
+          <button type="button" id="modeChatGPT" aria-pressed="false">ChatGPT · чат</button>
+        </div>
+        <label class="sr-only" for="gptTopModel">Модель ChatGPT для этого диалога</label>
+        <select id="gptTopModel" class="gpt-top-model" hidden disabled aria-label="Модель GPT"><option value="">Подключите ChatGPT</option></select>
       </div>
       <div class="topbar-right">
         <span class="connection-label"><span id="ollamaState">…</span> · <span id="mcpState">…</span> · <span id="commState">Общая очередь</span></span>
@@ -51,6 +61,14 @@
             <button type="button" data-prompt="Вызови gateway_status и расскажи, какие инструменты доступны." class="suggestion">Какие инструменты доступны?</button>
             <button type="button" data-prompt="Вызови ip_network_summary для 192.0.2.7/24 и объясни результат." class="suggestion">Разобрать учебную подсеть</button>
           </div>
+        </div>
+      </div>
+      <div id="gptMessages" class="messages" hidden>
+        <div class="welcome" id="gptWelcome">
+          <div class="welcome-logo" aria-hidden="true">G</div>
+          <h1>Чат с ChatGPT</h1>
+          <p>Обычная переписка через подключённый аккаунт ChatGPT. История отдельно от исследовательских задач Qwen и сохраняется на Vast.</p>
+          <p class="muted">GPT не использует MCP Qwen и не получает данные исследований без твоего действия.</p>
         </div>
       </div>
     </section>
