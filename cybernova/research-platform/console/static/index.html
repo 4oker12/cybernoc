@@ -36,6 +36,7 @@
       </div>
       <div class="topbar-right">
         <span class="connection-label"><span id="ollamaState">…</span> · <span id="mcpState">…</span> · <span id="commState">Общая очередь</span></span>
+        <button type="button" id="navChatGPT" class="header-button">ChatGPT</button>
         <button type="button" id="navTools" class="header-button">Инструменты <span id="toolCount">0</span></button>
       </div>
     </header>
@@ -78,6 +79,20 @@
     <p class="inspector-note">Фактические инструменты MCP. Программы из будущего арсенала здесь не отображаются до подключения.</p>
     <button type="button" id="refreshStatus" class="refresh-button">↻ Проверить подключение</button>
     <div class="tool-list" id="toolList"><span class="muted">Проверяем MCP…</span></div>
+    <section class="chatgpt-connection" aria-label="Подключение ChatGPT">
+      <div class="inspector-header"><strong>ChatGPT · официальный вход</strong></div>
+      <div id="chatgptStatus" class="muted" role="status">Проверяем подключение…</div>
+      <button type="button" id="chatgptConnect" class="refresh-button" data-oai-siwc-button>Continue with ChatGPT</button>
+      <button type="button" id="chatgptDisconnect" class="refresh-button" hidden>Отключить аккаунт</button>
+      <p class="inspector-note">Для входа с Vast откройте Cybernova через SSH-проброс на http://127.0.0.1:18795. В Cloudflare Quick Tunnel вход с loopback callback не завершится. Не вводите здесь пароль ChatGPT.</p>
+      <label class="chatgpt-model-label" for="chatgptModel">Модель GPT</label>
+      <select id="chatgptModel" class="review-feedback-input" disabled>
+        <option value="">Сначала подключите ChatGPT</option>
+      </select>
+      <button type="button" id="chatgptReview" class="refresh-button" disabled>Проверить текущую задачу через GPT</button>
+      <button type="button" id="chatgptToQwen" class="refresh-button" disabled>Передать ответ GPT исследователю Qwen</button>
+      <p class="inspector-note">Передача пакета задачи в облачную модель происходит только после нажатия кнопки проверки. История ChatGPT и память аккаунта не импортируются.</p>
+    </section>
     <section class="review-handoff" aria-label="Независимая рецензия ChatGPT">
       <div class="inspector-header"><strong>Рецензия ChatGPT</strong></div>
       <p class="inspector-note">Ручной резервный канал без API: скопируй пакет в ChatGPT, полученный ответ вставь сюда. Это не прямое MCP-подключение ChatGPT.</p>
