@@ -199,7 +199,7 @@ class AgentTests(unittest.TestCase):
             scope={"hosts":["internal.example"]},
         )
         self.assertEqual([name for name,_ in mcp.calls],
-                         ["gateway_status","ip_network_summary","google_search"])
+                         ["ip_network_summary","google_search"])
         self.assertEqual(out["tool_calls"],2)
         self.assertIn("CVE-2026-12345",mcp.calls[-1][1]["query"])
 
