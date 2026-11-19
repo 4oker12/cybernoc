@@ -16,8 +16,9 @@ import zipfile
 from .backup import BackupError, restore
 
 MAX_INPUT_BYTES = 140 * 1024 * 1024
-DEST = Path("/data/communications-restored.sqlite3")
-TEMP = Path("/data/incoming-cybernova-backup.cnbk")
+DATA_DIR = Path(os.environ.get("CYBERNOVA_COMM_DB", "/data/communications.sqlite3")).parent
+DEST = DATA_DIR / "communications-restored.sqlite3"
+TEMP = DATA_DIR / "incoming-cybernova-backup.cnbk"
 EXPECTED = {"snapshot.cnbk", "snapshot.cnbk.manifest.json"}
 
 
