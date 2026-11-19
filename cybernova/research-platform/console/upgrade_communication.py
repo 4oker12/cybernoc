@@ -13,6 +13,11 @@ import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    from .upload_limits import MAX_UPLOAD_FILE_BYTES
+except ImportError:
+    from upload_limits import MAX_UPLOAD_FILE_BYTES
 import subprocess
 import sys
 import time
@@ -151,6 +156,8 @@ def check_health():
     status = json.loads(body)
     if not status.get("ollama_ready") or not status.get("mcp_ready"):
         raise RuntimeError("backend_not_ready")
+    if status.get("upload_limit_bytes") != MAX_UPLOAD_FILE_BYTES:
+        raise RuntimeError("upload_size_not_deployed")
     tools = status.get("tools") or []
     if "comm_record_evidence" not in tools:
         raise RuntimeError("qwen_evidence_tool_missing")
@@ -171,6 +178,20 @@ def check_health():
     packet, _ = local_get(18795, "/api/comm/review-packet")
     if packet != 401:
         raise RuntimeError("review_packet_exposed_without_auth")
+    unauth_siwc, _ = local_get(18795, "/api/siwc/status")
+    auth_siwc, auth_body = local_get(18795, "/api/siwc/status",
+                                    basic=credentials)
+    if (unauth_siwc, auth_siwc) != (401, 200):
+        raise RuntimeError("chatgpt_oauth_not_protected_or_unavailable")
+    oauth_status = json.loads(auth_body)
+    if oauth_status.get("mode") != "official_chatgpt_oauth" or \
+       oauth_status.get("callback_port") != 18795 or \
+       type(oauth_status.get("connected")) is not bool:
+        raise RuntimeError("chatgpt_oauth_status_invalid")
+    js_code, js_body = local_get(18795, "/static/app.js", basic=credentials)
+    expected_js = "const MAX_UPLOAD_BYTES = " + str(MAX_UPLOAD_FILE_BYTES // (1024*1024)) + " * 1024 * 1024"
+    if js_code != 200 or expected_js.encode() not in js_body:
+        raise RuntimeError("browser_upload_limit_not_deployed")
     print(json.dumps({
         "status": "UPGRADE_VERIFIED", "console_tools": len(tools),
         "communication_mcp_tools": len(names),
@@ -178,6 +199,8 @@ def check_health():
         "review_packet_requires_auth": True,
         "mcp_exposed_publicly": False,
         "cloudflare_tunnel_restarted": False,
+        "upload_limit_mib": MAX_UPLOAD_FILE_BYTES // (1024 * 1024),
+        "chatgpt_oauth_route": "authenticated_ready",
     }, ensure_ascii=False), flush=True)
 
 
