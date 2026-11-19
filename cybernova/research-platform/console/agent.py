@@ -180,7 +180,8 @@ def _safe_args(name: str, args: dict) -> dict:
         return {"query": "[privacy-filtered query]"}
     if name == "research_source_open":
         u = parse.urlsplit(args.get("url", ""))
-        return {"url": (u.scheme + "://" + (u.hostname or "") + (u.path or "/"))[:360]}
+        path = re.sub(r"(?i)(?:[0-9a-f]{16,}|[A-Za-z0-9_-]{32,}|\\d{5,})", "{id}", u.path or "/")
+        return {"url": (u.scheme + "://" + (u.hostname or "") + path)[:360]}
     if name == "http_get":
         u = parse.urlsplit(args.get("url", ""))
         return {"url": (u.scheme + "://" + (u.hostname or "") + (u.path or "/"))[:240]}
