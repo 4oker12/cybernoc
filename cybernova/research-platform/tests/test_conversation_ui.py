@@ -71,6 +71,8 @@ class GPTConversationTests(unittest.TestCase):
         self.assertTrue(allowed_path("/api/siwc/chats","GET"))
         self.assertTrue(allowed_path("/api/siwc/chat?thread_id=gpt_AAA","GET"))
         self.assertTrue(allowed_path("/api/siwc/chat","POST"))
+        self.assertTrue(allowed_path("/api/profile-settings","GET"))
+        self.assertTrue(allowed_path("/api/profile-settings","POST"))
         self.assertTrue(allowed_path("/static/markdown.js","GET"))
         self.assertFalse(allowed_path("/api/siwc/tokens","GET"))
 
