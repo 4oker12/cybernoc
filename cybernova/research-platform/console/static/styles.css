@@ -65,3 +65,14 @@
 .review-feedback-input:focus{border-color:#9bd1b7;outline:0}
 .review-evidence{white-space:pre-wrap;overflow-wrap:anywhere;max-height:250px;overflow:auto;background:#181e1b;border:1px solid #425147;border-radius:8px;padding:10px;color:#c5dfce;font-size:10px}
 #reviewStatus{font-size:11px;min-height:17px;line-height:1.5}
+
+/* OpenAI OAuth connection and explicit GPT review inside the existing inspector. */
+.chatgpt-connection{margin-top:12px;border:1px solid #41534b;border-radius:12px;padding:12px;
+  display:flex;flex-direction:column;gap:9px;background:#202923}
+.chatgpt-connection .inspector-header{padding:0;min-height:22px}
+.chatgpt-connection .inspector-note{font-size:11px;line-height:1.6;margin:0;color:#aabdb1}
+.chatgpt-connection .refresh-button{width:100%;text-align:center}
+.chatgpt-connection .refresh-button:disabled{opacity:.45;cursor:not-allowed}
+.chatgpt-model-label{font-size:11px;color:#bfddcc}
+.chatgpt-connection select.review-feedback-input{min-height:38px;height:auto;max-width:100%}
+#chatgptStatus{font-size:11px;line-height:1.6;overflow-wrap:anywhere}
