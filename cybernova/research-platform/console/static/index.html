@@ -20,6 +20,22 @@
         <button type="button" id="modeChatGPT" class="mode-item" aria-pressed="false"><span aria-hidden="true">G</span> ChatGPT <small>Обычный чат</small></button>
       </div>
       <button type="button" id="newSession" class="sidebar-action"><span aria-hidden="true">＋</span> Новый чат</button>
+
+      <details class="scope-settings" id="scopeSettings">
+        <summary>Объект исследования <span id="scopeIndicator">не выбран</span></summary>
+        <label for="researchTargets">Домены / IP — по одному в строке</label>
+        <textarea id="researchTargets" rows="2" placeholder="example.org
+192.0.2.10" spellcheck="false"></textarea>
+        <label for="captureDetail">DevTools Network: полнота доказательств</label>
+        <select id="captureDetail">
+          <option value="evidence" selected>Подробно: заголовки, хеши, JSON, фрагменты</option>
+          <option value="metadata">Кратко: URL, методы, статусы</option>
+        </select>
+        <button type="button" class="refresh-button" id="applyResearchScope">Применить к задаче Qwen</button>
+        <p class="scope-status" id="scopeStatus" role="status">Выбери объекты. Анализ автоматически не запускается.</p>
+        <p class="scope-explain">Qwen использует эти цели для чтения публичных страниц и Network. Активные тесты предлагает отдельно для твоего подтверждения. Новый чат — новая область работы.</p>
+      </details>
+
     </div>
     <div id="qwenSidebar">
       <div class="sidebar-label">Текущий диалог Qwen</div>
@@ -86,7 +102,7 @@
           <div class="composer-left">
             <label for="artifactFile" id="qwenUploadLabel" class="upload-button" title="Импорт HAR, JS, OpenAPI, логов, конфигураций, Python, зависимостей, TLS или PCAP. Файл обрабатывается локально.">＋ Файл</label>
             <input id="artifactFile" class="sr-only" type="file" accept=".har,.js,.py,.json,.log,.txt,.conf,.cfg,.ini,.yaml,.yml,.env,.pcap,.cap,.pem,.crt,.lock,.mod,.toml">
-            <div id="qwenAutoTools" class="auto-tools-label" title="Qwen самостоятельно выбирает инструменты. Сетевые запросы допускаются только к ранее разрешённым хостам MCP.">
+            <div id="qwenAutoTools" class="auto-tools-label" title="Qwen сама выбирает инструмент для текущей задачи; цель исследования выбираешь ты.">
             <span class="auto-tools-dot" aria-hidden="true"></span> MCP автоматически
           </div>
           </div>
