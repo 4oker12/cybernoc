@@ -14,17 +14,25 @@
   <aside class="sidebar" id="sidebar" aria-label="Диалоги">
     <div class="sidebar-head">
       <div class="brand"><span class="brand-icon" aria-hidden="true">◈</span> Cybernova</div>
+      <div class="mode-stack" role="group" aria-label="Выбрать собеседника">
+        <button type="button" id="modeQwen" class="mode-item selected" aria-pressed="true"><span aria-hidden="true">◈</span> Qwen <small>Исследователь</small></button>
+        <button type="button" id="modeChatGPT" class="mode-item" aria-pressed="false"><span aria-hidden="true">G</span> ChatGPT <small>Обычный чат</small></button>
+      </div>
       <button type="button" id="newSession" class="sidebar-action"><span aria-hidden="true">＋</span> Новый чат</button>
     </div>
-    <div class="sidebar-label">Ваши диалоги</div>
-    <button class="session-item active" type="button" id="sessionItem">Qwen · Новый диалог</button>
-    <div class="sidebar-label">Чаты ChatGPT</div>
-    <div id="gptThreadList" class="task-list" aria-label="Сохранённые диалоги ChatGPT">
-      <p class="muted">Выбери ChatGPT для просмотра диалогов.</p>
-    </div>
-    <div class="sidebar-label">Исследовательские задачи</div>
-    <div class="task-list" id="taskList" aria-label="Сохранённые задачи">
+    <div id="qwenSidebar">
+      <div class="sidebar-label">Текущий диалог Qwen</div>
+      <button class="session-item active" type="button" id="sessionItem">Новый диалог</button>
+      <div class="sidebar-label">Исследовательские задачи</div>
+      <div class="task-list" id="taskList" aria-label="Сохранённые задачи">
       <p class="muted">Загрузка задач…</p>
+      </div>
+    </div>
+    <div id="gptSidebar" hidden>
+      <div class="sidebar-label">Диалоги ChatGPT</div>
+      <div id="gptThreadList" class="task-list" aria-label="Сохранённые диалоги ChatGPT">
+        <p class="muted">Пока нет диалогов.</p>
+      </div>
     </div>
     <div class="sidebar-bottom">
       <div class="connection"><span id="backendDot" class="dot"></span><span id="backendStatus">Проверяем подключение…</span></div>
@@ -36,17 +44,13 @@
     <header class="topbar">
       <div class="topbar-left">
         <button type="button" id="menuToggle" class="icon-button mobile-menu" aria-label="Показать меню">☰</button>
-        <div class="model-title">Cybernova <span id="modelName">Qwen3-Coder 30B</span></div>
-        <div class="model-switch" role="group" aria-label="Выбор собеседника">
-          <button type="button" class="switch-active" id="modeQwen" aria-pressed="true">Qwen · исследователь</button>
-          <button type="button" id="modeChatGPT" aria-pressed="false">ChatGPT · чат</button>
-        </div>
+        <div class="model-title"><span id="modelName">Qwen3-Coder 30B</span></div>
         <label class="sr-only" for="gptTopModel">Модель ChatGPT для этого диалога</label>
         <select id="gptTopModel" class="gpt-top-model" hidden disabled aria-label="Модель GPT"><option value="">Подключите ChatGPT</option></select>
       </div>
       <div class="topbar-right">
         <span class="connection-label"><span id="ollamaState">…</span> · <span id="mcpState">…</span> · <span id="commState">Общая очередь</span></span>
-        <button type="button" id="navChatGPT" class="header-button">ChatGPT</button>
+        <button type="button" id="navChatGPT" class="header-button">Аккаунт GPT</button>
         <button type="button" id="navTools" class="header-button">Инструменты <span id="toolCount">0</span></button>
       </div>
     </header>
@@ -93,7 +97,7 @@
   </main>
 
   <aside class="inspector" id="inspector" aria-label="Инструменты" hidden>
-    <div class="inspector-header"><strong>Инструменты</strong><button type="button" id="navChat" class="icon-button" aria-label="Закрыть">×</button></div>
+    <div class="inspector-header"><strong>Инструменты и подключения</strong><button type="button" id="navChat" class="icon-button" aria-label="Закрыть">×</button></div>
     <p class="inspector-note">Фактические инструменты MCP. Программы из будущего арсенала здесь не отображаются до подключения.</p>
     <button type="button" id="refreshStatus" class="refresh-button">↻ Проверить подключение</button>
     <div class="tool-list" id="toolList"><span class="muted">Проверяем MCP…</span></div>
@@ -103,16 +107,20 @@
       <button type="button" id="chatgptConnect" class="refresh-button" data-oai-siwc-button>Continue with ChatGPT</button>
       <button type="button" id="chatgptDisconnect" class="refresh-button" hidden>Отключить аккаунт</button>
       <p class="inspector-note">Для входа с Vast откройте Cybernova через SSH-проброс на http://127.0.0.1:18795. В Cloudflare Quick Tunnel вход с loopback callback не завершится. Не вводите здесь пароль ChatGPT.</p>
-      <label class="chatgpt-model-label" for="chatgptModel">Модель GPT</label>
-      <select id="chatgptModel" class="review-feedback-input" disabled>
-        <option value="">Сначала подключите ChatGPT</option>
-      </select>
-      <button type="button" id="chatgptReview" class="refresh-button" disabled>Проверить текущую задачу через GPT</button>
-      <button type="button" id="chatgptToQwen" class="refresh-button" disabled>Передать ответ GPT исследователю Qwen</button>
-      <p class="inspector-note">Передача пакета задачи в облачную модель происходит только после нажатия кнопки проверки. История ChatGPT и память аккаунта не импортируются.</p>
+      <p class="inspector-note">Обычный чат ChatGPT открывается слева. Исследования Qwen не передаются в GPT автоматически.</p>
+      <details class="advanced-review">
+        <summary>Дополнительно: рецензия исследования Qwen</summary>
+        <label class="chatgpt-model-label" for="chatgptModel">Модель рецензента</label>
+        <select id="chatgptModel" class="review-feedback-input" disabled>
+          <option value="">Сначала подключите ChatGPT</option>
+        </select>
+        <button type="button" id="chatgptReview" class="refresh-button" disabled>Проверить выбранную задачу</button>
+        <button type="button" id="chatgptToQwen" class="refresh-button" disabled>Передать рецензию Qwen</button>
+        <p class="inspector-note">Передача данных исследования — только по твоему нажатию.</p>
+      </details>
     </section>
-    <section class="review-handoff" aria-label="Независимая рецензия ChatGPT">
-      <div class="inspector-header"><strong>Рецензия ChatGPT</strong></div>
+    <details class="review-handoff" aria-label="Ручная рецензия ChatGPT">
+      <summary>Ручной обмен с ChatGPT (резерв)</summary>
       <p class="inspector-note">Ручной резервный канал без API: скопируй пакет в ChatGPT, полученный ответ вставь сюда. Это не прямое MCP-подключение ChatGPT.</p>
       <button type="button" id="copyReviewPacket" class="refresh-button">Скопировать пакет для ChatGPT</button>
       <button type="button" id="evidenceIndexButton" class="refresh-button">Журнал доказательств</button>
@@ -124,7 +132,7 @@
       </div>
       <div id="reviewStatus" class="muted" role="status"></div>
       <pre id="evidenceOutput" class="review-evidence" hidden></pre>
-    </section>
+    </details>
     <div class="inspector-header recent"><strong>Последний запуск</strong><span id="runCount">—</span></div>
     <div class="run-list" id="runList"><p class="muted">Пока нет вызовов.</p></div>
   </aside>
