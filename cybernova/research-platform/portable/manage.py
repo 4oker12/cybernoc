@@ -28,9 +28,7 @@ import sys
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parents[2]
 ENV_FILE = ROOT / ".env"
-SECRETS = ROOT / "secrets"
 CONFIG = ROOT / "config"
-MODEL_KEY = SECRETS / "model_api_key"
 SCOPE = CONFIG / "scope.json"
 APP = "cybernova"
 MODEL_RE = re.compile(r"^[a-zA-Z0-9_.:/+-]{1,160}$")
@@ -74,8 +72,7 @@ def init(provider: str, model: str, base_url: str = "") -> dict:
         raise InstallError("remote_base_url_must_be_https")
     if provider == "ollama" and base_url:
         raise InstallError("ollama_base_url_not_needed")
-    _check_private(SECRETS)
-    _check_private(CONFIG)
+    CONFIG.mkdir(parents=True,exist_ok=True)
     if not SCOPE.exists():
         _write_new(SCOPE,'{\n  "allowed_hosts": []\n}\n')
     env = (
@@ -85,7 +82,7 @@ def init(provider: str, model: str, base_url: str = "") -> dict:
         "CYBERNOVA_OLLAMA_URL=http://ollama:11434/api/chat\n"
         "CYBERNOVA_LLM_BASE_URL=" + base_url + "\n"
         "CYBERNOVA_LLM_API_KEY_FILE=" +
-        ("/run/cybernova-secrets/model_api_key" if provider=="openai_compatible" else "") +
+        ("/data/model_api_key" if provider=="openai_compatible" else "") +
         "\n"
     )
     _write_new(ENV_FILE, env)
@@ -96,17 +93,25 @@ def init(provider: str, model: str, base_url: str = "") -> dict:
     }
 
 
-def set_key() -> dict:
+def set_key(rotate: bool = False) -> dict:
     if not ENV_FILE.is_file():
         raise InstallError("run_init_first")
-    if not ENV_FILE.read_text().split("CYBERNOVA_LLM_PROVIDER=")[-1].startswith("openai_compatible"):
+    if "CYBERNOVA_LLM_PROVIDER=openai_compatible" not in ENV_FILE.read_text():
         raise InstallError("remote_provider_not_selected")
-    _check_private(SECRETS)
-    secret = getpass.getpass("API key (input hidden): ").strip()
-    if not 8 <= len(secret) <= 10000 or any(ord(c)<32 for c in secret):
+    key = getpass.getpass("API key (input hidden): ").strip()
+    if not 8 <= len(key) <= 10000 or any(ord(c)<32 for c in key):
         raise InstallError("invalid_api_key")
-    _write_new(MODEL_KEY, secret + "\n")
-    return {"key_file_created":True, "key_printed":False}
+    _compose("build", APP)
+    command = ["docker","compose","-f",str(ROOT/"compose.yaml"),
+               "run","--rm","--no-deps","-T",APP,
+               "python","-m","console.portable_credentials","import-model-key"]
+    if rotate:
+        command.append("--rotate")
+    process = subprocess.run(command,cwd=ROOT,input=key+"\\n",
+                             text=True,capture_output=True)
+    if process.returncode:
+        raise InstallError("api_key_import_failed")
+    return {"key_stored_in_private_volume": True,"key_printed": False}
 
 
 def _compose(*args, capture: bool = False, extra_files: bool = False):
@@ -135,8 +140,6 @@ def _profile() -> list[str]:
 def up(tunnel: bool = False, gpu: bool = False) -> dict:
     if gpu and not _profile():
         raise InstallError("gpu_only_for_local_ollama")
-    if "CYBERNOVA_LLM_PROVIDER=openai_compatible" in ENV_FILE.read_text() and not MODEL_KEY.is_file():
-        raise InstallError("run_set-key_before_start")
     profile=_profile()+(["--profile","tunnel"] if tunnel else [])
     _compose(*profile,"up","-d","--build",extra_files=gpu)
     return {"started":True,"local_ui":"http://127.0.0.1:18795/",
@@ -186,7 +189,8 @@ def main():
     x.add_argument("--provider",choices=["ollama","openai_compatible"],required=True)
     x.add_argument("--model",default="qwen2.5-coder:7b")
     x.add_argument("--base-url",default="")
-    commands.add_parser("set-key",help="Save remote API key in excluded secret file")
+    x=commands.add_parser("set-key",help="Import API key into private named volume")
+    x.add_argument("--rotate",action="store_true")
     x=commands.add_parser("up",help="Build/start services")
     x.add_argument("--tunnel",action="store_true")
     x.add_argument("--gpu",action="store_true")
@@ -203,7 +207,7 @@ def main():
         if args.cmd=="init":
             result=init(args.provider,args.model,args.base_url)
         elif args.cmd=="set-key":
-            result=set_key()
+            result=set_key(args.rotate)
         elif args.cmd=="up":
             result=up(args.tunnel,args.gpu)
         elif args.cmd=="doctor":
