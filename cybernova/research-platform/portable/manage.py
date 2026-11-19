@@ -252,16 +252,21 @@ def restore_from_host(archive: Path) -> dict:
 def wizard() -> dict:
     print("Cybernova Portable — мастер первого запуска")
     print("1 — своя модель через Ollama (локально / Vast)")
-    print("2 — внешняя модель через OpenAI-совместимый API")
-    selection=input("Режим [1/2]: ").strip()
-    if selection not in {"1","2"}:
+    print("2 — DeepSeek API (рекомендуется deepseek-flash)")
+    print("3 — другой внешний OpenAI-совместимый API")
+    selection=input("Режим [1/2/3]: ").strip()
+    if selection not in {"1","2","3"}:
         raise InstallError("invalid_wizard_selection")
     if selection=="1":
         model=input("Модель Ollama [qwen2.5-coder:7b]: ").strip() or "qwen2.5-coder:7b"
         result=init("ollama",model)
     else:
-        model=input("Идентификатор модели у провайдера: ").strip()
-        url=input("HTTPS API base URL (пример https://api.example/v1): ").strip()
+        if selection=="2":
+            model=input("Модель DeepSeek [deepseek-flash]: ").strip() or "deepseek-flash"
+            url="https://api.deepseek.com"
+        else:
+            model=input("Идентификатор модели у провайдера: ").strip()
+            url=input("HTTPS API base URL (пример https://api.example/v1): ").strip()
         print("ВНИМАНИЕ: запросы, история и результаты инструмента могут")
         print("передаваться выбранному удалённому провайдеру модели.")
         if input("Понимаю и разрешаю внешний инференс? [yes/NO]: ").strip()!="yes":
