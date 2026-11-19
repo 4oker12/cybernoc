@@ -138,3 +138,16 @@
 .md-note-finding{border-left-color:#aab3ab}
 .md-pipe-list{border-left:2px solid #50685d;padding-left:22px!important;margin:12px 0}
 @media(max-width:680px){.message-body .md-content{font-size:13px}.md-content h2{font-size:17px}.md-table td,.md-table th{padding:8px;min-width:90px}.md-note{padding:10px}}
+
+
+/* Research-target profile: owner decides scope, not a hardcoded site. */
+.scope-settings{margin:11px 1px 8px;border:1px solid #404e45;border-radius:10px;background:#212825;padding:8px 10px}
+.scope-settings>summary{cursor:pointer;color:#d9e9dc;font-size:12px;font-weight:600;line-height:1.65}
+.scope-settings #scopeIndicator{float:right;font-size:10px;color:#9dd7b5;font-weight:400}
+.scope-settings label{display:block;margin:13px 0 5px;color:#bcd4c7;font-size:11px}
+.scope-settings textarea,.scope-settings select{display:block;width:100%;min-width:0;box-sizing:border-box;background:#171e1a;color:#eaf1ec;padding:9px;border:1px solid #4c5d51;border-radius:7px;font-size:12px;line-height:1.55}
+.scope-settings textarea{resize:vertical;max-height:190px;min-height:55px;font-family:ui-monospace,Consolas,monospace}
+.scope-settings .refresh-button{width:100%;margin-top:11px}
+.scope-status{font-size:11px;line-height:1.5;color:#a9dbbd;margin:9px 0 0}
+.scope-explain{color:#a8aba8;font-size:10px;line-height:1.5;margin:9px 0 0}
+.scope-settings[open]{margin-bottom:14px}
