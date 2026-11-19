@@ -57,6 +57,12 @@ class ResearchMissionTests(unittest.TestCase):
             with self.subTest(statement=statement):
                 self.assertIn(statement, RESEARCH_MISSION)
 
+    def test_active_testing_is_proposed_not_blanket_refused(self):
+        self.assertNotIn("не запускай атакующие проверки", BASE_SYSTEM)
+        self.assertIn("Активные проверки можно предлагать", BASE_SYSTEM)
+        self.assertIn("после необходимого согласования", BASE_SYSTEM)
+        self.assertIn("Не превращай необходимость согласования в отказ", BASE_SYSTEM)
+
     def test_base_safety_policy_not_overridden(self):
         self.assertIn("Если инструмент требует разрешения", BASE_SYSTEM)
         self.assertIn("Не имитируй вызовы", BASE_SYSTEM)
