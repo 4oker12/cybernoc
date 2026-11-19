@@ -40,3 +40,10 @@ cybernova/research-platform/portable/secrets/
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
+
+# Portable offsite backup artifacts and extra SQLite journals
+**/private-backups/
+*.cnbk.manifest.json
+*.sqlite3-journal
+*.db-wal
+*.db-shm
