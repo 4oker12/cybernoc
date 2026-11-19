@@ -116,6 +116,15 @@ if(byId('gptMessages').hidden||!byId('messages').hidden)
 byId('modeQwen').listeners.click();
 if(byId('messages').hidden||!byId('gptMessages').hidden)
  throw Error('Qwen click did not restore Qwen conversation');
+byId('modeCollab').listeners.click();
+if(byId('collabMessages').hidden||!byId('messages').hidden||!byId('gptMessages').hidden)
+ throw Error('Collaboration click did not show the two-model transcript');
+byId('sidebarCollapse').listeners.click();
+if(byId('sidebarExpand').hidden)
+ throw Error('Sidebar could not be collapsed');
+byId('sidebarExpand').listeners.click();
+if(!byId('sidebarExpand').hidden)
+ throw Error('Sidebar could not be expanded');
 """
         run=subprocess.run(["node","-e",script,html,app],
                            capture_output=True,text=True,timeout=20)
