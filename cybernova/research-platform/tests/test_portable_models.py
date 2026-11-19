@@ -114,6 +114,7 @@ class ModelProviderTests(unittest.TestCase):
         }}]
         answer=backend.chat([{"role":"system","content":BASE_SYSTEM},
                              {"role":"user","content":"Проверь подсеть"}],tools=tools)
+        self.assertEqual(backend.endpoint,"https://api.deepseek.com/chat/completions")
         self.assertEqual(transmitted[0]["thinking"],{"type":"enabled"})
         self.assertEqual(answer["reasoning_content"],"I should inspect the subnet tool.")
         self.assertEqual(answer["tool_calls"][0]["id"],"call_deepseek_1")
