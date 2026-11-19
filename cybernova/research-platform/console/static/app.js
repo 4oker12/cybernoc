@@ -3,7 +3,8 @@
 const $=id=>document.getElementById(id);
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
-  uploadLimit:MAX_UPLOAD_BYTES};
+  uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Qwen3-Coder 30B",
+  gptThreadId:null,gptConnected:false,gptPlanUsage:false};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка интерфейса",
@@ -22,7 +23,12 @@ function toBottom(){
   const scroller=document.querySelector(".conversation");
   scroller.scrollTop=scroller.scrollHeight;
 }
-function renderMessage(role,content,pending=false){
+function setFormatted(body,content){
+  if(typeof window.CybernovaMarkdown?.render==="function"){
+    body.replaceChildren(window.CybernovaMarkdown.render(String(content)));
+  }else{body.textContent=String(content);}
+}
+function renderMessage(role,content,pending=false,containerId="messages"){
   const author=role==="chatgpt"?"ChatGPT":role==="user"?"Вы":"Qwen";
   const wrap=node("article","chat-msg "+
     (role==="user"?"from-user":role==="chatgpt"?"from-chatgpt":"from-agent")+
@@ -30,9 +36,11 @@ function renderMessage(role,content,pending=false){
   const meta=node("div","message-meta");
   meta.append(node("span","avatar "+(role==="user"?"user":""),role==="user"?"U":role==="chatgpt"?"G":"◈"),
               node("span","",author));
-  const body=node("div","message-body",content);
+  const body=node("div","message-body");
+  if(role==="user"){body.textContent=String(content);}
+  else{setFormatted(body,content);}
   wrap.append(meta,body);
-  $("messages").append(wrap);toBottom();
+  $(containerId).append(wrap);toBottom();
   return {wrap,body};
 }
 function makeToolDetails(event){
@@ -267,7 +275,10 @@ function busy(on){
   $("messageInput").disabled=on;
   $("newSession").disabled=on;
   $("artifactFile").disabled=on;
-  $("sendStatus").textContent=on?"Qwen выполняет запрос…":"Готов";
+  $("sendStatus").textContent=on?(state.mode==="gpt"?"ChatGPT отвечает…":"Qwen выполняет запрос…"):"Готов";
+  $("modeQwen").disabled=on;
+  $("modeChatGPT").disabled=on;
+  $("gptTopModel").disabled=on||!state.gptConnected||!state.gptPlanUsage;
 }
 async function requestJson(path,data){
   const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -278,6 +289,7 @@ async function requestJson(path,data){
   return body;
 }
 async function send(){
+  if(state.mode==="gpt")return sendGPT();
   const text=$("messageInput").value.trim();
   if(!text||state.running)return;
   $("welcome")?.remove();
@@ -294,7 +306,7 @@ async function send(){
     state.lastSeq=Math.max(state.lastSeq,result.event_seq||0);
     state.turns=result.turn||state.turns+1;
     pending.wrap.classList.remove("working");
-    pending.body.textContent=result.answer||"Ответ модели пуст.";
+    setFormatted(pending.body,result.answer||"Ответ модели пуст.");
     showEvents(result.events,result.tool_calls,result.selected_by,pending);
     // Generate contextual next questions independently; do not delay Qwen reply.
     // A pending approval is the next user decision, not a generic follow-up.
@@ -320,6 +332,106 @@ async function send(){
   }finally{
     busy(false);$("messageInput").focus();toBottom();
   }
+}
+function gptWelcome(){
+  $("gptMessages").replaceChildren(window.cybernovaGptWelcome.cloneNode(true));
+}
+function setMode(mode){
+  if(state.running || !["qwen","gpt"].includes(mode))return;
+  state.mode=mode;
+  const qwen=mode==="qwen";
+  $("modeQwen").classList.toggle("selected",qwen);
+  $("modeChatGPT").classList.toggle("selected",!qwen);
+  $("modeQwen").setAttribute("aria-pressed",String(qwen));
+  $("modeChatGPT").setAttribute("aria-pressed",String(!qwen));
+  $("messages").hidden=!qwen;
+  $("gptMessages").hidden=qwen;
+  $("qwenSidebar").hidden=!qwen;
+  $("gptSidebar").hidden=qwen;
+  $("gptTopModel").hidden=qwen;
+  $("modelName").textContent=qwen?state.qwenModel:"ChatGPT";
+  document.querySelector(".upload-button").hidden=!qwen;
+  document.querySelector(".auto-tools-label").hidden=!qwen;
+  $("artifactFile").disabled=!qwen;
+  $("messageInput").placeholder=qwen?"Сообщение Qwen или исследовательская задача…":"Сообщение ChatGPT…";
+  $("uploadStatus").textContent=qwen?
+    "Импорт файлов до "+Math.floor(state.uploadLimit/(1024*1024))+" МиБ · Qwen":
+    "Чат GPT сохраняется на Vast · MCP не запускается";
+  $("sendStatus").textContent=!qwen&&!state.gptConnected?
+    "Подключи аккаунт в разделе «Аккаунт GPT»":"Готов";
+  $("sidebar").classList.remove("open");
+  if(!qwen)void refreshGPTThreads();
+  toBottom();
+}
+async function refreshGPTThreads(){
+  try{
+    const response=await fetch("/api/siwc/chats",{cache:"no-store"});
+    if(!response.ok)return;
+    const data=await response.json();
+    const container=$("gptThreadList");
+    container.replaceChildren();
+    for(const item of data.threads||[]){
+      const button=node("button","task-item"+(item.thread_id===state.gptThreadId?" selected":""));
+      button.type="button";
+      button.append(node("span","task-title",item.title||"Чат ChatGPT"));
+      button.addEventListener("click",()=>openGPTThread(item.thread_id));
+      container.append(button);
+    }
+    if(!container.childNodes.length)
+      container.append(node("p","muted","Пока нет диалогов. Напиши первое сообщение."));
+  }catch(_){}
+}
+async function openGPTThread(threadId){
+  if(state.running)return;
+  busy(true);
+  try{
+    const response=await fetch("/api/siwc/chat?thread_id="+encodeURIComponent(threadId),{cache:"no-store"});
+    const data=await response.json();
+    if(!response.ok)throw Error(data.detail||"Не удалось загрузить диалог");
+    state.gptThreadId=threadId;
+    $("gptMessages").replaceChildren();
+    for(const m of data.messages||[]){
+      renderMessage(m.role==="user"?"user":"chatgpt",m.content,false,"gptMessages");
+    }
+    const model=data.thread?.model;
+    if(model&&[...$("gptTopModel").options].some(x=>x.value===model))
+      $("gptTopModel").value=model;
+    setMode("gpt");
+  }catch(err){
+    $("sendStatus").textContent="Ошибка загрузки GPT: "+String(err.message||err);
+  }finally{busy(false);toBottom();}
+}
+async function sendGPT(){
+  const message=$("messageInput").value.trim();
+  if(!message||state.running)return;
+  if(!state.gptConnected||!state.gptPlanUsage){
+    $("sendStatus").textContent="Открой «Аккаунт GPT» и подключи ChatGPT.";
+    return;
+  }
+  const model=$("gptTopModel").value;
+  if(!model){
+    $("sendStatus").textContent="Выбери модель ChatGPT наверху.";
+    return;
+  }
+  $("gptWelcome")?.remove();
+  renderMessage("user",message,false,"gptMessages");
+  $("messageInput").value="";
+  const pending=renderMessage("chatgpt","ChatGPT формирует ответ…",true,"gptMessages");
+  busy(true);
+  try{
+    const result=await requestJson("/api/siwc/chat",{
+      thread_id:state.gptThreadId,model,message
+    });
+    state.gptThreadId=result.thread_id;
+    pending.wrap.classList.remove("working");
+    setFormatted(pending.body,result.answer||"Ответ модели пуст.");
+    $("sendStatus").textContent="Ответ ChatGPT · диалог сохранён";
+    void refreshGPTThreads();
+  }catch(err){
+    pending.wrap.classList.remove("working");
+    pending.body.textContent="Ошибка: "+String(err.message||err);
+    $("sendStatus").textContent="Ошибка GPT";
+  }finally{busy(false);$("messageInput").focus();toBottom();}
 }
 async function refreshTaskList(){
   try{
@@ -538,8 +650,14 @@ async function refreshChatGPT(){
       "Не подключён. Авторизация проходит в браузере OpenAI.";
     if(callbackResult==="error")statusLine.textContent+=" Последняя авторизация не завершилась.";
     const picker=$("chatgptModel");
+    const topPicker=$("gptTopModel");
+    const priorModel=topPicker.value||picker.value;
     picker.replaceChildren();
+    topPicker.replaceChildren();
     picker.disabled=true;
+    topPicker.disabled=true;
+    state.gptConnected=connected;
+    state.gptPlanUsage=!!data.plan_usage;
     if(connected&&data.plan_usage){
       const list=await fetch("/api/siwc/models",{cache:"no-store"});
       const body=await list.json();
@@ -550,13 +668,26 @@ async function refreshChatGPT(){
         option.value=item.slug;
         option.textContent=item.display_name||item.slug;
         picker.append(option);
+        topPicker.append(option.cloneNode(true));
+      }
+      if(models.some(item=>item.slug===priorModel)){
+        picker.value=priorModel;
+        topPicker.value=priorModel;
       }
       picker.disabled=!models.length;
+      topPicker.disabled=!models.length;
       $("chatgptReview").disabled=!models.length||!state.taskId;
       if(!models.length)statusLine.textContent+=" · Нет доступных моделей в аккаунте.";
+      if(state.mode==="gpt")$("sendStatus").textContent=models.length?"Готов":"Для чата нет доступных моделей.";
+    }else{
+      topPicker.disabled=true;
+      if(state.mode==="gpt")$("sendStatus").textContent="Открой «Аккаунт GPT» для подключения.";
     }
   }catch(err){
     statusLine.textContent="Ошибка ChatGPT: "+String(err.message||err);
+    state.gptConnected=false;
+    state.gptPlanUsage=false;
+    $("gptTopModel").disabled=true;
     $("chatgptReview").disabled=true;
   }
 }
@@ -585,6 +716,8 @@ async function disconnectChatGPT(){
     const result=await requestJson("/api/siwc/disconnect",{});
     lastGptReview=null;
     $("chatgptToQwen").disabled=true;
+    state.gptThreadId=null;
+    gptWelcome();
     await refreshChatGPT();
     if(result.remote_revocation_warning)
       $("chatgptStatus").textContent+=" Отзыв удалённой сессии не подтверждён — проверьте соединения в настройках ChatGPT.";
@@ -657,7 +790,8 @@ async function status(){
     const hosted=info.model_provider==="openai_compatible";
     const modelReady=hosted?!!info.model_remote_configured:!!info.ollama_ready;
     const ready=modelReady&&!!info.mcp_ready;
-    $("modelName").textContent=info.model||"LLM";
+    state.qwenModel=info.model||"Qwen";
+    if(state.mode==="qwen")$("modelName").textContent=state.qwenModel;
     $("ollamaState").textContent=hosted?"Облачная LLM настроена (не проверена)":
       info.ollama_ready?"Ollama подключена":"Ollama недоступна";
     $("mcpState").textContent=info.mcp_ready?"MCP подключён":"MCP недоступен";
@@ -678,6 +812,16 @@ async function status(){
 }
 async function reset(){
   if(state.running)return;
+  if(state.mode==="gpt"){
+    state.gptThreadId=null;
+    gptWelcome();
+    $("messageInput").value="";
+    $("sendStatus").textContent="Новый чат GPT";
+    $("sidebar").classList.remove("open");
+    $("messageInput").focus();
+    await refreshGPTThreads();
+    return;
+  }
   if(state.sessionId){
     try{await requestJson("/api/reset",{session_id:state.sessionId});}
     catch(exc){$("sendStatus").textContent="Ошибка сброса сессии";return;}
@@ -705,12 +849,18 @@ function toolsPanel(show){
 }
 function init(){
   window.cybernovaWelcome=$("welcome").cloneNode(true);
+  window.cybernovaGptWelcome=$("gptWelcome").cloneNode(true);
   $("sendButton").addEventListener("click",send);
   $("artifactFile").addEventListener("change",event=>importArtifact(event.target.files?.[0]));
   $("messageInput").addEventListener("keydown",e=>{
     if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}
   });
   $("newSession").addEventListener("click",reset);
+  $("modeQwen").addEventListener("click",()=>setMode("qwen"));
+  $("modeChatGPT").addEventListener("click",()=>setMode("gpt"));
+  $("gptTopModel").addEventListener("change",()=>{
+    if(state.mode==="gpt")$("sendStatus").textContent="Модель выбрана · изменения применятся к следующему сообщению";
+  });
   $("refreshStatus").addEventListener("click",status);
   $("copyReviewPacket").addEventListener("click",copyReviewPacket);
   $("evidenceIndexButton").addEventListener("click",showEvidenceJournal);
@@ -736,6 +886,7 @@ function init(){
   });
   status();
   void refreshTaskList();
+  void refreshGPTThreads();
   window.setInterval(()=>{void pollTask();},5000);
   window.setInterval(()=>{void refreshTaskList();},15000);
 }
