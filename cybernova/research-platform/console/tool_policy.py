@@ -32,7 +32,7 @@ REVIEWED_OFFLINE = frozenset({
     "comm_request_review", "comm_post_progress", "comm_read_dialog",
     "comm_record_evidence",
 })
-REVIEWED_SCOPED = frozenset({"http_get", "scoped_dns_resolve", "scoped_tls_inspect", "browser_open"})
+REVIEWED_SCOPED = frozenset({"http_get", "scoped_dns_resolve", "scoped_tls_inspect", "browser_open", "browser_network"})
 REVIEWED_TOOLS = REVIEWED_OFFLINE | REVIEWED_SCOPED
 
 
