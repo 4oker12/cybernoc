@@ -118,6 +118,33 @@ class DeveloperToolsTests(unittest.TestCase):
             with self.assertRaisesRegex(dev.DeveloperError,"git_write_key_not_configured"):
                 self.call("dev_push")
 
+    def test_agent_really_reads_project_when_qwen_does_not_call_tools(self):
+        from console.agent import Agent
+        class Model:
+            model="fake-qwen"
+            def chat(self, messages, tools=None, **kwargs):
+                if kwargs.get("json_mode"):
+                    return {"role":"assistant","content":'{"calls":[]}'}
+                if any(m.get("role")=="tool" and m.get("tool_name")=="dev_list"
+                       for m in messages):
+                    return {"role":"assistant","content":"Изучил структуру Cybernova"}
+                return {"role":"assistant","content":"Для этого нужен доступ к Git"}
+        class MCP:
+            def __init__(self):self.calls=[]
+            def initialize(self):
+                return [dev._tool("dev_list","List files",
+                                  {"limit":{"type":"integer"}})]
+            def call(self,name,args):
+                self.calls.append((name,args))
+                return {"ok":True,"files":["README.md"]},False
+        mcp=MCP()
+        response=Agent(ollama=Model(),mcp_factory=lambda:mcp).run([],
+            "Изучи репозиторий и код проекта Cybernova",force_tools=True)
+        self.assertEqual(response["tool_calls"],1)
+        self.assertEqual(response["selected_by"],"developer_evidence_fallback")
+        self.assertEqual(mcp.calls[0][0],"dev_list")
+        self.assertIn("Изучил структуру",response["answer"])
+
 
 if __name__=="__main__":
     unittest.main()
