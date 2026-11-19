@@ -1,7 +1,7 @@
 "use strict";
 /* Cybernova: local ChatGPT-like chat UI. No external JS, no model HTML. */
 const $=id=>document.getElementById(id);
-const MAX_UPLOAD_BYTES = 32 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
   uploadLimit:MAX_UPLOAD_BYTES};
 const descriptions={
