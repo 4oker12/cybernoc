@@ -345,7 +345,7 @@ function showTaskStatus(status){
 }
 function displayTaskEvent(message){
   if(!message)return;
-  if(message.actor==="chatgpt"&&(message.kind==="feedback"||message.kind==="instruction")){
+  if(message.actor==="chatgpt"&&["feedback","instruction","result"].includes(message.kind)){
     renderMessage("chatgpt",message.body);
   }else if(message.actor==="human"&&message.kind==="feedback"){
     renderMessage("user",message.body);
@@ -510,6 +510,128 @@ function renderTools(tools,automatic=[],availableScanners=[]){
     container.append(row);
   }
 }
+
+let lastGptReview=null;
+async function refreshChatGPT(){
+  const statusLine=$("chatgptStatus");
+  try{
+    const response=await fetch("/api/siwc/status",{cache:"no-store"});
+    if(!response.ok)throw Error("HTTP "+response.status);
+    const data=await response.json();
+    const connected=!!data.connected;
+    $("chatgptConnect").hidden=connected;
+    $("chatgptDisconnect").hidden=!connected;
+    $("chatgptReview").disabled=!connected||!data.plan_usage||!state.taskId;
+    statusLine.textContent=connected?
+      (data.plan_usage?"Подключён: "+(data.email||"аккаунт ChatGPT")+
+         " · использование подписки разрешено":
+       "Аккаунт подключён, но использование подписки не разрешено."):
+      "Не подключён. Авторизация проходит в браузере OpenAI.";
+    const picker=$("chatgptModel");
+    picker.replaceChildren();
+    picker.disabled=true;
+    if(connected&&data.plan_usage){
+      const list=await fetch("/api/siwc/models",{cache:"no-store"});
+      const body=await list.json();
+      if(!list.ok)throw Error(body.detail||"Не удалось получить модели");
+      const models=Array.isArray(body.models)?body.models:[];
+      for(const item of models){
+        const option=document.createElement("option");
+        option.value=item.slug;
+        option.textContent=item.display_name||item.slug;
+        picker.append(option);
+      }
+      picker.disabled=!models.length;
+      $("chatgptReview").disabled=!models.length||!state.taskId;
+      if(!models.length)statusLine.textContent+=" · Нет доступных моделей в аккаунте.";
+    }
+  }catch(err){
+    statusLine.textContent="Ошибка ChatGPT: "+String(err.message||err);
+    $("chatgptReview").disabled=true;
+  }
+}
+async function connectChatGPT(){
+  // OpenAI's OSS flow only accepts loopback callback; a remote tunnel
+  // hostname cannot receive that callback on the user's computer.
+  const host=window.location.hostname;
+  const port=Number(window.location.port);
+  if(host!=="127.0.0.1" || ![18794,18795].includes(port)){
+    $("chatgptStatus").textContent="Для входа откройте Cybernova через http://127.0.0.1:18795 после SSH-проброса с Vast. Ссылка Cloudflare для этого не подходит.";
+    return;
+  }
+  try{
+    $("chatgptStatus").textContent="Создаю одноразовый запрос авторизации…";
+    const data=await requestJson("/api/siwc/start",{});
+    if(data.callback_uri!==window.location.origin+"/auth/callback")
+      throw Error("Откройте Web UI по адресу "+data.callback_uri.replace("/auth/callback","/"));
+    window.location.assign(data.authorization_url);
+  }catch(err){
+    $("chatgptStatus").textContent="Ошибка подключения: "+String(err.message||err);
+  }
+}
+async function disconnectChatGPT(){
+  if(!window.confirm("Отключить аккаунт ChatGPT от Cybernova?"))return;
+  try{
+    const result=await requestJson("/api/siwc/disconnect",{});
+    lastGptReview=null;
+    $("chatgptToQwen").disabled=true;
+    await refreshChatGPT();
+    if(result.remote_revocation_warning)
+      $("chatgptStatus").textContent+=" Отзыв удалённой сессии не подтверждён — проверьте соединения в настройках ChatGPT.";
+  }catch(err){
+    $("chatgptStatus").textContent="Не удалось отключить: "+String(err.message||err);
+  }
+}
+async function reviewWithChatGPT(){
+  if(!state.sessionId||!state.taskId){
+    $("chatgptStatus").textContent="Откройте исследование Qwen перед рецензией.";
+    return;
+  }
+  const model=$("chatgptModel").value;
+  if(!model||state.running)return;
+  busy(true);
+  $("chatgptStatus").textContent="Получаю пакет исследования…";
+  try{
+    const response=await fetch("/api/comm/review-packet?session_id="+
+      encodeURIComponent(state.sessionId),{cache:"no-store"});
+    const data=await response.json();
+    if(!response.ok||!data.packet)throw Error("Пакет исследования недоступен");
+    if(data.packet.length>12000)
+      throw Error("Пакет больше 12 000 символов. Уменьшите объём перед отправкой в облако.");
+    // Explicit user click; never upload task context automatically.
+    $("chatgptStatus").textContent="Отправляю выбранную задачу в GPT для рецензии…";
+    const answer=await requestJson("/api/siwc/review",{
+      session_id:state.sessionId,model,prompt:data.packet
+    });
+    lastGptReview=answer.answer||null;
+    state.lastSeq=Math.max(state.lastSeq,answer.event_seq||0);
+    renderMessage("chatgpt",answer.answer||"Ответ GPT пуст.");
+    $("chatgptToQwen").disabled=!lastGptReview;
+    $("chatgptStatus").textContent="Рецензия GPT получена. Можно отправить её Qwen.";
+  }catch(err){
+    $("chatgptStatus").textContent="Ошибка рецензии: "+String(err.message||err);
+  }finally{busy(false);}
+}
+async function forwardGPTtoQwen(){
+  if(!lastGptReview||!state.sessionId||!state.taskId||state.running)return;
+  busy(true);
+  try{
+    const response=await requestJson("/api/comm/reviewer-feedback",{
+      session_id:state.sessionId,
+      message:lastGptReview.slice(0,6000),
+      event_key:"siwc_ui_"+Date.now()+"_"+Math.random().toString(36).slice(2),
+    });
+    state.lastSeq=Math.max(state.lastSeq,response.event_seq||0);
+    $("chatgptToQwen").disabled=true;
+    lastGptReview=null;
+    $("chatgptStatus").textContent="Рецензия передана Qwen через общую очередь.";
+    showTaskStatus("queued");
+    void refreshTaskList();
+  }catch(err){
+    $("chatgptStatus").textContent="Ошибка передачи Qwen: "+String(err.message||err);
+  }finally{busy(false);}
+}
+
 async function status(){
   try{
     const response=await fetch("/api/status",{cache:"no-store"});
@@ -573,6 +695,15 @@ function init(){
   $("copyReviewPacket").addEventListener("click",copyReviewPacket);
   $("evidenceIndexButton").addEventListener("click",showEvidenceJournal);
   $("sendReviewFeedback").addEventListener("click",submitReviewerFeedback);
+  $("navChatGPT").addEventListener("click",()=>{
+    toolsPanel(true);
+    $("chatgptConnect").scrollIntoView({block:"center",behavior:"smooth"});
+  });
+  $("chatgptConnect").addEventListener("click",connectChatGPT);
+  $("chatgptDisconnect").addEventListener("click",disconnectChatGPT);
+  $("chatgptReview").addEventListener("click",reviewWithChatGPT);
+  $("chatgptToQwen").addEventListener("click",forwardGPTtoQwen);
+  void refreshChatGPT();
   $("navTools").addEventListener("click",()=>toolsPanel($("inspector").hidden));
   $("navChat").addEventListener("click",()=>toolsPanel(false));
   $("menuToggle").addEventListener("click",()=>$("sidebar").classList.toggle("open"));
