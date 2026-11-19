@@ -56,6 +56,19 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(self.task["status"], "idle")
         self.assertIsNone(self.db.claim_queued())
 
+    def test_crash_recovery_blocks_inflight_task(self):
+        task_id = self.task["task_id"]
+        self.db.append(task_id, "human", "instruction",
+                       "Research laboratory API", status="running")
+        count = self.db.recover_interrupted()
+        self.assertEqual(count, 1)
+        self.assertEqual(self.db.get_task(task_id)["status"], "blocked")
+        self.assertEqual(self.db.recover_interrupted(), 0)
+        dialog = self.db.read_dialog(task_id)["messages"]
+        self.assertEqual(dialog[-1]["actor"], "controller")
+        self.assertIn("interrupted", dialog[-1]["body"])
+        self.assertIsNone(self.db.claim_queued())
+
     def test_persistence_and_shared_cursor(self):
         self.db.append(self.task["task_id"], "human", "instruction", "Изучи приложение",
                        status="running")
