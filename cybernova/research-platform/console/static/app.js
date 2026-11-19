@@ -449,6 +449,7 @@ async function sendGPT(){
     setFormatted(pending.body,result.answer||"Ответ модели пуст.");
     $("sendStatus").textContent="Ответ ChatGPT · диалог сохранён";
     void refreshGPTThreads();
+  void refreshCollabRuns();
   }catch(err){
     pending.wrap.classList.remove("working");
     pending.body.textContent="Ошибка: "+String(err.message||err);
@@ -1034,6 +1035,171 @@ async function saveProfileSettings(){
     $("profileSaveStatus").textContent="Ошибка сохранения: "+String(err.message||err);
   }finally{button.disabled=false;}
 }
+function setSidebarCollapsed(collapsed){
+  const sidebar=$("sidebar");
+  sidebar.classList.toggle("collapsed",!!collapsed);
+  $("sidebarExpand").hidden=!collapsed;
+  $("sidebarCollapse").setAttribute("aria-expanded",String(!collapsed));
+  $("sidebarCollapse").textContent=collapsed?"›":"‹";
+  try{window.localStorage.setItem("cybernova_sidebar_collapsed",collapsed?"1":"0");}catch(_){}
+}
+function setUtilityPlaceholder(){
+  const choice=$("utilityTool").value;
+  $("utilityArgument").placeholder=choice==="safe_terminal"?
+    "pwd · list · python --version · git status · git log":
+    choice==="research_source_open"?"https://example.org/advisory":
+    "Поиск CVE, ошибки, статьи или технического кейса";
+}
+async function runUtility(){
+  const name=$("utilityTool").value;
+  const argument=$("utilityArgument").value.trim();
+  if(!argument)return;
+  const btn=$("utilityRun");
+  const output=$("utilityResult");
+  btn.disabled=true;
+  output.hidden=false;
+  output.textContent="Выполняется безопасная операция…";
+  try{
+    const result=await requestJson("/api/tools/run",{name,argument});
+    output.textContent=JSON.stringify(result.result,null,2);
+  }catch(err){output.textContent="Ошибка: "+String(err.message||err);}
+  finally{btn.disabled=false;}
+}
+function renderCollabRun(run){
+  if(!run)return;
+  state.collabRun=run;
+  $("collabForm").hidden=true;
+  $("collabActiveBar").hidden=false;
+  $("collabStop").hidden=run.state!=="active";
+  $("collabResume").hidden=run.state!=="active"||state.collabLooping;
+  const done=run.state==="completed";
+  $("collabStatus").textContent=done?"Завершено · "+run.step+" сообщений моделей":
+    run.state==="stopped"?"Остановлено пользователем":
+    run.state==="blocked"?"Остановлено: нужно вмешательство":
+    "Работа · "+run.step+"/"+(2*run.max_cycles+1)+
+    " · следующий: "+(run.next_actor==="chatgpt"?"ChatGPT":"DeepSeek");
+  const log=$("collabLog");
+  log.replaceChildren();
+  for(const m of run.messages||[]){
+    if(m.actor==="human"&&m.kind==="instruction"){
+      renderMessage("user",m.body,false,"collabLog");
+    }else if(m.actor==="chatgpt"&&m.kind==="feedback"){
+      renderMessage("chatgpt",m.body,false,"collabLog");
+    }else if(m.actor==="qwen"&&m.kind==="result"){
+      renderMessage("assistant",m.body,false,"collabLog");
+    }else if(m.actor==="controller"&&m.kind==="system"){
+      log.append(node("p","collab-notice",m.body));
+    }
+  }
+  toBottom();
+}
+async function refreshCollabRuns(){
+  try{
+    const response=await fetch("/api/collab/runs",{cache:"no-store"});
+    if(!response.ok)return;
+    const data=await response.json();
+    const list=$("collabRunList");
+    list.replaceChildren();
+    for(const run of data.runs||[]){
+      const button=node("button","task-item"+(run.task_id===state.collabRun?.task_id?" selected":""));
+      button.type="button";
+      button.append(node("span","task-title",run.goal||"Совместная задача"));
+      button.title=run.state+" · "+run.step+" сообщений";
+      button.addEventListener("click",()=>openCollabRun(run.task_id));
+      list.append(button);
+    }
+    if(!list.childNodes.length)list.append(node("p","muted","Пока нет совместных диалогов."));
+  }catch(_){}
+}
+async function openCollabRun(taskId){
+  if(state.collabLooping)return;
+  try{
+    const response=await fetch("/api/collab/run?task_id="+encodeURIComponent(taskId),{cache:"no-store"});
+    const data=await response.json();
+    if(!response.ok)throw Error(data.detail||"Нет совместной задачи");
+    setMode("collab");
+    renderCollabRun(data);
+    $("sidebar").classList.remove("open");
+  }catch(err){
+    $("collabStatus").textContent="Ошибка: "+String(err.message||err);
+  }
+}
+async function startCollab(){
+  if(state.collabLooping)return;
+  if(!state.gptConnected||!state.gptPlanUsage){
+    $("collabStatus").textContent="Сначала подключи аккаунт ChatGPT через «Аккаунт GPT».";
+    $("collabActiveBar").hidden=false;
+    $("collabStop").hidden=true;
+    return;
+  }
+  const goal=$("collabGoal").value.trim(), model=$("collabModel").value;
+  if(!goal||!model)return;
+  $("collabStart").disabled=true;
+  try{
+    const run=await requestJson("/api/collab/start",{
+      goal,model,cycles:Number($("collabCycles").value),session_id:state.sessionId
+    });
+    state.collabStopRequested=false;
+    renderCollabRun(run);
+    void refreshCollabRuns();
+    await continueCollab();
+  }catch(err){
+    $("collabActiveBar").hidden=false;
+    $("collabStop").hidden=true;
+    $("collabStatus").textContent="Ошибка запуска: "+String(err.message||err);
+  }finally{$("collabStart").disabled=false;}
+}
+async function continueCollab(){
+  if(state.collabLooping||!state.collabRun||state.collabRun.state!=="active")return;
+  state.collabLooping=true;
+  state.collabStopRequested=false;
+  $("collabResume").hidden=true;
+  const taskId=state.collabRun.task_id;
+  try{
+    while(state.collabRun?.state==="active"&&!state.collabStopRequested){
+      $("collabStatus").textContent="Ожидаем ответ "+(
+        state.collabRun.next_actor==="chatgpt"?"ChatGPT-наставника":"DeepSeek-исследователя")+"…";
+      let step;
+      try{
+        step=await requestJson("/api/collab/step",{task_id:taskId});
+      }catch(err){
+        if(!state.collabStopRequested){
+          $("collabStatus").textContent="Ошибка обмена: "+String(err.message||err);
+        }
+        break;
+      }
+      if(state.collabStopRequested||state.collabRun?.task_id!==taskId)break;
+      renderCollabRun(step.run);
+      await refreshCollabRuns();
+    }
+  }finally{
+    state.collabLooping=false;
+    if(state.collabRun&&state.collabRun.task_id===taskId){
+      renderCollabRun(state.collabRun);
+    }
+  }
+}
+async function stopCollab(){
+  if(!state.collabRun)return;
+  state.collabStopRequested=true;
+  try{
+    const run=await requestJson("/api/collab/stop",{task_id:state.collabRun.task_id});
+    renderCollabRun(run);
+    void refreshCollabRuns();
+  }catch(err){
+    $("collabStatus").textContent="Ошибка остановки: "+String(err.message||err);
+  }
+}
+async function newCollab(){
+  if(state.collabRun?.state==="active")await stopCollab();
+  state.collabRun=null;
+  state.collabStopRequested=true;
+  $("collabForm").hidden=false;
+  $("collabActiveBar").hidden=true;
+  $("collabLog").replaceChildren();
+  $("collabGoal").value="";
+  void refreshCollabRuns();
+}
 function init(){
   window.cybernovaWelcome=$("welcome").cloneNode(true);
   window.cybernovaGptWelcome=$("gptWelcome").cloneNode(true);
@@ -1044,6 +1210,17 @@ function init(){
     if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}
   });
   $("newSession").addEventListener("click",reset);
+  $("sidebarCollapse").addEventListener("click",()=>setSidebarCollapsed(!$("sidebar").classList.contains("collapsed")));
+  $("sidebarExpand").addEventListener("click",()=>setSidebarCollapsed(false));
+  $("utilityTool").addEventListener("change",setUtilityPlaceholder);
+  $("utilityRun").addEventListener("click",runUtility);
+  setUtilityPlaceholder();
+  try{setSidebarCollapsed(window.localStorage.getItem("cybernova_sidebar_collapsed")==="1");}
+  catch(_){setSidebarCollapsed(false);}
+  $("collabStart").addEventListener("click",startCollab);
+  $("collabStop").addEventListener("click",stopCollab);
+  $("collabResume").addEventListener("click",continueCollab);
+  $("collabNew").addEventListener("click",newCollab);
   $("navProfile").addEventListener("click",openProfileSettings);
   $("profileClose").addEventListener("click",()=>$("profileDialog").close());
   $("profileCancel").addEventListener("click",()=>$("profileDialog").close());
@@ -1056,6 +1233,7 @@ function init(){
   $("applyResearchScope").addEventListener("click",applyResearchScope);
   $("modeQwen").addEventListener("click",()=>setMode("qwen"));
   $("modeChatGPT").addEventListener("click",()=>setMode("gpt"));
+  $("modeCollab").addEventListener("click",()=>setMode("collab"));
   $("gptTopModel").addEventListener("change",()=>{
     if(state.mode==="gpt")$("sendStatus").textContent="Модель выбрана · изменения применятся к следующему сообщению";
   });
@@ -1087,5 +1265,6 @@ function init(){
   void refreshGPTThreads();
   window.setInterval(()=>{void pollTask();},5000);
   window.setInterval(()=>{void refreshTaskList();},15000);
+  window.setInterval(()=>{if(state.mode==="collab")void refreshCollabRuns();},15000);
 }
 document.addEventListener("DOMContentLoaded",init);
