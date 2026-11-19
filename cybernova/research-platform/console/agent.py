@@ -69,7 +69,7 @@ class BackendError(RuntimeError):
 def post_json(url: str, data: dict, timeout: int) -> dict:
     # Fixed loopback endpoints only. Environment overrides still must be localhost.
     u = parse.urlsplit(url)
-    if u.scheme != "http" or u.hostname not in {"127.0.0.1", "localhost"} or \
+    if u.scheme != "http" or u.hostname not in {"127.0.0.1", "localhost", "ollama"} or \
        u.username or u.password or u.fragment:
         raise BackendError("backend_must_be_localhost")
     raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
