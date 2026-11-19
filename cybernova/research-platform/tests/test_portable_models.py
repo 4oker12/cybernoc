@@ -57,10 +57,11 @@ class ModelProviderTests(unittest.TestCase):
             "CYBERNOVA_DEEPSEEK_REASONING_EFFORT":"high",
             "CYBERNOVA_LLM_TOKEN_PARAMETER":"",
         }):
-            backend=build_model_client()
-            self.assertIsInstance(backend,OpenAICompatibleClient)
-            self.assertEqual(backend.endpoint,"https://api.deepseek.com/chat/completions")
-            self.assertEqual(backend.model,"deepseek-flash")
+            selected=build_model_client()
+            self.assertIsInstance(selected,OpenAICompatibleClient)
+            self.assertEqual(selected.endpoint,"https://api.deepseek.com/chat/completions")
+            self.assertEqual(selected.model,"deepseek-flash")
+            backend=OpenAICompatibleClient(transport=transport)
             answer=backend.chat([{"role":"user","content":"Open a page"}],
                 tools=[{"type":"function","function":{"name":"browser_snapshot",
                     "parameters":{"type":"object","properties":{}}}}])
