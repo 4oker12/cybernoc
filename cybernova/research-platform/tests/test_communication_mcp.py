@@ -49,12 +49,13 @@ class MCPGatewayTests(unittest.TestCase):
             spec.loader.exec_module(module)
             self.module = module
 
-    def test_all_eight_mcp_functions_are_actual_callable_tools(self):
+    def test_all_ten_mcp_functions_are_actual_callable_tools(self):
         expected = {
             "cybernova_create_task", "cybernova_list_tasks",
             "cybernova_task_status", "cybernova_read_dialog",
             "cybernova_pending_reviews", "cybernova_new_events",
             "cybernova_send_feedback", "cybernova_evidence_index",
+            "cybernova_get_evidence", "cybernova_tool_receipts",
         }
         self.assertEqual(set(self.module.mcp.tools), expected)
         self.assertEqual(self.module.mcp.kwargs["host"], "127.0.0.1")
@@ -80,6 +81,27 @@ class MCPGatewayTests(unittest.TestCase):
         self.assertEqual(dialog["messages"][-1]["actor"], "chatgpt")
         events = api.cybernova_new_events(after_seq=dialog["messages"][1]["seq"])
         self.assertEqual(len(events["messages"]), 1)
+
+    def test_evidence_and_tool_receipts_available_to_mcp_reviewer(self):
+        api = self.module
+        tid = api.cybernova_create_task("Исследование", "Проверь")["task_id"]
+        claim = api.evidence.record_qwen_claim(
+            tid, "Гипотеза требует отрицательного контроля",
+            "Локальный анализ", kind="hypothesis",
+        )
+        api.evidence.record_tool_events(
+            tid, [{"type":"tool_result","name":"gateway_status",
+                   "arguments":{},"result":{"ok":True}}],
+        )
+        self.assertEqual(
+            api.cybernova_get_evidence(tid, claim["evidence_id"])["attribution"],
+            "qwen_reported_unverified",
+        )
+        self.assertIn(claim["evidence_id"],
+                      api.cybernova_evidence_index(tid)["evidence_refs"])
+        receipts=api.cybernova_tool_receipts(tid)
+        self.assertEqual(receipts["count"], 1)
+        self.assertEqual(receipts["receipts"][0]["tool_name"], "gateway_status")
 
     def test_feedback_idempotent_across_retries(self):
         api = self.module
