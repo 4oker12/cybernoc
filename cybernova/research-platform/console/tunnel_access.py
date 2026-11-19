@@ -15,6 +15,11 @@ import os
 from pathlib import Path
 from urllib.parse import urlsplit
 
+try:
+    from .upload_limits import MAX_IMPORT_HTTP_BODY_BYTES, MAX_PROXY_RESPONSE_BYTES
+except ImportError:
+    from upload_limits import MAX_IMPORT_HTTP_BODY_BYTES, MAX_PROXY_RESPONSE_BYTES
+
 DEFAULT_PORT = 18795
 DEFAULT_SECRET_FILE = "/workspace/cybernova-comm-private/web_access.txt"
 ALLOWED_STATIC = frozenset({"/", "/static/styles.css", "/static/app.js"})
@@ -31,7 +36,7 @@ HOP_HEADERS = frozenset({
     "te", "trailers", "transfer-encoding", "upgrade", "authorization", "host",
     "origin", "content-length", "accept-encoding",
 })
-MAX_BODY = 7_000_000
+MAX_NORMAL_REQUEST_BODY = 7_000_000
 
 
 def read_credentials(path: str | Path) -> tuple[str, str]:
@@ -112,7 +117,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if length_str is None or not length_str.isascii() or not length_str.isdigit():
                 return self._send(411, b"Content-Length required\n")
             length = int(length_str)
-            if length > MAX_BODY:
+            limit = (MAX_IMPORT_HTTP_BODY_BYTES if route == "/api/import"
+                     else MAX_NORMAL_REQUEST_BODY)
+            if length > limit:
                 return self._send(413, b"Payload too large\n")
             body = self.rfile.read(length)
             if len(body) != length:
@@ -134,8 +141,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
         try:
             conn.request(self.command, self.path, body=body, headers=headers)
             response = conn.getresponse()
-            content = response.read(MAX_BODY + 1)
-            if len(content) > MAX_BODY:
+            content = response.read(MAX_PROXY_RESPONSE_BYTES + 1)
+            if len(content) > MAX_PROXY_RESPONSE_BYTES:
                 return self._send(502, b"Upstream response too large\n")
             self.send_response(response.status)
             for key, value in response.getheaders():
