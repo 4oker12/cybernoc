@@ -18,7 +18,7 @@ import time
 from urllib import request, error, parse
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 try:
@@ -35,6 +35,8 @@ try:
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
     from .communication_worker import CommunicationWorker
     from .evidence import EvidenceJournal
+    from .siwc import connection as chatgpt_connection, SIWCError
+    from .siwc_inference import models as chatgpt_models, review as chatgpt_review
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS
     from followups import generate_followups
@@ -49,6 +51,8 @@ except ImportError:
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
     from communication_worker import CommunicationWorker
     from evidence import EvidenceJournal
+    from siwc import connection as chatgpt_connection, SIWCError
+    from siwc_inference import models as chatgpt_models, review as chatgpt_review
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -184,6 +188,66 @@ def _ollama_health() -> bool:
             return r.status == 200
     except (OSError, TimeoutError, error.URLError):
         return False
+
+
+
+class ChatGPTReviewRequest(BaseModel):
+    model: str = Field(min_length=1, max_length=160)
+    prompt: str = Field(min_length=1, max_length=12000)
+
+
+@app.get("/api/siwc/status")
+def siwc_status():
+    try:
+        return chatgpt_connection.status()
+    except SIWCError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+
+
+@app.post("/api/siwc/start")
+def siwc_start():
+    """A public OAuth client. Access to this endpoint is already Basic-auth gated."""
+    try:
+        return chatgpt_connection.start()
+    except SIWCError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.get("/auth/callback")
+def siwc_callback(code: str | None = None, state: str | None = None,
+                  client_id: str | None = None, error: str | None = None):
+    """Loopback-only OAuth callback; never return code, tokens, or claims."""
+    try:
+        chatgpt_connection.finish({"code": code, "state": state,
+                                   "client_id": client_id, "error": error})
+    except SIWCError:
+        return RedirectResponse(url="/?chatgpt=error", status_code=303)
+    return RedirectResponse(url="/?chatgpt=connected", status_code=303)
+
+
+@app.get("/api/siwc/models")
+def siwc_models():
+    try:
+        return {"models": chatgpt_models()}
+    except SIWCError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+
+@app.post("/api/siwc/review")
+def siwc_review(payload: ChatGPTReviewRequest):
+    """Explicit review; no Qwen history or artifact is uploaded automatically."""
+    try:
+        return chatgpt_review(payload.model, payload.prompt)
+    except SIWCError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+
+@app.post("/api/siwc/disconnect")
+def siwc_disconnect():
+    try:
+        return chatgpt_connection.disconnect()
+    except SIWCError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @app.get("/api/status")
