@@ -102,17 +102,19 @@ SENSITIVE_VALUE = re.compile(
 )
 
 
-def _shape(value, *, depth=0):
+def _shape(value, *, depth=0, sensitive=False):
     if depth >= 4:
         return {"type": type(value).__name__, "truncated": True}
     if isinstance(value, dict):
-        return {str(k)[:64]: (
-            "[REDACTED FIELD]" if SECRET_FIELD.search(str(k))
-            else _shape(v, depth=depth + 1))
-            for k, v in list(value.items())[:35]}
+        return {str(k)[:64]: _shape(v, depth=depth + 1,
+                sensitive=sensitive or bool(SECRET_FIELD.search(str(k))))
+                for k, v in list(value.items())[:35]}
     if isinstance(value, list):
         return {"type": "array", "length": len(value),
-                "items": [_shape(x, depth=depth + 1) for x in value[:2]]}
+                "items": [_shape(x, depth=depth + 1, sensitive=sensitive)
+                          for x in value[:2]]}
+    if sensitive:
+        return "[REDACTED FIELD]"
     if isinstance(value, str):
         return {"type": "string", "length": len(value),
                 "example": SENSITIVE_VALUE.sub("[REDACTED]", value[:70])}
