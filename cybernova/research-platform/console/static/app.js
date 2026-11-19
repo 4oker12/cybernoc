@@ -910,6 +910,7 @@ const DEFAULT_PROFILE_SETTINGS={
 };
 function applyInterfaceSettings(ui){
   const root=document.documentElement;
+  if(!root)return;
   root.dataset.theme=ui.theme==="dark"?"dark":"light";
   root.dataset.density=["compact","comfortable","relaxed"].includes(ui.density)?ui.density:"comfortable";
   root.style.setProperty("--font-scale",String((Number(ui.font_scale)||100)/100));
