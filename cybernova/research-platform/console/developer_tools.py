@@ -48,6 +48,10 @@ DEV_TOOLS = [
           {**FILE, "content": {"type": "string"},
            "old": {"type": "string", "description": "If provided, replace exactly one occurrence with content; otherwise create new file"}},
           ["path", "content"]),
+    _tool("dev_delete", "Delete one source file from my separate task worktree.",
+          FILE, ["path"]),
+    _tool("dev_move", "Rename/move one source file within my separate task worktree.",
+          {**FILE, "destination": {"type": "string"}}, ["path", "destination"]),
     _tool("dev_diff", "Read Git status and source diffs of my task worktree."),
     _tool("dev_test", "Execute project's Python unit tests as unprivileged user. No elevated shell.",
           {"pattern": {"type": "string", "description": "unittest test filename pattern, default test_*.py"}}),
@@ -65,7 +69,7 @@ DEV_TOOLS = [
 DEV_NAMES = frozenset(t["name"] for t in DEV_TOOLS)
 DEV_AUTOMATIC = frozenset({
     "dev_workspace", "dev_list", "dev_read", "dev_search",
-    "dev_edit", "dev_diff", "dev_test", "dev_commit"
+    "dev_edit", "dev_delete", "dev_move", "dev_diff", "dev_test", "dev_commit"
 })
 
 
@@ -256,6 +260,21 @@ def dev_call(name, args, task_id):
                 raise DeveloperError("old_text_must_match_exactly_once")
             target.write_text(before.replace(old, content, 1), encoding="utf-8")
         return {"ok": True, "path": path, **_diff(root)}
+    if name == "dev_delete":
+        target = _safe_path(root, args.get("path"), must_exist=True)
+        if not target.is_file():
+            raise DeveloperError("not_a_file")
+        target.unlink()
+        return {"ok": True, "deleted": args.get("path"), **_diff(root)}
+    if name == "dev_move":
+        source = _safe_path(root, args.get("path"), must_exist=True)
+        destination = _safe_path(root, args.get("destination"))
+        if not source.is_file() or destination.exists():
+            raise DeveloperError("source_missing_or_destination_exists")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(destination)
+        return {"ok": True, "from": args.get("path"),
+                "to": args.get("destination"), **_diff(root)}
     if name == "dev_diff":
         return {"ok": True, "branch": branch, **_diff(root)}
     if name == "dev_test":
