@@ -3,7 +3,7 @@
 ## Implemented in GitHub (deployment is separate)
 
 Qwen remains a security researcher and becomes a coding agent for the Cybernova
-codebase. Its CommunicationToolClient exposes eleven developer tools alongside
+codebase. Its CommunicationToolClient exposes thirteen developer tools alongside
 existing MCP/security tools. Every workspace is bound to a durable task.
 
 | Tool | Capability | Invocation |
@@ -11,7 +11,8 @@ existing MCP/security tools. Every workspace is bound to a durable task.
 | dev_workspace | Separate Git branch and worktree per task | Automatic |
 | dev_list / dev_read / dev_search | Inspect repository source | Automatic |
 | dev_edit | Create code or replace exactly one text occurrence | Automatic |
-| dev_delete / dev_move | Delete or rename task-branch source files | Automatic |\n| dev_diff | Git diff and status | Automatic |
+| dev_delete / dev_move | Delete or rename task-branch source files | Automatic |
+| dev_diff | Git diff and status | Automatic |
 | dev_test | Execute unittest without root privileges | Automatic |
 | dev_commit | Commit only the task worktree changes | Automatic |
 | dev_command | Run custom argv without shell or root | Requires owner approval |
