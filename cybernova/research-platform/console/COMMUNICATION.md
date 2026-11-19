@@ -24,10 +24,17 @@ The existing Tool MCP at port 18792 is unchanged.
 - cybernova_new_events(after_seq=0, limit=30)
 - cybernova_send_feedback(task_id, message, event_key="")
 - cybernova_evidence_index(task_id)
+- cybernova_get_evidence(task_id, evidence_id)
+- cybernova_tool_receipts(task_id, limit=50)
 
-Qwen receives three session-bound tools:
+Qwen receives four session-bound tools:
 comm_request_review(question,evidence_refs), comm_post_progress(summary),
+comm_record_evidence(kind,observation,method,source_ref,source_sha256),
 comm_read_dialog(). The model cannot impersonate ChatGPT.
+
+Controller generates SHA256-only tool receipts separately from Qwen model claims.
+Qwen reports remain explicitly unverified; no scanner output or secrets are stored
+in the evidence journal. The review packet aggregates context, claims and receipts.
 
 ## Message lifecycle
 
@@ -109,3 +116,17 @@ and test on a harmless lab task:
 
 Unit tests with fake Qwen/MCP do not establish live deployment. Deployment
 must use the exact feature branch commit, not a previous Vast updater release.
+
+## Personal ChatGPT plan fallback
+
+The current full writable custom MCP integration is not generally available on
+personal ChatGPT plans. In the Cybernova Web UI, open Instruments / ChatGPT Review:
+copy the **Review Packet**, paste it into this ordinary ChatGPT conversation,
+and paste the response into **Reviewer feedback**. The user-relayed message
+is recorded as a human handoff, never fraudulently as authenticated ChatGPT.
+The Qwen worker picks it up and continues the same task; no paid API is used.
+
+The public Cloudflare tunnel exposes only the allowlisted review endpoints via
+the existing HTTPS + HTTP Basic bridge. It does not expose Communication MCP
+or Ollama. For true unattended ChatGPT ↔ Qwen review, a supported authenticated
+connector or GitHub-mediated relay remains to be integrated and validated.
