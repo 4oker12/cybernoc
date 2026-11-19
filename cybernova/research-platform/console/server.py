@@ -194,6 +194,7 @@ def _ollama_health() -> bool:
 class ChatGPTReviewRequest(BaseModel):
     model: str = Field(min_length=1, max_length=160)
     prompt: str = Field(min_length=1, max_length=12000)
+    session_id: str | None = Field(default=None, min_length=16, max_length=100)
 
 
 @app.get("/api/siwc/status")
@@ -237,9 +238,17 @@ def siwc_models():
 def siwc_review(payload: ChatGPTReviewRequest):
     """Explicit review; no Qwen history or artifact is uploaded automatically."""
     try:
-        return chatgpt_review(payload.model, payload.prompt)
+        outcome = chatgpt_review(payload.model, payload.prompt)
     except SIWCError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
+    if payload.session_id:
+        with sessions_lock:
+            state = sessions.get(payload.session_id)
+        if state is not None and state.get("task_id"):
+            item = communication_store().append(
+                state["task_id"], "chatgpt", "result", outcome["answer"][:12000])
+            outcome["event_seq"] = item["seq"]
+    return outcome
 
 
 @app.post("/api/siwc/disconnect")
