@@ -22,12 +22,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install portable runtime dependencies
+        run: python -m pip install -r cybernova/research-platform/console/requirements.txt
       - name: Compile new project source
         run: python -m compileall -q cybernova/research-platform
       - name: Parse frontend JavaScript
         run: node --check cybernova/research-platform/console/static/app.js
       - name: Run offline policy, evidence, WAK research and installer unit tests
         run: python -m unittest discover -s cybernova/research-platform/tests -p 'test_*.py' -v
+      - name: Validate portable deployment on a fresh machine
+        run: |
+          cd cybernova/research-platform/portable
+          python manage.py init --provider ollama --model qwen2.5-coder:7b
+          docker compose -f compose.yaml config -q
+          docker compose -f compose.yaml -f compose.gpu.yaml --profile local-ollama config -q
+          cd ../../..
+          docker build -t cybernova-portable:ci -f cybernova/research-platform/portable/Dockerfile .
       - name: Check tool registry and dry-run installation inventory
         run: |
           python cybernova/research-platform/cli.py catalog > /tmp/cybernova-catalog-check.json
