@@ -1,7 +1,7 @@
 """Public web research tools for Cybernova.
 
-Google SERP access is best-effort HTML reading, not Google's discontinued
-Custom Search JSON API. Source pages are fetched read-only over pinned,
+Google SERP access is best-effort HTML reading, not Google's Custom Search
+JSON API (closed to new customers). Source pages are fetched read-only over pinned,
 validated public HTTPS connections. No cookies, JS, credentials or form posts.
 """
 from __future__ import annotations
@@ -59,7 +59,7 @@ def sanitize_search_query(query: object, blocked_hosts=()) -> str:
     """Remove credentials and local identifiers before a query leaves the host."""
     if not isinstance(query, str):
         raise ResearchWebError("search_query_must_be_text")
-    if len(query) > MAX_QUERY or any(ord(ch) < 32 and ch not in "\t\n\r" for ch in query):
+    if len(query) > 10000 or any(ord(ch) < 32 and ch not in "\t\n\r" for ch in query):
         raise ResearchWebError("search_query_invalid")
     value = SECRET_QUERY.sub("[redacted]", query)
     value = EMAIL.sub("[redacted-email]", value)
