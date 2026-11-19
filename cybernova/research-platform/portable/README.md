@@ -147,6 +147,11 @@ python3 manage.py verify-source
 python3 manage.py export-source --to /SECURE_OFFLINE/source
 ~~~
 
+В GitHub Actions дополнительно работает `repo_guard.py`: сборка падает,
+если в Git случайно добавлены SQLite-БД, HAR/PCAP, ключи, зашифрованные
+архивы или большие веса моделей. Он проверяет имена и размеры отслеживаемых
+файлов, но не заменяет полноценный секрет-сканер и контроль доступа.
+
 verify-source запускает git fsck и показывает SHA коммита. Docker-образ
 маркируется org.opencontainers.image.revision, а код проверяется GitHub CI.
 export-source создаёт проверяемый Git bundle с SHA-256 для офлайн-копии кода.
