@@ -86,7 +86,7 @@ class CollaborationTests(unittest.TestCase):
         self.assertIn("Первый ответ", bodies)
         self.assertTrue(any("Новая редакция задачи" in x for x in bodies))
         self.assertEqual(scope_store.load(tid), initial_scope)
-        before = len(run["messages"])
+        before = len(self.collab.read(tid)["messages"])
         self.collab.update_goal(tid, "Новая задача для аудита API")
         self.assertEqual(len(self.collab.read(tid)["messages"]), before)
         with self.assertRaisesRegex(CollaborationError, "invalid_collaboration_goal"):
@@ -232,7 +232,9 @@ class CollaborationTests(unittest.TestCase):
             for _ in range(2):
                 response=client.post("/api/collab/step",json={"task_id":task_id})
                 self.assertEqual(response.status_code,200,response.text)
-            self.assertEqual(response.json()["run"]["state"],"paused")
+            # We switched the existing 1-exchange conversation to 7 more
+            # exchanges; the next pause now occurs at step 16.
+            self.assertEqual(response.json()["run"]["state"],"active")
             finished=client.post("/api/collab/finish",json={"task_id":task_id})
             self.assertEqual(finished.status_code,200,finished.text)
             self.assertEqual(finished.json()["state"],"completed")
