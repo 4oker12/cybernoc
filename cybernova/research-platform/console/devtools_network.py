@@ -154,8 +154,10 @@ def summarize_response(content_type: str, body: bytes, headers: dict | None = No
     return summary
 
 
-def _capture(url: str, allowed_hosts: set[str], *, runner=None) -> dict:
+def _capture(url: str, allowed_hosts: set[str], *, runner=None, capture_detail="metadata") -> dict:
     # All configured domains use exact matches (no *.wildcards or subdomains).
+    if capture_detail not in {"metadata", "evidence"}:
+        raise ValueError("invalid_capture_detail")
     if not isinstance(url, str) or len(url) > 850:
         raise ValueError("invalid_capture_url")
     try:
@@ -169,22 +171,23 @@ def _capture(url: str, allowed_hosts: set[str], *, runner=None) -> dict:
     if runner is not None:
         result = runner(url, {host: pin}, allowed_hosts)
     else:
-        result = _playwright_run(url, {host: pin}, allowed_hosts)
+        result = _playwright_run(url, {host: pin}, allowed_hosts, capture_detail=capture_detail)
     return {
         "ok": True, "url": "https://" + host + (parsed.path or "/"),
         "browser": "Chromium Playwright (isolated)",
         "collection": "DevTools-equivalent browser Network metadata",
         "capture": result,
+        "capture_detail": capture_detail,
         "limitations": [
             "Only approved public HTTPS host, read-only GET/HEAD requests",
             "Third-party resources and WebSockets blocked; site behavior may differ",
-            "No request/response bodies, cookies, tokens, full query values or private IPs",
+            "Evidence mode includes response hashes, safe headers, JSON schema, and redacted snippets; no cookies, tokens or private IPs",
             "Only single page load and brief passive wait, no clicks or form submissions",
         ],
     }
 
 
-def _playwright_run(url: str, pinned: dict[str, str], allowed_hosts: set[str]) -> dict:
+def _playwright_run(url: str, pinned: dict[str, str], allowed_hosts: set[str], *, capture_detail="metadata") -> dict:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -192,6 +195,7 @@ def _playwright_run(url: str, pinned: dict[str, str], allowed_hosts: set[str]) -
     rows: list[dict] = []
     req_index: dict[object, dict] = {}
     blocked = Counter()
+    response_refs = []
 
     def on_request(req):
         reason = _decision(req.url, req.method, allowed_hosts)
@@ -209,6 +213,9 @@ def _playwright_run(url: str, pinned: dict[str, str], allowed_hosts: set[str]) -
         item = req_index.get(resp.request)
         if item is not None:
             item["status"] = int(resp.status)
+            if capture_detail == "evidence" and len(response_refs) < 32:
+                if resp.request.resource_type in {"document", "xhr", "fetch"}:
+                    response_refs.append((resp, item))
 
     def on_failed(req):
         item = req_index.get(req)
@@ -263,6 +270,20 @@ def _playwright_run(url: str, pinned: dict[str, str], allowed_hosts: set[str]) -
                     title = page.title()[:160]
                     headings = page.locator("h1, h2").all_text_contents()[:12]
                     excerpt = page.locator("body").inner_text(timeout=4000)[:MAX_PAGE_TEXT]
+                    if capture_detail == "evidence":
+                        for resp, entry in response_refs:
+                            try:
+                                ctype = resp.headers.get("content-type", "")
+                                content_length = int(resp.headers.get("content-length", "0"))
+                                if content_length > 400_000 or not any(
+                                        kind in ctype.lower() for kind in (
+                                            "json", "html", "text/", "javascript", "xml")):
+                                    continue
+                                body = resp.body()
+                                entry["evidence"] = summarize_response(ctype, body, resp.headers)
+                            except Exception:
+                                entry["evidence_error"] = "body_unavailable"
+
                 finally:
                     ctx.close()
             finally:
@@ -293,7 +314,7 @@ def _playwright_run(url: str, pinned: dict[str, str], allowed_hosts: set[str]) -
     }
 
 
-def network_call(name: str, args: dict, upstream, *, extra_hosts=None, runner=None):
+def network_call(name: str, args: dict, upstream, *, extra_hosts=None, runner=None, capture_detail="metadata"):
     if name not in NETWORK_NAMES:
         raise ValueError("unknown_network_tool")
     if not isinstance(args, dict) or set(args) != {"url"}:
@@ -308,4 +329,4 @@ def network_call(name: str, args: dict, upstream, *, extra_hosts=None, runner=No
     hosts = {h for h in authorized if isinstance(h, str)}
     hosts.update(h.strip() for h in os.environ.get("CYBERNOVA_BROWSER_HOSTS", "").split(",") if h.strip())
     hosts.update(extra_hosts or ())
-    return _capture(args["url"], hosts, runner=runner)
+    return _capture(args["url"], hosts, runner=runner, capture_detail=capture_detail)
