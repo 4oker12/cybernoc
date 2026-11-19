@@ -123,8 +123,8 @@ class ModelProviderTests(unittest.TestCase):
             {"role":"user","content":"Проверь подсеть"},
             {"role":"assistant","content":answer["content"],
              "reasoning_content":answer["reasoning_content"],
+             "tool_calls":answer["tool_calls"]},
             {"role":"tool","content":"{\"network\":\"192.0.2.0/24\"}"},
-            {"role":"tool","content":"{\\"network\\":\\"192.0.2.0/24\\"}"},
         ])
         self.assertEqual(normalized[2]["reasoning_content"],
                          "I should inspect the subnet tool.")
