@@ -123,7 +123,23 @@ class CollaborationStore:
         if row is None:
             raise CollaborationError("collaboration_not_found")
         run = {key: row[key] for key in row.keys()}
-        dialog = self.comm.read_dialog(task_id, after=after, limit=100)
+        if after == 0:
+            # Show the most recent hundred messages even after many resumed
+            # batches; older content remains intact and pageable in SQLite.
+            task = self.comm.get_task(task_id)
+            with self.comm._connection() as db:
+                rows = db.execute(
+                    "SELECT * FROM messages WHERE task_id=? "
+                    "ORDER BY seq DESC LIMIT 100", (task_id,),
+                ).fetchall()
+            rows = list(reversed(rows))
+            dialog = {
+                "task": task,
+                "messages": [self.comm._message(r) for r in rows],
+                "next_after": rows[-1]["seq"] if rows else 0,
+            }
+        else:
+            dialog = self.comm.read_dialog(task_id, after=after, limit=100)
         # A process can terminate between committing a message and updating
         # the run cursor. Never replay that model call or silently duplicate a
         # turn on recovery: require manual review instead.
