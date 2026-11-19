@@ -61,16 +61,18 @@ class TrafficToolClient:
             from .domain_tools import DOMAIN_TOOLS
             from .scoped_network_tools import SCOPED_TOOLS
             from .lab_scanners import SCANNER_TOOLS
+            from .browser_tools import BROWSER_TOOLS
         except ImportError:
             from domain_tools import DOMAIN_TOOLS
             from scoped_network_tools import SCOPED_TOOLS
             from lab_scanners import SCANNER_TOOLS
+            from browser_tools import BROWSER_TOOLS
         try:
             remote = self.upstream.initialize()
         except Exception:
             # Offline artifact reasoning remains possible if remote MCP is down.
             remote = []
-        return remote + LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS
+        return remote + LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS
 
     def _reports(self) -> list[dict]:
         return list(self.artifacts.values())[:MAX_ARTIFACTS]
@@ -87,10 +89,17 @@ class TrafficToolClient:
             from .domain_tools import DOMAIN_NAMES, domain_call
             from .scoped_network_tools import SCOPED_NAMES, scoped_call
             from .lab_scanners import SCANNER_TOOL_NAMES, dispatch_scanner
+            from .browser_tools import BROWSER_NAMES, browser_call
         except ImportError:
             from domain_tools import DOMAIN_NAMES, domain_call
             from scoped_network_tools import SCOPED_NAMES, scoped_call
             from lab_scanners import SCANNER_TOOL_NAMES, dispatch_scanner
+            from browser_tools import BROWSER_NAMES, browser_call
+        if name in BROWSER_NAMES:
+            try:
+                return browser_call(name, args, self.upstream), False
+            except (OSError, ValueError) as exc:
+                return {"ok": False, "error": type(exc).__name__+":"+str(exc)[:180]}, True
         if name in SCANNER_TOOL_NAMES:
             return dispatch_scanner(name, args)
         if name in SCOPED_NAMES:
