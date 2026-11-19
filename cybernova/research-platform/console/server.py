@@ -268,7 +268,7 @@ class ProfileSettingsRequest(BaseModel):
 class CollaborationStartRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=3000)
     model: str = Field(min_length=1, max_length=160)
-    cycles: int = Field(default=2, ge=1, le=3)
+    cycles: int = Field(default=5, ge=1, le=12)
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
 
 
@@ -328,6 +328,22 @@ def collaboration_stop(payload: CollaborationActionRequest):
         return collaboration_store().halt(payload.task_id)
     except (CollaborationError, CommunicationError):
         raise HTTPException(status_code=404, detail="collaboration_not_found") from None
+
+
+@app.post("/api/collab/resume")
+def collaboration_resume(payload: CollaborationActionRequest):
+    try:
+        return collaboration_store().resume(payload.task_id)
+    except (CollaborationError, CommunicationError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+
+@app.post("/api/collab/finish")
+def collaboration_finish(payload: CollaborationActionRequest):
+    try:
+        return collaboration_store().finish(payload.task_id)
+    except (CollaborationError, CommunicationError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @app.post("/api/collab/step")
