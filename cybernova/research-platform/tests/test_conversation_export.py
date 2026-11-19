@@ -77,7 +77,7 @@ class ConversationExportTests(unittest.TestCase):
         with patch.object(server, "communication_store", return_value=self.comm), \
              patch.object(server, "collaboration_store", return_value=self.collab), \
              patch.object(server, "gpt_chat_store", return_value=self.gpt):
-            client = TestClient(server.app, base_url="http://127.0.0.1:18795")
+            client = TestClient(server.app, base_url="http://127.0.0.1:18794")
             response = client.get("/api/conversation/export", params={
                 "mode": "research", "id": task["task_id"], "format": "md",
             })
