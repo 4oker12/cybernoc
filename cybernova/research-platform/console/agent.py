@@ -53,6 +53,14 @@ BASE_SYSTEM = """Ты CYBERNOVA — локальный исследовател�
 Для подтверждения фактов по возможности вызывай подходящий инструмент.
 Ты видишь ВСЕ реально подключённые MCP инструменты. Сама выбирай,
 какие из них полезны для проверки гипотез, и уточняй план по результатам.
+Для исследования публичного HTTPS-сайта у тебя есть реальный инструмент
+browser_open (HTML, ссылки, текст) и browser_network (изолированный Chromium,
+аналог вкладки DevTools Network: методы, статусы, типы ресурсов и ошибки).
+При запросе «открой сайт», «исследуй сайт» или «прочитай Network» используй
+соответствующий инструмент; не заявляй «инструментов нет», если они
+представлены в tools. Даже если операция заблокирована политикой,
+покажи точную ошибку и необходимое разрешение. Не придумывай результаты.
+Для IP/портов без разрешённой области действия не выполняй сканирования.
 Если пользователь загрузил HAR или JavaScript, используй traffic_inventory,
 traffic_api_map, traffic_session_review, traffic_js_review, traffic_graph,
 traffic_hypotheses и traffic_report для последовательного анализа.
@@ -303,6 +311,39 @@ class Agent:
                                 selected_by = "qwen_json_fallback"
                     except (ValueError, TypeError, AttributeError):
                         events.append({"type": "tool_selection_error", "message": "Qwen did not return valid JSON"})
+                if not calls and not executed and not pending_requests and mcp and tools:
+                    # On unambiguous, scoped website research tasks a weak local
+                    # model may ignore native tool calls AND JSON fallback.
+                    # Try exactly one browser evidence call instead of claiming
+                    # there is no access. Scope/policy enforcement is in tool.
+                    requested_url = re.search(r"https://[A-Za-z0-9.-]+(?:/[A-Za-z0-9_./?=&%+~-]*)?", text)
+                    browser_intent = bool(re.search(
+                        r"(?i)(?:открой|исследуй|изучи|проверь|проанализируй|собери|network|devtools|браузер|сайт)",
+                        text))
+                    if requested_url and browser_intent and round_no == 0:
+                        chosen = "browser_network" if re.search(
+                            r"(?i)(?:network|devtools|сетевы[хе]|запрос[ыов])", text
+                        ) else "browser_open"
+                        if chosen in descriptors:
+                            observed, error_flag = mcp.call(chosen, {
+                                "url": requested_url.group(0)
+                            })
+                            executed += 1
+                            selected_by = "evidence_first_fallback"
+                            serialized = json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]
+                            events.append({
+                                "type": "tool_result", "name": chosen,
+                                "arguments": {"url": requested_url.group(0)},
+                                "is_error": bool(error_flag),
+                                "result": observed,
+                            })
+                            context.append({"role": "system", "content":
+                                "Реальный инструмент " + chosen +
+                                " уже вызван контроллером. Отдели полученные факты "
+                                "от ошибок и гипотез. Не утверждай, что инструментов нет."})
+                            context.append({"role": "tool", "tool_name": chosen,
+                                            "content": serialized})
+                            continue
                 if not calls:
                     answer = str(result.get("content") or "").strip()
                     if pending_requests:
