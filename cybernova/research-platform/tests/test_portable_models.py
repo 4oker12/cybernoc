@@ -110,6 +110,49 @@ class ModelProviderTests(unittest.TestCase):
         with self.assertRaises(ModelConfigError):
             _normalize_context([{"role":"tool","content":"orphan"}])
 
+    def test_reasoning_model_uses_completion_tokens_without_forced_temperature(self):
+        transmitted=[]
+        def transport(payload):
+            transmitted.append(payload)
+            return {"choices":[{"message":{"content":"Проверено"}}]}
+        with patch.dict(os.environ,{
+            "CYBERNOVA_LLM_TOKEN_PARAMETER":"",
+            "CYBERNOVA_LLM_TEMPERATURE":"",
+        }):
+            backend=OpenAICompatibleClient(
+                base_url="https://api.example/v1",model="gpt-6",
+                api_key="test-no-real-key",transport=transport,
+            )
+            self.assertEqual(backend.chat([{"role":"user","content":"Проверка"}])["content"],
+                             "Проверено")
+        self.assertIn("max_completion_tokens",transmitted[0])
+        self.assertNotIn("max_tokens",transmitted[0])
+        self.assertNotIn("temperature",transmitted[0])
+
+    def test_compatibility_parameters_are_opt_in_and_validated(self):
+        transmitted=[]
+        def transport(payload):
+            transmitted.append(payload)
+            return {"choices":[{"message":{"content":"ok"}}]}
+        backend=OpenAICompatibleClient(base_url="https://api.example/v1",
+                                       model="provider-model",
+                                       api_key="test-no-real-key",transport=transport)
+        with patch.dict(os.environ,{
+            "CYBERNOVA_LLM_TOKEN_PARAMETER":"max_tokens",
+            "CYBERNOVA_LLM_TEMPERATURE":"0.2",
+        }):
+            backend.chat([{"role":"user","content":"test"}])
+        self.assertEqual(transmitted[-1]["max_tokens"],1100)
+        self.assertEqual(transmitted[-1]["temperature"],0.2)
+        with patch.dict(os.environ,{"CYBERNOVA_LLM_TOKEN_PARAMETER":"unsafe_key",
+                                     "CYBERNOVA_LLM_TEMPERATURE":""}):
+            with self.assertRaises(ModelConfigError):
+                backend.chat([{"role":"user","content":"test"}])
+        with patch.dict(os.environ,{"CYBERNOVA_LLM_TOKEN_PARAMETER":"max_tokens",
+                                     "CYBERNOVA_LLM_TEMPERATURE":"not_a_number"}):
+            with self.assertRaises(ModelConfigError):
+                backend.chat([{"role":"user","content":"test"}])
+
     def test_json_mode_and_provider_errors_never_echo_credentials(self):
         def transport(payload):
             self.assertEqual(payload["response_format"],{"type":"json_object"})
