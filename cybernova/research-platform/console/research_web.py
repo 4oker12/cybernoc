@@ -29,8 +29,8 @@ _RATE = {"search": deque(), "open": deque()}
 RATE_WINDOW_SECONDS = 60
 RATE_LIMITS = {"search": 8, "open": 12}
 SECRET_QUERY = re.compile(
-    r"(?i)\b(?:bearer\s+\S+|(?:api[_-]?key|access[_-]?token|password|passwd|"
-    r"secret|authorization)\s*[:=]\s*[^\s,;]+)"
+    r"(?i)\b(?:bearer\s+\S+|(?:api[_-]?key|access[_-]?token|token|password|passwd|"
+    r"secret|authorization|cookie|session)\s*[:=]\s*[^\s,;]+)"
 )
 EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 MAC = re.compile(r"(?i)\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b")
