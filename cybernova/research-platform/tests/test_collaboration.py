@@ -62,6 +62,42 @@ class CollaborationTests(unittest.TestCase):
         with self.assertRaisesRegex(CollaborationError, "not_active"):
             reopened.advance(task_id, "qwen", "Ещё одна попытка")
 
+    def test_goal_edit_requires_pause_preserves_history_and_scope(self):
+        from console.research_scope import ResearchScopeStore
+        run = self.collab.create("Исходная задача", "gpt-test", 2)
+        tid = run["task_id"]
+        scope_store = ResearchScopeStore(self.comm.path)
+        initial_scope = scope_store.load(tid)
+        with self.assertRaisesRegex(CollaborationError, "must_be_paused_to_edit"):
+            self.collab.update_goal(tid, "Новая задача")
+        self.collab.advance(tid, "chatgpt", "Первый план")
+        self.collab.advance(tid, "qwen", "Первый ответ")
+        self.collab.halt(tid)
+        run = self.collab.update_goal(tid, "Новая задача для аудита API")
+        self.assertEqual(run["goal"], "Новая задача для аудита API")
+        self.assertEqual(run["state"], "paused")
+        self.assertEqual(run["step"], 2)
+        bodies = [m["body"] for m in run["messages"]]
+        self.assertIn("Исходная задача", bodies)
+        self.assertIn("Первый план", bodies)
+        self.assertIn("Первый ответ", bodies)
+        self.assertTrue(any("Новая редакция задачи" in x for x in bodies))
+        self.assertEqual(scope_store.load(tid), initial_scope)
+        before = len(run["messages"])
+        self.collab.update_goal(tid, "Новая задача для аудита API")
+        self.assertEqual(len(self.collab.read(tid)["messages"]), before)
+        with self.assertRaisesRegex(CollaborationError, "invalid_collaboration_goal"):
+            self.collab.update_goal(tid, " ")
+        self.collab.resume(tid)
+        self.assertIn("Новая задача для аудита API",
+                      mentor_messages(self.collab.read(tid))[0]["content"])
+        self.collab.advance(tid, "chatgpt", "Сначала изучи контракт API")
+        history, prompt = researcher_messages(self.collab.read(tid))
+        self.assertIn("Новая задача для аудита API", prompt)
+        self.assertIn("Новая задача для аудита API", history[0]["content"])
+        reopened = CollaborationStore(CommunicationStore(self.comm.path))
+        self.assertEqual(reopened.read(tid)["goal"], "Новая задача для аудита API")
+
     def test_stop_does_not_advance(self):
         run = self.collab.create("Проверь тестовый проект", "gpt-test", 3)
         run = self.collab.halt(run["task_id"])
@@ -177,6 +213,15 @@ class CollaborationTests(unittest.TestCase):
             self.assertEqual(response.json()["run"]["state"], "paused")
             self.assertEqual(client.post("/api/collab/step",
                                          json={"task_id":task_id}).status_code,409)
+            revised=client.post("/api/collab/goal",json={
+                "task_id":task_id, "goal":"Изучить только безопасный контракт API"
+            })
+            self.assertEqual(revised.status_code,200,revised.text)
+            self.assertEqual(revised.json()["state"],"paused")
+            self.assertIn("Изучить только безопасный контракт API",
+                          [m["body"] for m in revised.json()["messages"]][-1])
+            self.assertEqual(client.post("/api/collab/goal",json={
+                "task_id":task_id, "goal":" "}).status_code,409)
             resumed=client.post("/api/collab/resume",json={"task_id":task_id})
             self.assertEqual(resumed.status_code,200,resumed.text)
             self.assertEqual(resumed.json()["pause_at"],4)
@@ -188,6 +233,8 @@ class CollaborationTests(unittest.TestCase):
             self.assertEqual(finished.status_code,200,finished.text)
             self.assertEqual(finished.json()["state"],"completed")
             self.assertEqual(len(calls), 2)
+            self.assertIn("Изучить только безопасный контракт API",
+                          calls[1][0][0]["content"])
             self.assertIn("DeepSeek", calls[1][0][-1]["content"])
             self.assertIn("ведущий инженер", calls[0][1]["profile_instructions"])
             self.assertGreaterEqual(len(client.get("/api/collab/run",
@@ -199,7 +246,8 @@ class CollaborationTests(unittest.TestCase):
         for path, method in [
             ("/api/collab/start", "POST"), ("/api/collab/step", "POST"),
             ("/api/collab/stop", "POST"), ("/api/collab/resume", "POST"),
-            ("/api/collab/finish", "POST"), ("/api/collab/runs", "GET"),
+            ("/api/collab/finish", "POST"), ("/api/collab/goal", "POST"),
+            ("/api/collab/runs", "GET"),
             ("/api/collab/run?task_id=x", "GET"), ("/api/tools/run", "POST"),
         ]:
             self.assertTrue(allowed_path(path,method),path)
