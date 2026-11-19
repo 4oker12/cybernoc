@@ -3,8 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import sys
 
 from fastapi.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from console import server
 from console.profile_settings import (
@@ -98,7 +102,7 @@ class ProfileSettingsTests(unittest.TestCase):
              patch.object(server, "gpt_chat_store", return_value=self.chat_store), \\
              patch.object(server, "chatgpt_chat", side_effect=fake_chat):
             result = server.siwc_chat_message(server.ChatGPTMessageRequest(
-                model="gpt-test-model", message="Проверь контекст",
+                model="gpt-6.2-sol", message="Проверь контекст",
             ))
         self.assertEqual(result["answer"], "Ответ")
         self.assertIn("ISP NOC", calls[0]["user_context"])
