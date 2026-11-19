@@ -35,6 +35,7 @@ try:
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
+    from .developer_tools import DEV_TOOLS
     from .communication_worker import CommunicationWorker
     from .evidence import EvidenceJournal
     from .upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
@@ -56,6 +57,7 @@ except ImportError:
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
+    from developer_tools import DEV_TOOLS
     from communication_worker import CommunicationWorker
     from evidence import EvidenceJournal
     from upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
@@ -352,7 +354,7 @@ def status():
         mcp_ok = True
     except Exception:
         remote_tools, mcp_ok = [], False
-    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + COMMUNICATION_TOOLS]
+    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS]
     return {
         "model": MODEL,
         "source_commit": os.environ.get("CYBERNOVA_SOURCE_COMMIT","unknown"),
@@ -364,6 +366,9 @@ def status():
         "auto_executable": sorted(set(tools) & REVIEWED_TOOLS),
         "others_require_approval": sorted(set(tools) - REVIEWED_TOOLS),
         "tools_selection": "automatic_qwen",
+        "developer": {"mode": "task_isolated_git_worktree", "self_modification": True,
+                      "code_edit": True, "unprivileged_tests": True,
+                      "push_and_pr": "require_approval_and_write_credentials"},
         "http_get": "available_for_preconfigured_mcp_hosts_only",
         "traffic_intelligence": "offline_multi_domain_analysis",
         "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
