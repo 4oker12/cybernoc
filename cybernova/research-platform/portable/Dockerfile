@@ -4,13 +4,18 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app
 WORKDIR /app
 
+ARG CYBERNOVA_GIT_SHA=unknown
+LABEL org.opencontainers.image.title="Cybernova Research Lab" \
+      org.opencontainers.image.revision="${CYBERNOVA_GIT_SHA}"
+ENV CYBERNOVA_SOURCE_COMMIT=${CYBERNOVA_GIT_SHA}
+
 COPY cybernova/research-platform/console/requirements.txt /tmp/cybernova-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/cybernova-requirements.txt && \
     groupadd -g 10001 cybernova && \
     useradd -M -u 10001 -g 10001 -s /usr/sbin/nologin cybernova && \
     mkdir -p /data /app/tool_gateway && chown -R 10001:10001 /data
 
-COPY cybernova/research-platform/console /app/console
+COPY cybernova/research-platform /app/
 COPY cybernova/qwen-webui/mcp-gateway/core.py /app/tool_gateway/core.py
 COPY cybernova/qwen-webui/mcp-gateway/http_client.py /app/tool_gateway/http_client.py
 COPY cybernova/research-platform/portable/empty_scope.json /app/tool_gateway/scope.json
