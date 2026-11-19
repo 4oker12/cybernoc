@@ -175,7 +175,7 @@ function showEvents(events,count,mode,reply){
     const receipt=node("div","tool-receipt");
     receipt.append(node("strong","",count+" реальных вызовов MCP"),
       node("span","",mode==="native"?"· выбрала модель (native tools)":
-        mode==="qwen_json_fallback"?"· план выбрала модель": "· выбран контроллером"));
+        mode==="model_json_fallback"?"· план выбрала модель": "· выбран контроллером"));
     reply.wrap.insertBefore(receipt,inline);
   }
 }
