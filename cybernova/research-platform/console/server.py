@@ -365,7 +365,7 @@ def status():
         "tools": tools,
         "auto_executable": sorted(set(tools) & REVIEWED_TOOLS),
         "others_require_approval": sorted(set(tools) - REVIEWED_TOOLS),
-        "tools_selection": "automatic_qwen",
+        "tools_selection": "automatic_model",
         "developer": {"mode": "task_isolated_git_worktree", "self_modification": True,
                       "code_edit": True, "unprivileged_tests": True,
                       "push_and_pr": "require_approval_and_write_credentials"},

@@ -14,7 +14,7 @@ from console.model_providers import (
     OpenAICompatibleClient, ModelConfigError, _endpoint, _normalize_context,
     build_model_client, provider_name,
 )
-from console.agent import OllamaClient, Agent
+from console.agent import OllamaClient, Agent, BASE_SYSTEM
 
 
 class ModelProviderTests(unittest.TestCase):
@@ -93,6 +93,78 @@ class ModelProviderTests(unittest.TestCase):
         self.assertEqual(answer["tool_calls"][0]["function"]["name"],"gateway_status")
         self.assertEqual(payloads[0]["tools"][0]["function"]["name"],"gateway_status")
 
+    def test_deepseek_thinking_tool_call_round_trips_reasoning_content(self):
+        transmitted=[]
+        def transport(payload):
+            transmitted.append(payload)
+            return {"choices":[{"message":{
+                "role":"assistant","content":"",
+                "reasoning_content":"I should inspect the subnet tool.",
+                "tool_calls":[{"id":"call_deepseek_1","type":"function",
+                    "function":{"name":"ip_network_summary",
+                                "arguments":"{\"cidr\":\"192.0.2.7/24\"}"}}]
+            }}]}
+        backend=OpenAICompatibleClient(
+            base_url="https://api.deepseek.com",model="deepseek-flash",
+            api_key="test-deepseek-key",transport=transport,
+        )
+        tools=[{"type":"function","function":{
+            "name":"ip_network_summary",
+            "parameters":{"type":"object","properties":{"cidr":{"type":"string"}}}
+        }}]
+        answer=backend.chat([{"role":"system","content":BASE_SYSTEM},
+                             {"role":"user","content":"Проверь подсеть"}],tools=tools)
+        self.assertEqual(backend.endpoint,"https://api.deepseek.com/chat/completions")
+        self.assertEqual(transmitted[0]["thinking"],{"type":"enabled"})
+        self.assertEqual(answer["reasoning_content"],"I should inspect the subnet tool.")
+        self.assertEqual(answer["tool_calls"][0]["id"],"call_deepseek_1")
+        normalized=_normalize_context([
+            {"role":"system","content":BASE_SYSTEM},
+            {"role":"user","content":"Проверь подсеть"},
+            {"role":"assistant","content":answer["content"],
+             "reasoning_content":answer["reasoning_content"],
+             "tool_calls":answer["tool_calls"]},
+            {"role":"tool","content":"{\"network\":\"192.0.2.0/24\"}"},
+        ])
+        self.assertEqual(normalized[2]["reasoning_content"],
+                         "I should inspect the subnet tool.")
+        self.assertEqual(normalized[3]["tool_call_id"],"call_deepseek_1")
+
+    def test_deepseek_can_be_disabled_from_thinking_mode(self):
+        transmitted=[]
+        def transport(payload):
+            transmitted.append(payload)
+            return {"choices":[{"message":{"content":"ok"}}]}
+        backend=OpenAICompatibleClient(
+            base_url="https://api.deepseek.com",model="deepseek-flash",
+            api_key="test-deepseek-key",transport=transport,
+        )
+        with patch.dict(os.environ,{"CYBERNOVA_DEEPSEEK_THINKING":"disabled"}):
+            backend.chat([{"role":"user","content":"test"}])
+        self.assertEqual(transmitted[0]["thinking"],{"type":"disabled"})
+
+    def test_hosted_model_receives_shared_cybernova_profile(self):
+        transmitted=[]
+        class EmptyMCP:
+            def initialize(self):
+                return []
+        def transport(payload):
+            transmitted.append(payload)
+            return {"choices":[{"message":{"role":"assistant","content":"Профиль получен."}}]}
+        backend=OpenAICompatibleClient(
+            base_url="https://api.deepseek.com",model="deepseek-flash",
+            api_key="test-deepseek-key",transport=transport,
+        )
+        result=Agent(backend,mcp_factory=EmptyMCP).run(
+            [],"Проверь наличие своего рабочего профиля",force_tools=False
+        )
+        self.assertEqual(result["answer"],"Профиль получен.")
+        system=transmitted[0]["messages"][0]
+        self.assertEqual(system["role"],"system")
+        self.assertIn("единственной активной моделью",system["content"])
+        self.assertIn("разработчик самой Cybernova",system["content"])
+        self.assertIn("Chromium/Playwright",system["content"])
+
     def test_controller_tool_history_translated_to_valid_openai_protocol(self):
         messages=[
             {"role":"user","content":"Run"},
@@ -142,7 +214,7 @@ class ModelProviderTests(unittest.TestCase):
             "CYBERNOVA_LLM_TEMPERATURE":"0.2",
         }):
             backend.chat([{"role":"user","content":"test"}])
-        self.assertEqual(transmitted[-1]["max_tokens"],1100)
+        self.assertEqual(transmitted[-1]["max_tokens"],4096)
         self.assertEqual(transmitted[-1]["temperature"],0.2)
         with patch.dict(os.environ,{"CYBERNOVA_LLM_TOKEN_PARAMETER":"unsafe_key",
                                      "CYBERNOVA_LLM_TEMPERATURE":""}):

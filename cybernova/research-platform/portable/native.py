@@ -207,15 +207,21 @@ def start(data: Path) -> dict:
 
 def wizard(data: Path):
     print("Cybernova Native — без Docker; Vast/Linux/Windows")
-    print("1 — локальная Ollama; 2 — внешний OpenAI-совместимый API")
-    choice=input("Режим [1/2]: ").strip()
-    if choice not in {"1","2"}:
+    print("1 — локальная Ollama; 2 — DeepSeek API; 3 — другой OpenAI-совместимый API")
+    choice=input("Режим [1/2/3]: ").strip()
+    if choice not in {"1","2","3"}:
         raise NativeError("invalid_selection")
     provider="ollama" if choice=="1" else "openai_compatible"
-    model=input("Модель [cybernova-security:30b]: ").strip() or "cybernova-security:30b"
-    url=""
-    if provider=="openai_compatible":
+    if choice=="1":
+        model=input("Модель Ollama [cybernova-security:30b]: ").strip() or "cybernova-security:30b"
+        url=""
+    elif choice=="2":
+        model=input("Модель DeepSeek [deepseek-flash]: ").strip() or "deepseek-flash"
+        url="https://api.deepseek.com"
+    else:
+        model=input("Идентификатор модели: ").strip()
         url=input("HTTPS base URL: ").strip()
+    if provider=="openai_compatible":
         print("Внешняя модель получит контекст и ответы инструментов.")
         if input("Разрешаю передачу данных внешнему провайдеру? [yes/NO]: ").strip()!="yes":
             raise NativeError("external_model_not_approved")

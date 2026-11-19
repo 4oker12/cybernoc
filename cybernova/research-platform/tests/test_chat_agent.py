@@ -1,4 +1,4 @@
-"""No-network tests for Cybernova Qwen↔MCP policy and tool loop."""
+"""No-network tests for the provider-neutral Cybernova model↔MCP loop."""
 import json
 import sys
 import unittest
@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 from console.agent import (
     Agent, _arguments, _allowed_http, _safe_args, _tool_schema,
-    BackendError, MCPClient, OllamaClient,
+    BackendError, MCPClient, OllamaClient, BASE_SYSTEM,
 )
 
 TOOLS = [
@@ -46,7 +46,28 @@ class FakeOllama:
         return self.messages.pop(0)
 
 class AgentTests(unittest.TestCase):
-    def test_all_registered_tools_visible_to_qwen(self):
+    def test_shared_profile_is_provider_neutral_and_contains_project_background(self):
+        self.assertIn("единственной активной моделью", BASE_SYSTEM)
+        self.assertIn("локальная Qwen Heretic", BASE_SYSTEM)
+        self.assertIn("облачный DeepSeek", BASE_SYSTEM)
+        self.assertIn("разработчик самой Cybernova", BASE_SYSTEM)
+        self.assertIn("Chromium/Playwright", BASE_SYSTEM)
+        self.assertIn("Первоначальный исполнитель проекта", BASE_SYSTEM)
+        self.assertIn("отдельным посредником", BASE_SYSTEM)
+        self.assertIn("ИССЛЕДОВАТЕЛЬСКАЯ МИССИЯ CYBERNOVA", BASE_SYSTEM)
+        self.assertIn("РАЗБОР НЕЧЁТКОГО ЗАПРОСА", BASE_SYSTEM)
+        self.assertNotIn("Рекомендация Qwen", BASE_SYSTEM)
+
+    def test_reasoning_content_is_kept_in_agent_tool_loop(self):
+        mcp=FakeMCP()
+        first=calls(("ip_network_summary",{"cidr":"192.0.2.7/24"}))
+        first["reasoning_content"]="Select subnet summary tool."
+        lm=FakeOllama([first,{"role":"assistant","content":"Сеть 192.0.2.0/24."}])
+        Agent(lm,lambda:mcp).run([],"Проверь подсеть",force_tools=False)
+        assistant_turn=next(x for x in lm.prompts[1][0] if x.get("tool_calls"))
+        self.assertEqual(assistant_turn["reasoning_content"],"Select subnet summary tool.")
+
+    def test_all_registered_tools_visible_to_active_model(self):
         names = [t["function"]["name"] for t in _tool_schema(TOOLS, False)]
         self.assertEqual(names, ["gateway_status", "http_get", "ip_network_summary",
                                  "arbitrary_shell"])
@@ -104,7 +125,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(len([x for x in mcp.calls if x[0]=="http_get"]),3)
         self.assertIn("public_http_budget_exhausted",str(out["events"]))
 
-    def test_json_fallback_is_qwen_selected_and_validated(self):
+    def test_json_fallback_is_model_selected_and_validated(self):
         mcp=FakeMCP()
         lm=FakeOllama([
             {"role":"assistant","content":"No native calls"},
@@ -112,7 +133,7 @@ class AgentTests(unittest.TestCase):
             {"role":"assistant","content":"CIDR confirmed"},
         ])
         out=Agent(lm,lambda:mcp).run([],"Check CIDR",force_tools=True)
-        self.assertEqual(out["selected_by"],"qwen_json_fallback")
+        self.assertEqual(out["selected_by"],"model_json_fallback")
         self.assertEqual(out["tool_calls"],1)
         self.assertEqual(out["answer"],"CIDR confirmed")
 

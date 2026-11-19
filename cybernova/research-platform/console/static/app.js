@@ -3,7 +3,7 @@
 const $=id=>document.getElementById(id);
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
-  uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Qwen3-Coder 30B",
+  uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Активная модель",
   gptThreadId:null,gptConnected:false,gptPlanUsage:false,
   researchScope:{hosts:[],capture_detail:"evidence"}};
 const descriptions={
@@ -14,6 +14,15 @@ const descriptions={
   ip_network_summary:"Расчёт подсети",
   python_static_review:"Анализ Python",
 };
+function displayModelName(modelId){
+  const names={
+    "deepseek-flash":"DeepSeek Flash",
+    "deepseek-v4-pro":"DeepSeek V4 Pro",
+    "brianmatzelle/qwen3-coder-heretic:30b":"Qwen3-Coder Heretic 30B",
+    "cybernova-security:30b":"Qwen Heretic 30B",
+  };
+  return names[modelId]||modelId||"Активная модель";
+}
 const node=(tag,cls,txt)=>{
   const n=document.createElement(tag);
   if(cls)n.className=cls;
@@ -30,7 +39,7 @@ function setFormatted(body,content){
   }else{body.textContent=String(content);}
 }
 function renderMessage(role,content,pending=false,containerId="messages"){
-  const author=role==="chatgpt"?"ChatGPT":role==="user"?"Вы":"Qwen";
+  const author=role==="chatgpt"?"ChatGPT":role==="user"?"Вы":state.qwenModel||"Исследователь";
   const wrap=node("article","chat-msg "+
     (role==="user"?"from-user":role==="chatgpt"?"from-chatgpt":"from-agent")+
     (pending?" working":""));
@@ -56,10 +65,10 @@ function makeToolDetails(event){
 }
 function approvalCard(event){
   const card=node("div","approval-card");
-  const title=node("div","approval-title","Qwen запрашивает разрешение");
+  const title=node("div","approval-title","Модель запрашивает разрешение");
   const name=node("div","approval-tool",event.name||"MCP-инструмент");
   const explanation=[
-    event.purpose||"Qwen предложила этот вызов для текущей задачи.",
+    event.purpose||"Модель предложила этот вызов для текущей задачи.",
     event.tool_description ? "Описание функции: "+event.tool_description : "",
     event.reason||"Необходимо отдельное разрешение",
     "Ни один вызов не был выполнен.",
@@ -77,7 +86,7 @@ function approvalCard(event){
   no.addEventListener("click",()=>decideAction(requestId,"deny",card));
   consult.addEventListener("click",async()=>{
     const packet=[
-      "Cybernova — запрос Qwen на разрешение действия.",
+      "Cybernova — запрос модели на разрешение действия.",
       "Цель: "+(event.purpose||"Не указана"),
       "Инструмент: "+(event.name||"Неизвестен"),
       "Описание: "+(event.tool_description||"Не указано"),
@@ -155,7 +164,7 @@ function showEvents(events,count,mode,reply){
       }else if(event.type==="scope_change_required"){
         const notice=node("div","approval-card scope-notice");
         notice.append(node("div","approval-title","Нужно расширить область доступа"),
-          node("p","approval-reason","Qwen запросила внешний ресурс, которого нет в разрешённом scope MCP. "+
+          node("p","approval-reason","Модель запросила внешний ресурс, которого нет в разрешённом scope MCP. "+
             "Добавить домен может только администратор системы. Самостоятельного обхода ограничений нет."),
           node("pre","approval-args",JSON.stringify(event.arguments||{},null,2)));
         reply.wrap.append(notice);
@@ -165,8 +174,8 @@ function showEvents(events,count,mode,reply){
   if(reply && count){
     const receipt=node("div","tool-receipt");
     receipt.append(node("strong","",count+" реальных вызовов MCP"),
-      node("span","",mode==="native"?"· выбраны Qwen (native tools)":
-        mode==="qwen_json_fallback"?"· план выбрала Qwen": "· выбран контроллером"));
+      node("span","",mode==="native"?"· выбрала модель (native tools)":
+        mode==="model_json_fallback"?"· план выбрала модель": "· выбран контроллером"));
     reply.wrap.insertBefore(receipt,inline);
   }
 }
@@ -276,7 +285,7 @@ function busy(on){
   $("messageInput").disabled=on;
   $("newSession").disabled=on;
   $("artifactFile").disabled=on;
-  $("sendStatus").textContent=on?(state.mode==="gpt"?"ChatGPT отвечает…":"Qwen выполняет запрос…"):"Готов";
+  $("sendStatus").textContent=on?(state.mode==="gpt"?"ChatGPT отвечает…":"Модель выполняет запрос…"):"Готов";
   $("modeQwen").disabled=on;
   $("modeChatGPT").disabled=on;
   $("gptTopModel").disabled=on||!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
@@ -296,7 +305,7 @@ async function send(){
   $("welcome")?.remove();
   renderMessage("user",text);
   $("messageInput").value="";
-  const pending=renderMessage("assistant","Qwen формирует ответ…",true);
+  const pending=renderMessage("assistant",(state.qwenModel||"Модель")+" формирует ответ…",true);
   busy(true);
   try{
     const result=await requestJson("/api/chat",{
@@ -309,7 +318,7 @@ async function send(){
     pending.wrap.classList.remove("working");
     setFormatted(pending.body,result.answer||"Ответ модели пуст.");
     showEvents(result.events,result.tool_calls,result.selected_by,pending);
-    // Generate contextual next questions independently; do not delay Qwen reply.
+    // Generate contextual next questions independently; do not delay the model reply.
     // A pending approval is the next user decision, not a generic follow-up.
     if(!result.events?.some(e=>e.type==="approval_required")){
       void loadFollowups(result.session_id,result.turn,pending);
@@ -358,9 +367,9 @@ function setMode(mode){
   document.querySelector(".upload-button").hidden=!qwen;
   document.querySelector(".auto-tools-label").hidden=!qwen;
   $("artifactFile").disabled=!qwen;
-  $("messageInput").placeholder=qwen?"Сообщение Qwen или исследовательская задача…":"Сообщение ChatGPT…";
+  $("messageInput").placeholder=qwen?"Сообщение исследовательской модели или задача…":"Сообщение ChatGPT…";
   $("uploadStatus").textContent=qwen?
-    "Импорт файлов до "+Math.floor(state.uploadLimit/(1024*1024))+" МиБ · Qwen":
+    "Импорт файлов до "+Math.floor(state.uploadLimit/(1024*1024))+" МиБ · модель":
     "Чат GPT сохраняется на Vast · MCP не запускается";
   $("sendStatus").textContent=!qwen&&!state.gptConnected?
     "Подключи аккаунт в разделе «Аккаунт GPT»":"Готов";
@@ -497,8 +506,8 @@ async function refreshTaskList(){
 }
 function showTaskStatus(status){
   $("commState").textContent=status==="needs_review"?
-    "Нужна рецензия ChatGPT":status==="running"?"Qwen исследует":
-    status==="queued"?"В очереди Qwen":status==="blocked"?"Задача остановлена":
+    "Нужна рецензия ChatGPT":status==="running"?"Модель исследует":
+    status==="queued"?"В очереди модели":status==="blocked"?"Задача остановлена":
     status==="completed"?"Исследование завершено":status||"Общая очередь";
 }
 function displayTaskEvent(message){
@@ -639,7 +648,7 @@ async function submitReviewerFeedback(){
     renderMessage("user","Замечания рецензента (вручную):\n"+text);
     state.lastSeq=Math.max(state.lastSeq,result.event_seq||0);
     $("reviewFeedbackInput").value="";
-    $("reviewStatus").textContent="Замечания переданы. Qwen продолжит задачу из очереди.";
+    $("reviewStatus").textContent="Замечания переданы. Модель продолжит задачу из очереди.";
     showTaskStatus("queued");
     await refreshTaskList();
   }catch(err){
@@ -666,8 +675,8 @@ function renderTools(tools,automatic=[],availableScanners=[]){
     const indicator=node("span","tool-access"+(missing?" tool-missing":""),
       missing?"MISSING":allowed.has(name)?"AUTO":"ASK");
     indicator.title=missing?"Сканер не установлен в текущем окружении":
-      allowed.has(name)?"Qwen может запустить без подтверждения":
-      "Qwen может выбрать; для исполнения потребуется подтверждение";
+      allowed.has(name)?"Модель может запустить без подтверждения":
+      "Модель может выбрать; для исполнения потребуется подтверждение";
     row.append(label,indicator);
     container.append(row);
   }
@@ -770,7 +779,7 @@ async function disconnectChatGPT(){
 }
 async function reviewWithChatGPT(){
   if(!state.sessionId||!state.taskId){
-    $("chatgptStatus").textContent="Откройте исследование Qwen перед рецензией.";
+    $("chatgptStatus").textContent="Откройте исследование модели перед рецензией.";
     return;
   }
   const model=$("chatgptModel").value;
@@ -798,7 +807,7 @@ async function reviewWithChatGPT(){
     state.lastSeq=Math.max(state.lastSeq,answer.event_seq||0);
     renderMessage("chatgpt",answer.answer||"Ответ GPT пуст.");
     $("chatgptToQwen").disabled=!lastGptReview;
-    $("chatgptStatus").textContent="Рецензия GPT получена. Можно отправить её Qwen.";
+    $("chatgptStatus").textContent="Рецензия GPT получена. Можно отправить её модели.";
   }catch(err){
     $("chatgptStatus").textContent="Ошибка рецензии: "+String(err.message||err);
   }finally{busy(false);}
@@ -815,11 +824,11 @@ async function forwardGPTtoQwen(){
     state.lastSeq=Math.max(state.lastSeq,response.event_seq||0);
     $("chatgptToQwen").disabled=true;
     lastGptReview=null;
-    $("chatgptStatus").textContent="Рецензия передана Qwen через общую очередь.";
+    $("chatgptStatus").textContent="Рецензия передана модели через общую очередь.";
     showTaskStatus("queued");
     void refreshTaskList();
   }catch(err){
-    $("chatgptStatus").textContent="Ошибка передачи Qwen: "+String(err.message||err);
+    $("chatgptStatus").textContent="Ошибка передачи модели: "+String(err.message||err);
   }finally{busy(false);}
 }
 
@@ -833,7 +842,7 @@ async function status(){
     const hosted=info.model_provider==="openai_compatible";
     const modelReady=hosted?!!info.model_remote_configured:!!info.ollama_ready;
     const ready=modelReady&&!!info.mcp_ready;
-    state.qwenModel=info.model||"Qwen";
+    state.qwenModel=displayModelName(info.model);
     if(state.mode==="qwen")$("modelName").textContent=state.qwenModel;
     $("ollamaState").textContent=hosted?"Облачная LLM настроена (не проверена)":
       info.ollama_ready?"Ollama подключена":"Ollama недоступна";
@@ -848,7 +857,7 @@ async function status(){
   }catch(_){
     $("backendDot").className="dot bad";
     $("backendStatus").textContent="Нет подключения к серверу";
-    $("ollamaState").textContent="Qwen недоступна";
+    $("ollamaState").textContent="Модель недоступна";
     $("mcpState").textContent="MCP недоступен";
     renderTools([]);
   }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
   <meta name="theme-color" content="#212121">
-  <title>Cybernova — Qwen и ChatGPT</title>
+  <title>Cybernova — Исследователь и ChatGPT</title>
   <link rel="stylesheet" href="/static/styles.css">
   <script defer src="/static/markdown.js"></script>
   <script defer src="/static/app.js"></script>
@@ -16,7 +16,7 @@
     <div class="sidebar-head">
       <div class="brand"><span class="brand-icon" aria-hidden="true">◈</span> Cybernova</div>
       <div class="mode-stack" role="group" aria-label="Выбрать собеседника">
-        <button type="button" id="modeQwen" class="mode-item selected" aria-pressed="true"><span aria-hidden="true">◈</span> Qwen <small>Исследователь</small></button>
+        <button type="button" id="modeQwen" class="mode-item selected" aria-pressed="true"><span aria-hidden="true">◈</span> Исследователь <small>Активная модель</small></button>
         <button type="button" id="modeChatGPT" class="mode-item" aria-pressed="false"><span aria-hidden="true">G</span> ChatGPT <small>Обычный чат</small></button>
       </div>
       <button type="button" id="newSession" class="sidebar-action"><span aria-hidden="true">＋</span> Новый чат</button>
@@ -31,14 +31,14 @@
           <option value="evidence" selected>Подробно: заголовки, хеши, JSON, фрагменты</option>
           <option value="metadata">Кратко: URL, методы, статусы</option>
         </select>
-        <button type="button" class="refresh-button" id="applyResearchScope">Применить к задаче Qwen</button>
+        <button type="button" class="refresh-button" id="applyResearchScope">Применить к задаче модели</button>
         <p class="scope-status" id="scopeStatus" role="status">Выбери объекты. Анализ автоматически не запускается.</p>
-        <p class="scope-explain">Qwen использует эти цели для чтения публичных страниц и Network. Активные тесты предлагает отдельно для твоего подтверждения. Новый чат — новая область работы.</p>
+        <p class="scope-explain">Активная модель использует эти цели для чтения публичных страниц и Network. Активные тесты предлагает отдельно для твоего подтверждения. Новый чат — новая область работы.</p>
       </details>
 
     </div>
     <div id="qwenSidebar">
-      <div class="sidebar-label">Текущий диалог Qwen</div>
+      <div class="sidebar-label">Текущий диалог исследователя</div>
       <button class="session-item active" type="button" id="sessionItem">Новый диалог</button>
       <div class="sidebar-label">Исследовательские задачи</div>
       <div class="task-list" id="taskList" aria-label="Сохранённые задачи">
@@ -53,7 +53,7 @@
     </div>
     <div class="sidebar-bottom">
       <div class="connection"><span id="backendDot" class="dot"></span><span id="backendStatus">Проверяем подключение…</span></div>
-      <div class="side-note">Локальная Qwen · Vast.ai · Общая очередь ChatGPT</div>
+      <div class="side-note">Активная модель · Локальная / облачная · Общая очередь ChatGPT</div>
     </div>
   </aside>
 
@@ -61,7 +61,7 @@
     <header class="topbar">
       <div class="topbar-left">
         <button type="button" id="menuToggle" class="icon-button mobile-menu" aria-label="Показать меню">☰</button>
-        <div class="model-title"><span id="modelName">Qwen3-Coder 30B</span></div>
+        <div class="model-title"><span id="modelName">Активная модель</span></div>
         <label class="sr-only" for="gptTopModel">Модель ChatGPT для этого диалога</label>
         <select id="gptTopModel" class="gpt-top-model" hidden disabled aria-label="Модель GPT"><option value="">Подключите ChatGPT</option></select>
       </div>
@@ -77,7 +77,7 @@
         <div class="welcome" id="welcome">
           <div class="welcome-logo" aria-hidden="true">◈</div>
           <h1>Чем займёмся?</h1>
-          <p>Общайтесь с Qwen. Она сама выбирает, когда нужны MCP-инструменты, и показывает результаты вызовов.</p>
+          <p>Общайтесь с активной моделью. Она сама выбирает, когда нужны MCP-инструменты, и показывает результаты вызовов.</p>
           <div class="suggestions">
             <button type="button" data-prompt="Вызови gateway_status и расскажи, какие инструменты доступны." class="suggestion">Какие инструменты доступны?</button>
             <button type="button" data-prompt="Вызови ip_network_summary для 192.0.2.7/24 и объясни результат." class="suggestion">Разобрать учебную подсеть</button>
@@ -88,21 +88,21 @@
         <div class="welcome" id="gptWelcome">
           <div class="welcome-logo" aria-hidden="true">G</div>
           <h1>Чат с ChatGPT</h1>
-          <p>Обычная переписка через подключённый аккаунт ChatGPT. История отдельно от исследовательских задач Qwen и сохраняется на Vast.</p>
-          <p class="muted">GPT не использует MCP Qwen и не получает данные исследований без твоего действия.</p>
+          <p>Обычная переписка через подключённый аккаунт ChatGPT. История отдельно от исследовательских задач активной модели и сохраняется на Vast.</p>
+          <p class="muted">GPT не использует MCP исследовательской модели и не получает данные исследований без твоего действия.</p>
         </div>
       </div>
     </section>
 
     <section class="composer-area" aria-label="Ввод сообщения">
       <div class="composer">
-        <label class="sr-only" for="messageInput">Сообщение для Qwen</label>
+        <label class="sr-only" for="messageInput">Сообщение для исследовательской модели</label>
         <textarea id="messageInput" rows="2" maxlength="10000" placeholder="Спросите что-нибудь или задайте задачу…"></textarea>
         <div class="composer-bottom">
           <div class="composer-left">
             <label for="artifactFile" id="qwenUploadLabel" class="upload-button" title="Импорт HAR, JS, OpenAPI, логов, конфигураций, Python, зависимостей, TLS или PCAP. Файл обрабатывается локально.">＋ Файл</label>
             <input id="artifactFile" class="sr-only" type="file" accept=".har,.js,.py,.json,.log,.txt,.conf,.cfg,.ini,.yaml,.yml,.env,.pcap,.cap,.pem,.crt,.lock,.mod,.toml">
-            <div id="qwenAutoTools" class="auto-tools-label" title="Qwen сама выбирает инструмент для текущей задачи; цель исследования выбираешь ты.">
+            <div id="qwenAutoTools" class="auto-tools-label" title="Активная модель сама выбирает инструмент для текущей задачи; цель исследования выбираешь ты.">
             <span class="auto-tools-dot" aria-hidden="true"></span> MCP автоматически
           </div>
           </div>
@@ -124,15 +124,15 @@
       <button type="button" id="chatgptConnect" class="refresh-button" data-oai-siwc-button>Continue with ChatGPT</button>
       <button type="button" id="chatgptDisconnect" class="refresh-button" hidden>Отключить аккаунт</button>
       <p class="inspector-note">Для входа с Vast откройте Cybernova через SSH-проброс на http://127.0.0.1:18795. В Cloudflare Quick Tunnel вход с loopback callback не завершится. Не вводите здесь пароль ChatGPT.</p>
-      <p class="inspector-note">Обычный чат ChatGPT открывается слева. Исследования Qwen не передаются в GPT автоматически.</p>
+      <p class="inspector-note">Обычный чат ChatGPT открывается слева. Исследования активной модели не передаются в GPT автоматически.</p>
       <details class="advanced-review">
-        <summary>Дополнительно: рецензия исследования Qwen</summary>
+        <summary>Дополнительно: рецензия исследования модели</summary>
         <label class="chatgpt-model-label" for="chatgptModel">Модель рецензента</label>
         <select id="chatgptModel" class="review-feedback-input" disabled>
           <option value="">Сначала подключите ChatGPT</option>
         </select>
         <button type="button" id="chatgptReview" class="refresh-button" disabled>Проверить выбранную задачу</button>
-        <button type="button" id="chatgptToQwen" class="refresh-button" disabled>Передать рецензию Qwen</button>
+        <button type="button" id="chatgptToQwen" class="refresh-button" disabled>Передать рецензию модели</button>
         <p class="inspector-note">Передача данных исследования — только по твоему нажатию.</p>
       </details>
     </section>
@@ -144,8 +144,8 @@
       <textarea id="reviewPacketText" class="review-feedback-input" rows="6" hidden aria-label="Пакет для рецензии"></textarea>
       <div class="review-feedback">
         <label for="reviewFeedbackInput">Замечания ChatGPT (вставить вручную)</label>
-        <textarea id="reviewFeedbackInput" class="review-feedback-input" rows="4" maxlength="6000" placeholder="Вставь сюда вывод ChatGPT для повторной проверки Qwen…"></textarea>
-        <button type="button" id="sendReviewFeedback" class="refresh-button">Передать Qwen на доработку</button>
+        <textarea id="reviewFeedbackInput" class="review-feedback-input" rows="4" maxlength="6000" placeholder="Вставь сюда вывод ChatGPT для повторной проверки модели…"></textarea>
+        <button type="button" id="sendReviewFeedback" class="refresh-button">Передать модели на доработку</button>
       </div>
       <div id="reviewStatus" class="muted" role="status"></div>
       <pre id="evidenceOutput" class="review-evidence" hidden></pre>

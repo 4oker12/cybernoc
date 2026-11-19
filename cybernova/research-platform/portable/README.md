@@ -68,11 +68,11 @@ cd cybernoc/cybernova/research-platform/portable
 python3 manage.py wizard
 ~~~
 
-Мастер предлагает Ollama (режим 1) или внешний OpenAI-совместимый API (режим 2),
-запрашивает модель, согласие на передачу данных внешнему провайдеру и скрытый
-ключ, затем может собрать и запустить Docker. Большие модели не скачиваются
-без отдельного согласия. Под Windows: py manage.py wizard после запуска Docker
-Desktop (Linux Containers / WSL2).
+Мастер предлагает Ollama (режим 1), DeepSeek API (режим 2, модель по умолчанию
+deepseek-flash) или другой OpenAI-совместимый API (режим 3). Для облачного
+режима он запрашивает согласие на передачу данных и скрытый API-ключ, затем
+может собрать и запустить Docker. Под Windows: py manage.py wizard после
+запуска Docker Desktop (Linux Containers / WSL2).
 
 Первая локальная тестовая модель в мастере: qwen2.5-coder:7b.
 Это НЕ кастомная Qwen3-Coder Heretic 30B, использовавшаяся на Vast.
@@ -89,7 +89,22 @@ python3 manage.py doctor
 
 С NVIDIA Container Toolkit: python3 manage.py up --gpu
 
-Внешний провайдер:
+DeepSeek API (профиль Cybernova автоматически передаётся модели):
+
+~~~bash
+python3 manage.py init --provider openai_compatible --model deepseek-flash --base-url https://api.deepseek.com
+python3 manage.py set-key
+python3 manage.py up
+python3 manage.py doctor
+~~~
+
+Модель DeepSeek по умолчанию работает в thinking mode. Адаптер сохраняет
+reasoning_content между последовательными вызовами инструментов, как требует
+DeepSeek Chat Completions API. Переключить режим можно через
+CYBERNOVA_DEEPSEEK_THINKING=disabled. Лимит ответа по умолчанию —
+4096 токенов; его можно изменить через CYBERNOVA_LLM_MAX_TOKENS (256–32768).
+
+Другой внешний провайдер:
 
 ~~~bash
 python3 manage.py init --provider openai_compatible --model MODEL_ID --base-url https://provider.example/v1
@@ -97,6 +112,11 @@ python3 manage.py set-key
 python3 manage.py up
 python3 manage.py doctor
 ~~~
+
+Один и тот же provider-neutral профиль Cybernova используется локальной
+Heretic/Qwen, DeepSeek и другими совместимыми моделями. Он включает контекст
+проекта, исследовательскую миссию, правила диалога и роль разработчика.
+Это системные инструкции, а не перенос весов или дообучение модели.
 
 Подписка на сайт ChatGPT НЕ обеспечивает платный или бесплатный API-доступ.
 Удалённые API обычно оплачиваются и получают запросы, сообщения и результаты

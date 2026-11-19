@@ -1,4 +1,4 @@
-"""Portable LLM provider adapter: Ollama native or OpenAI-compatible chat.
+"""Portable LLM provider adapter: local Ollama or hosted OpenAI-compatible chat.
 
 This module does not change the Cybernova agent's tool/scope/approval policy.
 Remote models are explicitly opt-in, HTTPS-only, and receive conversation
@@ -28,7 +28,7 @@ def provider_name() -> str:
 
 
 def _endpoint(base_url: str) -> str:
-    """Validate a manually configured API endpoint; never take it from Qwen."""
+    """Validate a manually configured API endpoint; never take it from model output."""
     if not isinstance(base_url, str) or not base_url or len(base_url) > 500:
         raise ModelConfigError("llm_base_url_required")
     if any(ord(ch) <= 32 or ord(ch) == 127 for ch in base_url):
@@ -66,13 +66,15 @@ class _NoRedirect(request.HTTPRedirectHandler):
 
 
 def _normalize_context(messages: list[dict]) -> list[dict]:
-    """Convert Qwen's Ollama-style tool turns into Chat Completions messages."""
+    """Convert the agent's internal tool turns into Chat Completions messages."""
     output = []
     pending = deque()
     for message in messages:
         role = message.get("role")
         if role in {"system", "user", "assistant"}:
             item = {"role": role, "content": str(message.get("content") or "")}
+            if role == "assistant" and isinstance(message.get("reasoning_content"), str):
+                item["reasoning_content"] = message["reasoning_content"]
             if role == "assistant" and message.get("tool_calls"):
                 calls = []
                 for i, call in enumerate(message["tool_calls"][:16]):
@@ -150,11 +152,22 @@ class OpenAICompatibleClient:
                            else "max_tokens")
         if token_field not in {"max_tokens", "max_completion_tokens"}:
             raise ModelConfigError("invalid_token_parameter")
+        try:
+            max_tokens = int(os.environ.get("CYBERNOVA_LLM_MAX_TOKENS", "4096"))
+        except ValueError:
+            raise ModelConfigError("invalid_llm_max_tokens") from None
+        if not 256 <= max_tokens <= 32768:
+            raise ModelConfigError("llm_max_tokens_out_of_range")
         payload = {
             "model": self.model, "stream": False,
             "messages": _normalize_context(messages),
-            token_field: 1100,
+            token_field: max_tokens,
         }
+        if self.model.startswith("deepseek-"):
+            thinking = os.environ.get("CYBERNOVA_DEEPSEEK_THINKING", "enabled").strip().lower()
+            if thinking not in {"enabled", "disabled"}:
+                raise ModelConfigError("invalid_deepseek_thinking_mode")
+            payload["thinking"] = {"type": thinking}
         custom_temp = os.environ.get("CYBERNOVA_LLM_TEMPERATURE", "").strip()
         if custom_temp:
             try:
@@ -194,8 +207,12 @@ class OpenAICompatibleClient:
                 part.get("text", "") for part in content
                 if isinstance(part, dict) and isinstance(part.get("text"), str)
             )
-        return {"content": content if isinstance(content, str) else "",
-                "tool_calls": calls}
+        response = {"content": content if isinstance(content, str) else "",
+                    "tool_calls": calls}
+        reasoning = message.get("reasoning_content")
+        if isinstance(reasoning, str):
+            response["reasoning_content"] = reasoning
+        return response
 
 
 def build_model_client():

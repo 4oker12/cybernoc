@@ -1,4 +1,4 @@
-"""Conversation-first interpretation instructions for the Qwen research agent.
+"""Conversation-first interpretation instructions for the Cybernova primary agent.
 
 Supports underspecified, informal and dictation-like requests without
 making up authorization, target identities or destructive intent.
