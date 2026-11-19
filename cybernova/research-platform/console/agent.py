@@ -34,7 +34,7 @@ MAX_CALLS = 12
 MAX_HTTP_GETS = 3
 MAX_PROMPT = 10000
 MAX_RESULT = 6000
-APPROVAL_TTL_SECONDS = 600
+APPROVAL_TTL_SECONDS = 3600
 OFFLINE_TOOLS = frozenset({
     "gateway_status", "python_static_review", "http_header_review",
     "ip_network_summary", "local_webui_health",
