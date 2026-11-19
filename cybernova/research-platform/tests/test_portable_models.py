@@ -102,7 +102,7 @@ class ModelProviderTests(unittest.TestCase):
                 "reasoning_content":"I should inspect the subnet tool.",
                 "tool_calls":[{"id":"call_deepseek_1","type":"function",
                     "function":{"name":"ip_network_summary",
-                                "arguments":"{\\"cidr\\":\\"192.0.2.7/24\\"}"}}]
+                                "arguments":"{\"cidr\":\"192.0.2.7/24\"}"}}]
             }}]}
         backend=OpenAICompatibleClient(
             base_url="https://api.deepseek.com",model="deepseek-flash",
@@ -123,7 +123,7 @@ class ModelProviderTests(unittest.TestCase):
             {"role":"user","content":"Проверь подсеть"},
             {"role":"assistant","content":answer["content"],
              "reasoning_content":answer["reasoning_content"],
-             "tool_calls":answer["tool_calls"]},
+            {"role":"tool","content":"{\"network\":\"192.0.2.0/24\"}"},
             {"role":"tool","content":"{\\"network\\":\\"192.0.2.0/24\\"}"},
         ])
         self.assertEqual(normalized[2]["reasoning_content"],
