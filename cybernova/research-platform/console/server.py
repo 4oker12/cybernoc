@@ -41,6 +41,7 @@ try:
     from .siwc import connection as chatgpt_connection, SIWCError
     from .siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from .siwc_chat_store import GPTChatStore, GPTChatError
+    from .research_scope import ResearchScopeStore, scope_profile
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS
     from followups import generate_followups
@@ -61,6 +62,7 @@ except ImportError:
     from siwc import connection as chatgpt_connection, SIWCError
     from siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from siwc_chat_store import GPTChatStore, GPTChatError
+    from research_scope import ResearchScopeStore, scope_profile
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -79,6 +81,10 @@ def communication_store() -> CommunicationStore:
 @lru_cache(maxsize=1)
 def gpt_chat_store() -> GPTChatStore:
     return GPTChatStore()
+
+@lru_cache(maxsize=1)
+def research_scope_store() -> ResearchScopeStore:
+    return ResearchScopeStore()
 
 
 @asynccontextmanager
@@ -133,6 +139,12 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000)
 
 
+class ResearchScopeRequest(BaseModel):
+    session_id: str | None = Field(default=None, min_length=16, max_length=100)
+    hosts: list[str] = Field(default_factory=list, max_length=20)
+    capture_detail: str = Field(default="evidence", pattern="^(metadata|evidence)$")
+
+
 class ResetRequest(BaseModel):
     session_id: str | None = None
 
@@ -169,7 +181,7 @@ def _session(session_id: str | None) -> tuple[str, dict]:
         key = secrets.token_urlsafe(24)
         session = {"last": now, "history": [], "lock": RLock(), "turns": 0,
                    "followups_turn": None, "followups": [], "pending_approvals": {},
-                   "traffic_artifacts": {}, "task_id": None}
+                   "traffic_artifacts": {}, "scope": scope_profile([]), "task_id": None}
         sessions[key] = session
         while len(sessions) > MAX_SESSIONS:
             sessions.popitem(last=False)
@@ -356,6 +368,7 @@ def status():
         "traffic_intelligence": "offline_multi_domain_analysis",
         "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
         "browser_network": "isolated_chromium_readonly_metadata",
+        "research_scope": {"type": "owner_selected_per_task", "active_actions": "propose_and_confirm"},
         "browser": {"mode": "readonly_https_html", "configured_hosts": [x.strip() for x in os.environ.get("CYBERNOVA_BROWSER_HOSTS", "").split(",") if x.strip()], "live_javascript": False},
         "lab_scanners": inventory(),
         "import_kinds": ["har", "javascript"] + sorted(PARSERS),
@@ -432,6 +445,28 @@ def import_artifact(payload: ImportRequest):
     return {"session_id": sid, "task_id": state["task_id"], **summary}
 
 
+@app.post("/api/research/scope")
+def configure_research_scope(payload: ResearchScopeRequest):
+    """Owner selects research targets; the LLM has no tool to extend them."""
+    try:
+        profile = scope_profile(payload.hosts, payload.capture_detail)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    sid, state = _session(payload.session_id)
+    with state["lock"]:
+        state["scope"] = profile
+        if state.get("task_id"):
+            research_scope_store().save(state["task_id"], profile)
+    return {"session_id": sid, "scope": profile, "applies_to": "qwen_research_only"}
+
+
+@app.get("/api/research/scope")
+def get_research_scope(session_id: str | None = None):
+    sid, state = _session(session_id)
+    with state["lock"]:
+        return {"session_id": sid, "scope": state["scope"]}
+
+
 @app.post("/api/chat")
 def chat(payload: ChatRequest):
     sid, state = _session(payload.session_id)
@@ -442,6 +477,7 @@ def chat(payload: ChatRequest):
             state["task_id"] = store.create_task(
                 payload.message.strip()[:150], origin="human",
             )["task_id"]
+            research_scope_store().save(state["task_id"], state["scope"])
         task_id = state["task_id"]
         # Include ChatGPT feedback and background Qwen results which arrived
         # while the browser was open, instead of using stale in-memory history.
@@ -464,7 +500,7 @@ def chat(payload: ChatRequest):
             current_agent = Agent(
                 ollama=agent.ollama,
                 mcp_factory=lambda: CommunicationToolClient(
-                    TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
+                    TrafficToolClient(MCPClient(), state["traffic_artifacts"], scope=state["scope"]),
                     store, task_id,
                 ),
             )
