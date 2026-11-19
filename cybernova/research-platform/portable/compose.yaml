@@ -11,6 +11,8 @@ services:
     env_file: .env
     environment:
       CYBERNOVA_COMM_DB: /data/communications.sqlite3
+      CYBERNOVA_SIWC_DIR: /data/chatgpt-siwc
+      CYBERNOVA_SIWC_CALLBACK_PORT: "18795"
       CYBERNOVA_BACKUP_KEY_FILE: /data/backup.key
       CYBERNOVA_ACCESS_SECRET_FILE: /data/web_access.txt
       CYBERNOVA_ACCESS_HOST: "0.0.0.0"
