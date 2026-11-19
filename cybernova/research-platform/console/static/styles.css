@@ -529,3 +529,45 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
 .collab-edit-panel .muted{font-size:12px;margin:8px 0}
 .collab-edit-actions{display:flex;gap:8px;flex-wrap:wrap}
 .collab-edit-actions button{margin:0}
+
+/* Security research scenario chooser and complete-discussion export. */
+.topbar-right{gap:7px}
+.topbar-right>.header-button{white-space:nowrap}
+.conversation-export-format{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:7px;font-size:11px;padding:7px 4px}
+.export-status{font-size:11px;color:var(--muted);padding:6px 24px;border-bottom:1px solid var(--line);background:var(--panel);line-height:1.4}
+.quick-task-inline{margin:8px 0 11px;padding:5px 9px;background:transparent;border:1px solid var(--line);color:var(--text);border-radius:7px;font-size:12px}
+.quick-task-inline:hover{background:var(--hover)}
+.quick-task-dialog{width:min(980px,calc(100vw - 32px));max-width:none;max-height:calc(100dvh - 36px);padding:0;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:16px;box-shadow:0 20px 70px #14223544}
+.quick-task-dialog::backdrop{background:#17253670}
+.quick-task-shell{padding:20px;max-height:calc(100dvh - 40px);overflow:auto}
+.quick-task-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:16px}
+.quick-task-heading h2{font-size:19px;line-height:1.3;margin:0;font-weight:650}
+.quick-task-heading p{font-size:12px;line-height:1.5;margin:5px 0 0;color:var(--muted)}
+.quick-task-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.quick-task-grid fieldset{min-width:0;margin:0;padding:10px;border:1px solid var(--line);border-radius:11px}
+.quick-task-grid legend{font-size:12px;font-weight:650;padding:0 5px}
+.quick-task-option{display:flex;align-items:flex-start;gap:9px;padding:9px 8px;border-radius:7px;cursor:pointer}
+.quick-task-option:hover{background:var(--hover)}
+.quick-task-option input{flex:none;margin-top:4px;accent-color:var(--accent)}
+.quick-task-option-text{min-width:0;display:flex;flex-direction:column}
+.quick-task-option strong{font-size:12px;font-weight:650;line-height:1.4}
+.quick-task-option small{font-size:11px;line-height:1.45;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.quick-task-safety{font-size:11px;color:var(--muted);margin:13px 0}
+.quick-task-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:12px}
+.quick-task-footer #quickTaskCount{margin-right:auto;font-size:12px;color:var(--muted)}
+.quick-task-footer button{margin:0}
+#quickTaskStatus{margin:8px 0 0}
+@media(max-width:1150px){
+  .topbar .connection-label{display:none}
+  .topbar-right .header-button{padding:6px;font-size:11px}
+  .quick-task-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:780px){
+  .topbar{gap:7px;padding:0 10px}
+  .topbar-right{min-width:0;overflow-x:auto;scrollbar-width:thin}
+  .topbar-right .header-button{flex:none}
+  .topbar-left{gap:7px}
+  .quick-task-grid{grid-template-columns:1fr}
+  .quick-task-shell{padding:14px}
+  .quick-task-heading h2{font-size:16px}
+}
