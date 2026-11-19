@@ -14,36 +14,29 @@
 <div class="app">
   <aside class="sidebar" id="sidebar" aria-label="Диалоги">
     <div class="sidebar-head">
-      <div class="brand"><span class="brand-icon" aria-hidden="true">◈</span> Cybernova</div>
-      <div class="mode-stack" role="group" aria-label="Выбрать собеседника">
-        <button type="button" id="modeQwen" class="mode-item selected" aria-pressed="true"><span aria-hidden="true">◈</span> Исследователь <small>Активная модель</small></button>
-        <button type="button" id="modeChatGPT" class="mode-item" aria-pressed="false"><span aria-hidden="true">G</span> ChatGPT <small>Обычный чат</small></button>
+      <div class="sidebar-brand-row">
+        <div class="brand"><span class="brand-icon" aria-hidden="true">◈</span><span class="sidebar-label-text">Cybernova</span></div>
+        <button type="button" class="sidebar-collapse" id="sidebarCollapse" aria-label="Свернуть боковую панель" title="Свернуть панель">‹</button>
       </div>
-      <button type="button" id="newSession" class="sidebar-action"><span aria-hidden="true">＋</span> Новый чат</button>
+      <div class="mode-stack" role="group" aria-label="Выбрать собеседника">
+        <button type="button" id="modeQwen" class="mode-item selected" aria-pressed="true" title="DeepSeek — исследователь"><span aria-hidden="true">◈</span><span class="mode-name">DeepSeek</span></button>
+        <button type="button" id="modeChatGPT" class="mode-item" aria-pressed="false" title="ChatGPT — старший инженер"><span aria-hidden="true">G</span><span class="mode-name">ChatGPT</span></button>
+        <button type="button" id="modeCollab" class="mode-item" aria-pressed="false" title="Совместная работа двух агентов"><span aria-hidden="true">↔</span><span class="mode-name">Совместно</span></button>
+      </div>
+      <button type="button" id="newSession" class="sidebar-action" title="Новый диалог"><span aria-hidden="true">＋</span><span class="sidebar-label-text">Новый диалог</span></button>
 
-      <details class="scope-settings" id="scopeSettings">
-        <summary>Объект исследования <span id="scopeIndicator">не выбран</span></summary>
-        <label for="researchTargets">Домены / IP — по одному в строке</label>
-        <textarea id="researchTargets" rows="2" placeholder="example.org
-192.0.2.10" spellcheck="false"></textarea>
-        <label for="captureDetail">DevTools Network: полнота доказательств</label>
-        <select id="captureDetail">
-          <option value="evidence" selected>Подробно: заголовки, хеши, JSON, фрагменты</option>
-          <option value="metadata">Кратко: URL, методы, статусы</option>
-        </select>
-        <button type="button" class="refresh-button" id="applyResearchScope">Применить к задаче модели</button>
-        <p class="scope-status" id="scopeStatus" role="status">Выбери объекты. Анализ автоматически не запускается.</p>
-        <p class="scope-explain">Активная модель использует эти цели для чтения публичных страниц и Network. Активные тесты предлагает отдельно для твоего подтверждения. Новый чат — новая область работы.</p>
-      </details>
+
 
     </div>
     <div id="qwenSidebar">
-      <div class="sidebar-label">Текущий диалог исследователя</div>
+      <div class="sidebar-label">Диалоги</div>
       <button class="session-item active" type="button" id="sessionItem">Новый диалог</button>
-      <div class="sidebar-label">Исследовательские задачи</div>
-      <div class="task-list" id="taskList" aria-label="Сохранённые задачи">
-      <p class="muted">Загрузка задач…</p>
-      </div>
+      <details class="sidebar-more" id="researchTasks">
+        <summary>Задачи</summary>
+        <div class="task-list" id="taskList" aria-label="Сохранённые задачи">
+          <p class="muted">Загрузка задач…</p>
+        </div>
+      </details>
     </div>
     <div id="gptSidebar" hidden>
       <div class="sidebar-label">Диалоги ChatGPT</div>
@@ -51,9 +44,12 @@
         <p class="muted">Пока нет диалогов.</p>
       </div>
     </div>
+    <div id="collabSidebar" hidden>
+      <div class="sidebar-label">Совместные диалоги</div>
+      <div class="task-list" id="collabRunList"><p class="muted">Пока нет совместных задач.</p></div>
+    </div>
     <div class="sidebar-bottom">
       <div class="connection"><span id="backendDot" class="dot"></span><span id="backendStatus">Проверяем подключение…</span></div>
-      <div class="side-note">Активная модель · Локальная / облачная · Общая очередь ChatGPT</div>
     </div>
   </aside>
 
@@ -61,6 +57,7 @@
     <header class="topbar">
       <div class="topbar-left">
         <button type="button" id="menuToggle" class="icon-button mobile-menu" aria-label="Показать меню">☰</button>
+        <button type="button" id="sidebarExpand" class="icon-button sidebar-expand" aria-label="Развернуть диалоги" title="Показать диалоги" hidden>☰</button>
         <div class="model-title"><span id="modelName">Активная модель</span></div>
         <label class="sr-only" for="gptTopModel">Модель ChatGPT для этого диалога</label>
         <select id="gptTopModel" class="gpt-top-model" hidden disabled aria-label="Модель GPT"><option value="">Подключите ChatGPT</option></select>
@@ -84,6 +81,27 @@
             <button type="button" data-prompt="Вызови ip_network_summary для 192.0.2.7/24 и объясни результат." class="suggestion">Разобрать учебную подсеть</button>
           </div>
         </div>
+      </div>
+      <div id="collabMessages" class="messages" hidden>
+        <section class="collab-setup" aria-label="Совместная работа агентов">
+          <div class="collab-header"><h2>ChatGPT ↔ DeepSeek</h2><p>Старший инженер ставит задачи, DeepSeek исследует, наставник проверяет результаты. Все сообщения сохраняются.</p></div>
+          <div id="collabForm">
+            <label for="collabGoal">Цель исследования</label>
+            <textarea id="collabGoal" maxlength="3000" rows="3" placeholder="Опиши задачу, ограничения и ожидаемый результат…"></textarea>
+            <div class="collab-row">
+              <label>Модель наставника <select id="collabModel"><option value="">Подключите ChatGPT</option></select></label>
+              <label>Циклы проверки <select id="collabCycles"><option value="1">1 цикл</option><option value="2" selected>2 цикла</option><option value="3">3 цикла</option></select></label>
+              <button type="button" id="collabStart" class="profile-save">Начать</button>
+            </div>
+          </div>
+          <div id="collabActiveBar" class="collab-active-bar" hidden>
+            <span id="collabStatus" role="status">Готов</span>
+            <button type="button" id="collabResume" class="refresh-button" hidden>Продолжить</button>
+            <button type="button" id="collabStop" class="refresh-button">Остановить</button>
+            <button type="button" id="collabNew" class="refresh-button">Новая задача</button>
+          </div>
+        </section>
+        <div id="collabLog" aria-live="polite"></div>
       </div>
       <div id="gptMessages" class="messages" hidden>
         <div class="welcome" id="gptWelcome">
@@ -116,16 +134,44 @@
 
   <aside class="inspector" id="inspector" aria-label="Инструменты" hidden>
     <div class="inspector-header"><strong>Инструменты и подключения</strong><button type="button" id="navChat" class="icon-button" aria-label="Закрыть">×</button></div>
-    <p class="inspector-note">Фактические инструменты MCP. Программы из будущего арсенала здесь не отображаются до подключения.</p>
+    <p class="inspector-note">Общие операции доступны в обоих режимах. Полный MCP работает у исследователя; ChatGPT получает результаты разрешённых операций через Cybernova.</p>
+    <section class="utility-console" aria-label="Общие рабочие инструменты">
+      <strong>Быстрые инструменты</strong>
+      <label for="utilityTool">Операция</label>
+      <select id="utilityTool">
+        <option value="google_search">Google — поиск</option>
+        <option value="research_source_open">Браузер — открыть HTTPS</option>
+        <option value="safe_terminal">Терминал — диагностика</option>
+      </select>
+      <label for="utilityArgument">Запрос / адрес / команда</label>
+      <input id="utilityArgument" maxlength="1600" placeholder="CVE, ошибка, технический кейс…">
+      <button type="button" id="utilityRun" class="refresh-button">Выполнить</button>
+      <pre id="utilityResult" class="review-evidence" hidden></pre>
+      <p class="inspector-note">Терминал: только pwd, list, python --version, git status, git log. Без произвольных команд и Shell.</p>
+    </section>
     <button type="button" id="refreshStatus" class="refresh-button">↻ Проверить подключение</button>
     <div class="tool-list" id="toolList"><span class="muted">Проверяем MCP…</span></div>
+      <details class="scope-settings" id="scopeSettings">
+        <summary>Объект исследования <span id="scopeIndicator">не выбран</span></summary>
+        <label for="researchTargets">Домены / IP — по одному в строке</label>
+        <textarea id="researchTargets" rows="2" placeholder="example.org
+192.0.2.10" spellcheck="false"></textarea>
+        <label for="captureDetail">DevTools Network: полнота доказательств</label>
+        <select id="captureDetail">
+          <option value="evidence" selected>Подробно: заголовки, хеши, JSON, фрагменты</option>
+          <option value="metadata">Кратко: URL, методы, статусы</option>
+        </select>
+        <button type="button" class="refresh-button" id="applyResearchScope">Применить к задаче модели</button>
+        <p class="scope-status" id="scopeStatus" role="status">Выбери объекты. Анализ автоматически не запускается.</p>
+        <p class="scope-explain">Активная модель использует эти цели для чтения публичных страниц и Network. Активные тесты предлагает отдельно для твоего подтверждения. Новый чат — новая область работы.</p>
+      </details>
     <section class="chatgpt-connection" aria-label="Подключение ChatGPT">
       <div class="inspector-header"><strong>ChatGPT · официальный вход</strong></div>
       <div id="chatgptStatus" class="muted" role="status">Проверяем подключение…</div>
       <button type="button" id="chatgptConnect" class="refresh-button" data-oai-siwc-button>Continue with ChatGPT</button>
       <button type="button" id="chatgptDisconnect" class="refresh-button" hidden>Отключить аккаунт</button>
       <p class="inspector-note">Для входа с Vast откройте Cybernova через SSH-проброс на http://127.0.0.1:18795. В Cloudflare Quick Tunnel вход с loopback callback не завершится. Не вводите здесь пароль ChatGPT.</p>
-      <p class="inspector-note">Обычный чат ChatGPT открывается слева. Исследования активной модели не передаются в GPT автоматически.</p>
+      <p class="inspector-note">Общий совместный режим запускается только по твоей команде. Там ChatGPT получает сообщения и результаты DeepSeek в рамках выбранной задачи.</p>
       <details class="advanced-review">
         <summary>Дополнительно: рецензия исследования модели</summary>
         <label class="chatgpt-model-label" for="chatgptModel">Модель рецензента</label>

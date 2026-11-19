@@ -307,3 +307,104 @@ html[data-density="relaxed"] .composer{padding:17px 18px 13px}
   .profile-footer{align-items:flex-start;flex-direction:column}
   .profile-footer>div{width:100%;justify-content:flex-end}
 }
+
+
+/* Compact, collapsible sidebar; dialogs take priority over task management. */
+[hidden]{display:none!important}
+.sidebar{padding:14px 10px 10px;transition:width .16s ease,flex-basis .16s ease}
+.sidebar-head{padding:0 2px}
+.sidebar-brand-row{display:flex;align-items:center;justify-content:space-between;gap:3px}
+.sidebar-brand-row .brand{margin:0;font-size:16px;gap:7px;min-width:0}
+.sidebar-brand-row .brand-icon{font-size:21px}
+.sidebar-collapse{width:29px;height:29px;border:1px solid transparent;background:transparent;color:var(--muted);border-radius:8px;font-size:23px;line-height:1;flex:none}
+.sidebar-collapse:hover{background:var(--hover);color:var(--text)}
+.sidebar-expand{font-size:17px}
+.sidebar .mode-stack{gap:2px;margin:13px 0 6px}
+.sidebar .mode-item{font-weight:550;padding:8px 10px;border-radius:9px;font-size:12px;min-height:35px;gap:10px}
+.sidebar .mode-item>span:first-child{display:grid;place-items:center;width:21px;height:21px;flex:none;border-radius:7px;background:var(--hover);color:var(--accent);font-size:12px}
+:root[data-theme="light"] .sidebar .mode-item>span:first-child{background:#e9f2ed;color:#137361}
+.sidebar .mode-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sidebar .sidebar-action{margin:1px 0 5px;font-size:12px;padding:8px 10px;border:1px solid var(--line);background:var(--panel);border-radius:9px}
+.sidebar .sidebar-action>span{font-size:17px;margin-right:3px}
+.sidebar .sidebar-label{padding:14px 10px 7px;font-size:10px;font-weight:600;letter-spacing:.025em;text-transform:uppercase}
+.sidebar .session-item{width:100%;font-size:12px;padding:8px 10px;border-radius:8px;background:transparent}
+.sidebar .task-list{max-height:min(45vh,430px);padding:1px;gap:2px}
+.sidebar .task-item{padding:7px 9px;min-height:32px;font-size:11px;border-radius:8px}
+.sidebar .task-title{max-width:none;font-size:11px}
+.sidebar .task-state{font-size:9px}
+.sidebar-more{margin-top:12px;border-top:1px solid var(--line);padding-top:8px}
+.sidebar-more>summary{cursor:pointer;font-size:11px;color:var(--muted);padding:7px 10px;border-radius:8px;list-style:none}
+.sidebar-more>summary:hover{background:var(--hover)}
+.sidebar-more>summary:before{content:"▸";display:inline-block;margin-right:7px;transition:transform .1s}
+.sidebar-more[open]>summary:before{transform:rotate(90deg)}
+.sidebar-bottom{padding:11px 8px 0}
+.sidebar .connection{min-width:0}
+.sidebar .connection #backendStatus{font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar.collapsed{width:58px!important;flex-basis:58px!important;padding-left:7px;padding-right:7px}
+.sidebar.collapsed .sidebar-brand-row{justify-content:center}
+.sidebar.collapsed .sidebar-brand-row .brand,
+.sidebar.collapsed .sidebar-label-text,
+.sidebar.collapsed .sidebar-label,
+.sidebar.collapsed .mode-name,
+.sidebar.collapsed .sidebar-more,
+.sidebar.collapsed #qwenSidebar,
+.sidebar.collapsed #gptSidebar,
+.sidebar.collapsed #collabSidebar,
+.sidebar.collapsed #backendStatus{display:none!important}
+.sidebar.collapsed .sidebar-action{display:flex;align-items:center;justify-content:center;padding:6px;margin:9px 0}
+.sidebar.collapsed .sidebar-action>span{margin:0}
+.sidebar.collapsed .mode-stack{margin:5px 0}
+.sidebar.collapsed .mode-item{padding:7px;justify-content:center}
+.sidebar.collapsed .mode-item>span:first-child{width:24px;height:24px}
+.sidebar.collapsed .connection{justify-content:center}
+.sidebar.collapsed .sidebar-collapse{display:none}
+.sidebar-expand{flex:none}
+:root[data-theme="light"] .sidebar .session-item:hover{background:#edf3f7}
+:root[data-theme="light"] .sidebar .sidebar-action{background:#f8fafc;border-color:#e2e9f0}
+:root[data-theme="light"] .sidebar .mode-item.selected{background:#e8f3ee;border-color:#cfe4d9;color:#115b4a}
+
+/* Shared tools panel. Server executes only three bounded read-only adapters. */
+.utility-console{display:grid;gap:8px;border:1px solid var(--line);border-radius:12px;padding:13px;margin:0 0 19px;background:var(--panel)}
+.utility-console>strong{font-size:12px}
+.utility-console label{font-size:11px;color:var(--muted);font-weight:600}
+.utility-console input,.utility-console select{min-width:0;width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);padding:9px;border-radius:8px;font:inherit;font-size:11px}
+.utility-console .refresh-button{margin:3px 0}
+.utility-console .review-evidence{margin:0;max-height:260px;overflow:auto;font-size:10px}
+.utility-console .inspector-note{margin:2px 0 0}
+.inspector>.scope-settings{margin-bottom:18px}
+
+/* Collaborative mentor / researcher transcript. */
+.collab-setup{border:1px solid var(--line);border-radius:15px;padding:19px;margin-bottom:18px;background:var(--panel)}
+.collab-header h2{margin:0 0 5px;font-size:19px;font-weight:680}
+.collab-header p{margin:0 0 15px;color:var(--muted);font-size:12px;line-height:1.6}
+.collab-setup label{display:block;font-size:11px;font-weight:650;color:var(--muted);margin:6px 0}
+.collab-setup textarea,.collab-setup select{width:100%;min-width:0;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:11px;font:inherit;font-size:12px;line-height:1.5}
+.collab-setup textarea{resize:vertical;min-height:92px}
+.collab-row{display:grid;grid-template-columns:minmax(160px,1fr) 115px auto;gap:10px;align-items:end;margin-top:12px}
+.collab-row label{margin:0}
+.collab-row select{display:block;margin-top:5px}
+.collab-row button{height:39px;margin:0}
+.collab-active-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.collab-active-bar #collabStatus{flex:1;min-width:160px;color:var(--muted);font-size:12px}
+.collab-active-bar button{margin:0}
+#collabLog .chat-msg{border-bottom:1px solid var(--line);padding-bottom:19px}
+#collabLog .message-body{line-height:1.7}
+.collab-notice{padding:9px 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel);font-size:11px;color:var(--muted)}
+:root[data-theme="light"] .collab-setup{box-shadow:0 4px 20px #163b3a0a}
+@media(max-width:680px){
+  .sidebar,.sidebar.collapsed{width:min(270px,88vw)!important;flex-basis:min(270px,88vw)!important}
+  .sidebar.collapsed .sidebar-brand-row .brand,
+  .sidebar.collapsed .sidebar-label-text,
+  .sidebar.collapsed .sidebar-label,
+  .sidebar.collapsed .mode-name,
+  .sidebar.collapsed #qwenSidebar,
+  .sidebar.collapsed #gptSidebar,
+  .sidebar.collapsed #collabSidebar,
+  .sidebar.collapsed #backendStatus{display:initial!important}
+  .sidebar.collapsed .mode-item{justify-content:flex-start}
+  .sidebar-collapse,.sidebar-expand{display:none!important}
+  .collab-row{grid-template-columns:1fr 1fr}
+  .collab-row button{grid-column:1/-1}
+  .collab-setup{padding:13px}
+  .collab-header h2{font-size:16px}
+}
