@@ -76,3 +76,65 @@
 .chatgpt-model-label{font-size:11px;color:#bfddcc}
 .chatgpt-connection select.review-feedback-input{min-height:38px;height:auto;max-width:100%}
 #chatgptStatus{font-size:11px;line-height:1.6;overflow-wrap:anywhere}
+
+
+/* Unified chat layout: one mode choice in the sidebar, one model in header. */
+.mode-stack{display:flex;flex-direction:column;gap:5px;margin:0 0 14px}
+.mode-item{display:flex;gap:9px;align-items:center;text-align:left;border:1px solid transparent;border-radius:10px;background:transparent;color:#dedede;padding:11px 12px;font-weight:600}
+.mode-item>span{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:#323b38;color:#a8e5cf;flex:none;font-size:15px}
+.mode-item small{margin-left:auto;font-weight:400;font-size:10px;color:#a2a2a2}
+.mode-item:hover{background:#292929}
+.mode-item.selected{background:#303634;border-color:#55665e;color:#fff}
+#qwenSidebar[hidden],#gptSidebar[hidden],#messages[hidden],#gptMessages[hidden],
+.gpt-top-model[hidden],.auto-tools-label[hidden],.upload-button[hidden]{display:none!important}
+.gpt-top-model{color:#eee;min-width:140px;max-width:230px;padding:8px 30px 8px 9px;border:1px solid #484848;border-radius:9px;background:#292929;font-size:12px}
+.model-title span{margin-left:0;font-size:14px;font-weight:650;color:#eaeaea}
+#modelName{display:inline-block;max-width:210px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.advanced-review{margin-top:5px;border-top:1px solid #405349;padding-top:12px}
+.advanced-review summary,.review-handoff>summary{font-size:12px;cursor:pointer;color:#c7d7d1;padding:8px 0;list-style:auto}
+.advanced-review[open]{display:flex;flex-direction:column;gap:10px}
+.advanced-review .refresh-button{margin:4px 0}
+.review-handoff{display:block}
+.review-handoff[open]{display:flex}
+.chatgpt-connection .inspector-note{margin-top:2px}
+#chatgptStatus{font-size:11px}
+.gpt-chat-note{color:#9fcdb9;font-size:11px}
+#statusModeLabel{font-size:11px}
+@media(max-width:1160px){.topbar{gap:10px}.topbar-left,.topbar-right{gap:8px}.connection-label{display:none}}
+@media(max-width:680px){.topbar{gap:6px}.gpt-top-model{min-width:115px;max-width:138px;font-size:11px}.model-title span{font-size:12px}#modelName{max-width:110px}.header-button{padding:7px 8px;font-size:11px}.mode-item{padding:11px}}
+
+/* Rich, safe rendering of Qwen and ChatGPT answers: readable hierarchy. */
+.message-body .md-content{white-space:normal;line-height:1.68;max-width:100%;font-size:14px;color:#e6e8e7}
+.md-content>p{margin:0 0 13px}
+.md-content>p:last-child{margin-bottom:0}
+.md-content h2,.md-content h3,.md-content h4,.md-content h5{font-size:15px;line-height:1.4;font-weight:700;margin:24px 0 9px;color:#f3f4f3}
+.md-content h2{font-size:19px;margin-top:26px;border-bottom:1px solid #3d4240;padding-bottom:7px}
+.md-content h3{font-size:16px}
+.md-content strong{font-weight:700;color:#f8f9f8}
+.md-content em{color:#d7e5de}
+.md-content ul,.md-content ol{margin:5px 0 15px;padding-left:25px}
+.md-content li{padding:2px 0;line-height:1.6}
+.md-content li::marker{color:#a7d3bb}
+.md-content blockquote{margin:12px 0;padding:7px 14px;border-left:3px solid #8b9b93;background:#2a2f2c;color:#d4dad6}
+.md-content blockquote p{margin:5px 0}
+.md-content a{color:#a8e6ce;text-decoration:underline;overflow-wrap:anywhere}
+.md-content a:focus-visible{outline:2px solid #a8e6ce;outline-offset:2px}
+.md-content code{font-family:ui-monospace,Consolas,Monaco,monospace;background:#343a37;border-radius:4px;padding:2px 5px;color:#dbf6e6;font-size:.9em}
+.md-content .md-code{max-width:100%;overflow:auto;background:#181e1b;border:1px solid #43534a;border-radius:11px;padding:14px;margin:13px 0 18px;line-height:1.5}
+.md-content .md-code code{background:none;padding:0;color:#e2e9e4;white-space:pre;font-size:12px}
+.md-content .md-code code[data-language]:before{content:attr(data-language);display:block;color:#8caa9a;font-size:10px;margin:0 0 10px;text-transform:uppercase}
+.md-content hr{border:0;border-top:1px solid #414844;margin:24px 0}
+.md-table-wrap{overflow-x:auto;max-width:100%;border:1px solid #434d47;border-radius:10px;margin:12px 0 20px}
+.md-table{width:100%;border-collapse:collapse;font-size:12px;line-height:1.6;table-layout:auto}
+.md-table th{background:#303b35;color:#e0f0e7;font-weight:650;text-align:left}
+.md-table td,.md-table th{padding:10px 12px;border-bottom:1px solid #404741;vertical-align:top;min-width:105px;overflow-wrap:anywhere}
+.md-table tr:last-child td{border-bottom:0}
+.md-table tbody tr:nth-child(even){background:#262a28}
+.md-note{border:1px solid #4c5550;border-left:3px solid #9fcbb5;background:#272e2a;border-radius:10px;padding:11px 15px;margin:16px 0 14px}
+.md-note-title{font-size:13px!important;font-weight:700!important;margin:0 0 6px!important;color:#c7edd9!important;border:0!important;padding:0!important}
+.md-note p{margin:0;font-size:13px}
+.md-note-steps{border-left-color:#a7bccf}
+.md-note-criteria{border-left-color:#c1bb99}
+.md-note-finding{border-left-color:#aab3ab}
+.md-pipe-list{border-left:2px solid #50685d;padding-left:22px!important;margin:12px 0}
+@media(max-width:680px){.message-body .md-content{font-size:13px}.md-content h2{font-size:17px}.md-table td,.md-table th{padding:8px;min-width:90px}.md-note{padding:10px}}
