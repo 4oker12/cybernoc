@@ -212,6 +212,11 @@ def research_source_open(url: str, *, reader=None) -> dict:
         or any(ord(c) < 32 for c in url) or "\\" in url
     ):
         raise ResearchWebError("public_https_source_required")
+    if any(
+        re.search(r"(?i)(?:token|secret|password|passwd|auth|session|cookie|api.?key|access.?key)", key)
+        for key in parse_qs(u.query, keep_blank_values=True)
+    ):
+        raise ResearchWebError("sensitive_query_parameter_forbidden")
     try:
         ipaddress.ip_address(host)
     except ValueError:
