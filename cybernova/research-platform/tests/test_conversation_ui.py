@@ -105,10 +105,10 @@ class BrowserMarkdownTests(unittest.TestCase):
           "| --- | --- |",
           "| Проверить | Результат |", "",
           "- Собрать сведения", "- Сопоставить", "",
-          "'''bash", "echo <safe>", "'''", "",
+          "@@@bash", "echo <safe>", "@@@", "",
           "<img src=x onerror=alert(1)>",
           "[bad](javascript:alert(1))"
-        ].join("\n").replace(/'''/g,String.fromCharCode(96).repeat(3));
+        ].join("\n").replace(/@@@/g,String.fromCharCode(96).repeat(3));
         const rendered=window.CybernovaMarkdown.render(input);
         const nodes=[];
         const visit=(n)=>{nodes.push(n);for(const c of n.children||[])visit(c)};
