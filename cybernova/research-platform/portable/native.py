@@ -172,6 +172,10 @@ def run(data: Path):
         raise NativeError("run_install_first")
     env=os.environ.copy()
     env.update(values)
+    # Keep developer worktrees and scratch data inside this native install,
+    # and point the coding tools at the actual checked-out Git repository.
+    env.setdefault("CYBERNOVA_DEV_SOURCE", str(ROOT.parents[1]))
+    env.setdefault("CYBERNOVA_DEV_WORKSPACES", str(data/"dev-workspaces"))
     env["PYTHONPATH"]=str(ROOT)+(os.pathsep+env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     return subprocess.call([str(python),"-u","-m","console.portable_runtime"],
                            cwd=ROOT,env=env)
