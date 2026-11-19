@@ -78,6 +78,20 @@
     <p class="inspector-note">Фактические инструменты MCP. Программы из будущего арсенала здесь не отображаются до подключения.</p>
     <button type="button" id="refreshStatus" class="refresh-button">↻ Проверить подключение</button>
     <div class="tool-list" id="toolList"><span class="muted">Проверяем MCP…</span></div>
+    <section class="review-handoff" aria-label="Независимая рецензия ChatGPT">
+      <div class="inspector-header"><strong>Рецензия ChatGPT</strong></div>
+      <p class="inspector-note">Ручной резервный канал без API: скопируй пакет в ChatGPT, полученный ответ вставь сюда. Это не прямое MCP-подключение ChatGPT.</p>
+      <button type="button" id="copyReviewPacket" class="refresh-button">Скопировать пакет для ChatGPT</button>
+      <button type="button" id="evidenceIndexButton" class="refresh-button">Журнал доказательств</button>
+      <textarea id="reviewPacketText" class="review-feedback-input" rows="6" hidden aria-label="Пакет для рецензии"></textarea>
+      <div class="review-feedback">
+        <label for="reviewFeedbackInput">Замечания ChatGPT (вставить вручную)</label>
+        <textarea id="reviewFeedbackInput" class="review-feedback-input" rows="4" maxlength="6000" placeholder="Вставь сюда вывод ChatGPT для повторной проверки Qwen…"></textarea>
+        <button type="button" id="sendReviewFeedback" class="refresh-button">Передать Qwen на доработку</button>
+      </div>
+      <div id="reviewStatus" class="muted" role="status"></div>
+      <pre id="evidenceOutput" class="review-evidence" hidden></pre>
+    </section>
     <div class="inspector-header recent"><strong>Последний запуск</strong><span id="runCount">—</span></div>
     <div class="run-list" id="runList"><p class="muted">Пока нет вызовов.</p></div>
   </aside>
