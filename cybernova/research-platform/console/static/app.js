@@ -371,7 +371,8 @@ function setMode(mode){
   document.querySelector(".connection-label").hidden=!qwen;
   document.querySelector(".upload-button").hidden=!qwen;
   document.querySelector(".auto-tools-label").hidden=!qwen;
-  document.querySelector(".composer-area").hidden=collab;
+  const composerArea=document.querySelector(".composer-area");
+  if(composerArea)composerArea.hidden=collab;
   $("artifactFile").disabled=!qwen;
   $("messageInput").placeholder=qwen?"Сообщение исследовательской модели или задача…":"Сообщение ChatGPT…";
   $("uploadStatus").textContent=qwen?
@@ -447,6 +448,16 @@ async function sendGPT(){
     state.gptThreadId=result.thread_id;
     pending.wrap.classList.remove("working");
     setFormatted(pending.body,result.answer||"Ответ модели пуст.");
+    if(Array.isArray(result.tool_events)&&result.tool_events.length){
+      const details=node("div","inline-tools");
+      for(const event of result.tool_events){
+        details.append(makeToolDetails({
+          name:event.name,arguments:{source:"Cybernova read-only tool"},
+          result:event.summary,is_error:!event.ok,
+        }));
+      }
+      pending.wrap.append(details);
+    }
     $("sendStatus").textContent="Ответ ChatGPT · диалог сохранён";
     void refreshGPTThreads();
   void refreshCollabRuns();
@@ -1263,6 +1274,7 @@ function init(){
   status();
   void refreshTaskList();
   void refreshGPTThreads();
+  void refreshCollabRuns();
   window.setInterval(()=>{void pollTask();},5000);
   window.setInterval(()=>{void refreshTaskList();},15000);
   window.setInterval(()=>{if(state.mode==="collab")void refreshCollabRuns();},15000);
