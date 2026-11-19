@@ -56,14 +56,43 @@ function approvalCard(event){
   const reason=node("p","approval-reason",explanation);
   const preview=node("pre","approval-args",JSON.stringify(event.arguments||{},null,2));
   const buttons=node("div","approval-buttons");
-  const yes=node("button","approval-yes","Разрешить один раз");
+  const yes=node("button","approval-yes","Разрешить");
   const no=node("button","approval-no","Отклонить");
-  yes.type="button";no.type="button";
+  const consult=node("button","approval-no","Обсудить с ChatGPT");
+  yes.type="button";no.type="button";consult.type="button";
+  yes.title="Одно конкретное действие с показанными параметрами. Не расширяет scope.";
   const requestId=event.request_id;
   yes.addEventListener("click",()=>decideAction(requestId,"approve",card));
   no.addEventListener("click",()=>decideAction(requestId,"deny",card));
-  buttons.append(yes,no);
-  card.append(title,name,reason,preview,buttons);
+  consult.addEventListener("click",async()=>{
+    const packet=[
+      "Cybernova — запрос Qwen на разрешение действия.",
+      "Цель: "+(event.purpose||"Не указана"),
+      "Инструмент: "+(event.name||"Неизвестен"),
+      "Описание: "+(event.tool_description||"Не указано"),
+      "Основание запроса: "+(event.reason||"Не указано"),
+      "Параметры (секреты скрыты): "+JSON.stringify(event.arguments||{},null,2),
+      "Статус: НЕ ВЫПОЛНЕНО. Ожидает решения.",
+      "Проанализируй необходимость, последствия, границы полномочий и риски.",
+      "Дай рекомендацию: разрешить, отклонить или разрешить с уточнением."
+    ].join("\n");
+    try{
+      await navigator.clipboard.writeText(packet);
+      consult.textContent="Скопировано для ChatGPT";
+    }catch(_){
+      const fallback=node("textarea","approval-args");
+      fallback.value=packet;
+      fallback.rows=8;
+      fallback.setAttribute("aria-label","Запрос для ChatGPT — выдели и скопируй");
+      card.append(fallback);
+      fallback.focus();fallback.select();
+      consult.textContent="Скопируй выделенный текст";
+    }
+  });
+  buttons.append(yes,no,consult);
+  card.append(title,name,reason,preview,
+    node("div","approval-state","Ожидает решения. Один запрос = одно конкретное действие."),
+    buttons);
   return card;
 }
 async function decideAction(requestId,decision,card){
