@@ -99,7 +99,7 @@ def _unwrap_result_url(raw: str) -> str | None:
             raw = (params.get("q") or params.get("url") or [""])[0]
             u = urlsplit(raw)
             host = (u.hostname or "").lower().rstrip(".")
-        if u.scheme not in {"https", "http"} or not host:
+        if u.scheme != "https" or not host:
             return None
         if u.username or u.password or u.fragment or u.port not in (None, 80, 443):
             return None
