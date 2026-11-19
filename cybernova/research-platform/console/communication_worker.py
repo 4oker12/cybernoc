@@ -123,6 +123,8 @@ class CommunicationWorker:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        # Fail closed: a prior process might have died after an active tool.
+        self.store.recover_interrupted()
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._loop, daemon=True, name="cybernova-communication-worker",
