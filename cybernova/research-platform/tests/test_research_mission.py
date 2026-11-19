@@ -66,7 +66,8 @@ class ResearchMissionTests(unittest.TestCase):
     def test_neo_metaphor_teaches_initiative_not_fantasy(self):
         self.assertIn("ПРОФИЛЬ «НЕО»", RESEARCH_MISSION)
         self.assertIn("ДЕЙСТВУЙ, А НЕ ЖДИ", RESEARCH_MISSION)
-        self.assertIn("не утверждение\\nоб особых свойствах модели", RESEARCH_MISSION)
+        self.assertIn("а не утверждение", RESEARCH_MISSION)
+        self.assertIn("об особых свойствах модели", RESEARCH_MISSION)
         self.assertIn("Не считай метафору «Нео»", RESEARCH_MISSION)
         self.assertIn("Не скрывай полезное действие", RESEARCH_MISSION)
 
