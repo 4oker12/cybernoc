@@ -192,6 +192,15 @@ def check_health():
     expected_js = "const MAX_UPLOAD_BYTES = " + str(MAX_UPLOAD_FILE_BYTES // (1024*1024)) + " * 1024 * 1024"
     if js_code != 200 or expected_js.encode() not in js_body:
         raise RuntimeError("browser_upload_limit_not_deployed")
+    if b'async function sendGPT()' not in js_body or b'function setMode(mode)' not in js_body:
+        raise RuntimeError("dual_chat_frontend_not_deployed")
+    css_code, markdown_body = local_get(18795, "/static/markdown.js", basic=credentials)
+    if css_code != 200 or b'window.CybernovaMarkdown' not in markdown_body:
+        raise RuntimeError("markdown_renderer_unavailable")
+    unauth_gpt, _ = local_get(18795, "/api/siwc/chats")
+    auth_gpt, gpt_body = local_get(18795, "/api/siwc/chats", basic=credentials)
+    if (unauth_gpt, auth_gpt) != (401, 200) or "threads" not in json.loads(gpt_body):
+        raise RuntimeError("gpt_persistent_chats_route_unavailable")
     print(json.dumps({
         "status": "UPGRADE_VERIFIED", "console_tools": len(tools),
         "communication_mcp_tools": len(names),
@@ -201,6 +210,8 @@ def check_health():
         "cloudflare_tunnel_restarted": False,
         "upload_limit_mib": MAX_UPLOAD_FILE_BYTES // (1024 * 1024),
         "chatgpt_oauth_route": "authenticated_ready",
+        "gpt_regular_chat": "available",
+        "markdown_rendering": "ready",
     }, ensure_ascii=False), flush=True)
 
 
