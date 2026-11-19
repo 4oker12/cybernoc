@@ -508,6 +508,7 @@ def chat(payload: ChatRequest):
                 state["history"], payload.message,
                 public_get=True,
                 force_tools=True,
+                scope=state["scope"],
             )
         except Exception as exc:
             store.append(task_id, "controller", "system",
