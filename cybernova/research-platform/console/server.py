@@ -236,18 +236,26 @@ def siwc_models():
 
 @app.post("/api/siwc/review")
 def siwc_review(payload: ChatGPTReviewRequest):
-    """Explicit review; no Qwen history or artifact is uploaded automatically."""
+    """Explicit review; bind persistence to the selected task before network I/O."""
+    task_id = None
+    if payload.session_id:
+        with sessions_lock:
+            state = sessions.get(payload.session_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="session_not_found")
+        with state["lock"]:
+            task_id = state.get("task_id")
+        if not task_id:
+            raise HTTPException(status_code=409, detail="task_not_selected")
     try:
         outcome = chatgpt_review(payload.model, payload.prompt)
     except SIWCError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
-    if payload.session_id:
-        with sessions_lock:
-            state = sessions.get(payload.session_id)
-        if state is not None and state.get("task_id"):
-            item = communication_store().append(
-                state["task_id"], "chatgpt", "result", outcome["answer"][:12000])
-            outcome["event_seq"] = item["seq"]
+    if task_id:
+        item = communication_store().append(
+            task_id, "chatgpt", "result", outcome["answer"][:12000])
+        outcome["event_seq"] = item["seq"]
+        outcome["task_id"] = task_id
     return outcome
 
 
