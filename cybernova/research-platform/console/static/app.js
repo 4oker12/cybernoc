@@ -486,13 +486,18 @@ async function status(){
     const response=await fetch("/api/status",{cache:"no-store"});
     if(!response.ok)throw Error("HTTP "+response.status);
     const info=await response.json();
-    const ready=!!info.ollama_ready&&!!info.mcp_ready;
-    $("modelName").textContent=info.model||"Qwen";
-    $("ollamaState").textContent=info.ollama_ready?"Qwen подключена":"Qwen недоступна";
+    const hosted=info.model_provider==="openai_compatible";
+    const modelReady=hosted?!!info.model_remote_configured:!!info.ollama_ready;
+    const ready=modelReady&&!!info.mcp_ready;
+    $("modelName").textContent=info.model||"LLM";
+    $("ollamaState").textContent=hosted?"Облачная LLM настроена (не проверена)":
+      info.ollama_ready?"Ollama подключена":"Ollama недоступна";
     $("mcpState").textContent=info.mcp_ready?"MCP подключён":"MCP недоступен";
     $("backendDot").className="dot "+(ready?"ok":"bad");
-    $("backendStatus").textContent=ready?"Qwen и MCP подключены":
-      info.ollama_ready?"Qwen подключена · MCP недоступен":"Проверь Ollama";
+    $("backendStatus").textContent=hosted?
+      (info.mcp_ready?"Облачная модель настроена · MCP подключён":"Облачная модель настроена · MCP недоступен"):
+      ready?"Ollama и MCP подключены":
+      info.ollama_ready?"Ollama подключена · MCP недоступен":"Проверь Ollama";
     renderTools(Array.isArray(info.tools)?info.tools:[],info.auto_executable||[],info.lab_scanners?.engines||[]);
     if(!state.taskId)showTaskStatus(info.communication?.enabled?"Общая очередь":"Шлюз недоступен");
   }catch(_){
