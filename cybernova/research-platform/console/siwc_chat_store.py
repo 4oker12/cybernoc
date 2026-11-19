@@ -107,6 +107,21 @@ class GPTChatStore:
             ).fetchall()
         return {"thread": dict(row), "messages": [dict(x) for x in messages]}
 
+    def get_export_thread(self, thread_id: str) -> dict:
+        """Return all persisted messages, not the 500-message UI window."""
+        _validate_id(thread_id)
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT * FROM gpt_threads WHERE thread_id=?", (thread_id,),
+            ).fetchone()
+            if row is None:
+                raise GPTChatError("gpt_thread_not_found")
+            messages = db.execute(
+                "SELECT role,content,created_at FROM gpt_messages "
+                "WHERE thread_id=? ORDER BY seq ASC", (thread_id,),
+            ).fetchall()
+        return {"thread": dict(row), "messages": [dict(m) for m in messages]}
+
     def context(self, thread_id: str) -> list[dict]:
         _validate_id(thread_id)
         with self._connection() as db:
