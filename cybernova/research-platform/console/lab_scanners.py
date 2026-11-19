@@ -1,7 +1,7 @@
 """Fixed-profile well-known scanners, exclusively for explicitly configured labs.
 
-Supports Nmap, Nuclei, OWASP ZAP Baseline, Nikto, testssl.sh, ffuf,
-Semgrep and Trivy. The model supplies ONLY a lab target ID or project ID,
+Supports Nmap, Nuclei, OWASP ZAP Baseline/Active, Nikto, testssl.sh, ffuf,
+Semgrep, Trivy, Gitleaks and Bandit. The model supplies ONLY a lab target ID or project ID,
 never CLI flags, templates, paths, credentials or extra arguments.
 
 Execution is separate from tool discovery and requires one-time user approval
@@ -37,33 +37,40 @@ SCANNER_NAMES = {
     "lab_nmap": "nmap",
     "lab_nuclei": "nuclei",
     "lab_zap_baseline": "zap-baseline.py",
+    "lab_zap_active": "zap-full-scan.py",
     "lab_nikto": "nikto",
     "lab_testssl": "testssl.sh",
     "lab_ffuf": "ffuf",
     "lab_semgrep": "semgrep",
     "lab_trivy": "trivy",
+    "lab_gitleaks": "gitleaks",
+    "lab_bandit": "bandit",
 }
 NETWORK_SCANNERS = frozenset({
-    "lab_nmap", "lab_nuclei", "lab_zap_baseline", "lab_nikto",
-    "lab_testssl", "lab_ffuf",
+    "lab_nmap", "lab_nuclei", "lab_zap_baseline", "lab_zap_active",
+    "lab_nikto", "lab_testssl", "lab_ffuf",
 })
-CODE_SCANNERS = frozenset({"lab_semgrep", "lab_trivy"})
+CODE_SCANNERS = frozenset({"lab_semgrep", "lab_trivy", "lab_gitleaks", "lab_bandit"})
 SCANNER_TOOLS = [
     _definition("lab_scanner_inventory",
         "Check installed scanner engines and configured lab targets/projects; no scans performed."),
     *[
         _definition(name,
-            "Runs installed " + binary + " using a fixed low-impact profile; "
-            "only explicitly authorized isolated LAB target IDs. "
-            "One-time user approval is mandatory. No custom CLI flags.",
+            ("Runs an ACTIVE web security scan with " if name == "lab_zap_active" else
+             "Runs installed " + binary + " using a fixed low-impact profile; ")
+            + "only explicitly authorized isolated LAB target IDs. "
+            + ("Sends attack test requests; isolated lab only. " if name == "lab_zap_active" else "")
+            + "One-time user approval is mandatory. No custom CLI flags.",
             {"target_id": {"type": "string", "description": "ID from lab_scanner_inventory"}},
             ["target_id"],
         ) for name, binary in SCANNER_NAMES.items() if name in NETWORK_SCANNERS
     ],
     *[
         _definition(name,
-            "Offline SAST/SCA scan with " + binary +
-            " against an explicitly configured lab project; "
+            ("Offline secret detection with Gitleaks (redacted output), " if name == "lab_gitleaks" else
+             "Offline Python SAST with Bandit, " if name == "lab_bandit" else
+             "Offline SAST/SCA scan with " + binary + " ")
+            + "against an explicitly configured lab project; "
             "fixed rules/profile, one-time user approval, no arbitrary paths.",
             {"project_id": {"type": "string", "description": "ID from lab_scanner_inventory"}},
             ["project_id"],
@@ -218,6 +225,9 @@ def _plan(tool, args, policy, work):
     elif tool == "lab_zap_baseline":
         # Official packaged baseline scanner, no active ZAP full-scan rules.
         command = [binary, "-t", url, "-m", "1", "-J", str(report), "-I"]
+    elif tool == "lab_zap_active":
+        # Explicitly active attack checks, isolated lab only, bounded spider.
+        command = [binary, "-t", url, "-m", "1", "-J", str(report), "-I", "-s", "-T", "1"]
     elif tool == "lab_nikto":
         command = [binary, "-h", url, "-maxtime", "90s", "-timeout", "5s",
                    "-nointeractive", "-Format", "json", "-output", str(report)]
@@ -240,6 +250,14 @@ def _plan(tool, args, policy, work):
     elif tool == "lab_trivy":
         command = [binary, "fs", "--skip-db-update", "--offline-scan",
                    "--scanners", "vuln,misconfig", "--format", "json", str(project)]
+    elif tool == "lab_gitleaks":
+        command = [binary, "dir", "--report-format", "json",
+                   "--report-path", str(report), "--redact=100", "--no-banner",
+                   "--no-color", "--timeout", "90", "--max-target-megabytes", "5",
+                   str(project)]
+    elif tool == "lab_bandit":
+        command = [binary, "-r", str(project), "-f", "json", "-o", str(report),
+                   "-q", "--exit-zero"]
     else:
         raise ScannerError("unimplemented_engine")
     return {
@@ -302,7 +320,7 @@ def _summary(tool, text, report_bytes):
                                      "severity": str(item.get("Severity", "unknown"))[:20]})
         except (ValueError, AttributeError, TypeError):
             pass
-    elif tool in {"lab_ffuf", "lab_zap_baseline", "lab_nikto", "lab_testssl"}:
+    elif tool in {"lab_ffuf", "lab_zap_baseline", "lab_zap_active", "lab_nikto", "lab_testssl"}:
         try:
             data = json.loads(raw)
             if tool == "lab_ffuf":
@@ -326,6 +344,36 @@ def _summary(tool, text, report_bytes):
                 tests = data.get("vulnerabilities", []) if isinstance(data, dict) else []
                 findings = [{"id": str(item.get("id", ""))[:70]} for item in tests[:100]]
         except (ValueError, AttributeError, TypeError):
+            pass
+    elif tool == "lab_gitleaks":
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                for item in data[:150]:
+                    if not isinstance(item, dict):
+                        continue
+                    findings.append({
+                        "rule_id": str(item.get("RuleID", ""))[:90],
+                        "file": Path(str(item.get("File", ""))).name[:120],
+                        "line": item.get("StartLine"),
+                        "fingerprint_prefix": str(item.get("Fingerprint", ""))[:16],
+                    })
+        except (ValueError, TypeError):
+            pass
+    elif tool == "lab_bandit":
+        try:
+            data = json.loads(raw)
+            for item in data.get("results", [])[:150]:
+                if not isinstance(item, dict):
+                    continue
+                findings.append({
+                    "rule_id": str(item.get("test_id", ""))[:40],
+                    "severity": str(item.get("issue_severity", "unknown"))[:20],
+                    "confidence": str(item.get("issue_confidence", "unknown"))[:20],
+                    "file": Path(str(item.get("filename", ""))).name[:120],
+                    "line": item.get("line_number"),
+                })
+        except (ValueError, TypeError, AttributeError):
             pass
     for f in findings:
         key = str(f.get("severity") or f.get("state") or f.get("risk_code") or "observed")
@@ -372,8 +420,12 @@ def run_scanner(tool: str, args: dict, *, policy_path=POLICY,
             "result": summary,
             # ZAP packaged scans use 0=pass, 1=warnings, 2=fail;
             # other engines signal execution failures with nonzero codes.
-            "scanner_completed": process.returncode in (
-                (0, 1, 2) if tool == "lab_zap_baseline" else (0,)
+            "scanner_completed": (
+                process.returncode in (0, 1, 2)
+                if tool in {"lab_zap_baseline", "lab_zap_active"}
+                else process.returncode in (0, 1) and report.is_file()
+                if tool == "lab_gitleaks"
+                else process.returncode == 0
             ),
             "limitations": [
                 "Only the operator-configured lab target/project was used as the initial input",
