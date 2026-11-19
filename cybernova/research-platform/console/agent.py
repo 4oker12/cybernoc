@@ -213,7 +213,13 @@ def _allowed_http(url: str, hosts: set[str]) -> bool:
 
 class Agent:
     def __init__(self, ollama=None, mcp_factory=None):
-        self.ollama = ollama or OllamaClient()
+        if ollama is None:
+            try:
+                from .model_providers import build_model_client
+            except ImportError:
+                from model_providers import build_model_client
+            ollama = build_model_client()
+        self.ollama = ollama
         self.mcp_factory = mcp_factory or (lambda: MCPClient())
 
     def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True) -> dict:
