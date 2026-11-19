@@ -34,12 +34,12 @@
   }
   function cells(line){
     const t=line.trim();
-    if(!t.startsWith("|")||!t.includes("|"))return null;
+    if(!t.includes("|")||!(t.startsWith("|")||t.endsWith("|")))return null;
     const result=t.replace(/^\|/,"").replace(/\|$/,"").split("|").map(x=>x.trim());
     return result.some(Boolean)?result:null;
   }
   function divider(c){
-    return c&&c.length>0&&c.every(x=>/^:?-{1,}:?$/.test(x));
+    return c&&c.length>0&&c.every(x=>/^:?-{3,}:?$/.test(x));
   }
   function section(line){
     const m=/^\s*(?:\*\*)?(Рекомендаци[яи](?:\s+Qwen)?|Следующ(?:ий|ие)\s+шаг(?:и)?|Критери[йи]\s+успеха|Итог|Вывод|Факты|Гипотезы|Риски|Что проверить)(?:\*\*)?\s*[:—–-]?\s*(.*)$/i.exec(line);
@@ -71,7 +71,8 @@
       if(heading){const h=el("h"+Math.min(heading[1].length+1,5));inline(h,heading[2]);root.append(h);i++;continue;}
       if(/^([-*_])\1{2,}\s*$/.test(trimmed)){root.append(el("hr"));i++;continue;}
       const note=section(trimmed);
-      if(note && (trimmed.startsWith("**")||note.detail.length<160)){
+      if(note && !(trimmed.includes("|")&&i+1<lines.length&&divider(cells(lines[i+1]))) &&
+         (trimmed.startsWith("**")||note.detail.length<160)){
         const b=el("section","md-note md-note-"+note.kind),h=el("h3","md-note-title");
         h.textContent=note.title;b.append(h);
         if(note.detail){inline(b.appendChild(el("p")),note.detail.replace(/^\*+/,""));}
