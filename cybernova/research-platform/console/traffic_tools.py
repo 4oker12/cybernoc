@@ -64,18 +64,20 @@ class TrafficToolClient:
             from .lab_scanners import SCANNER_TOOLS
             from .browser_tools import BROWSER_TOOLS
             from .devtools_network import NETWORK_TOOLS
+            from .research_web import RESEARCH_WEB_TOOLS
         except ImportError:
             from domain_tools import DOMAIN_TOOLS
             from scoped_network_tools import SCOPED_TOOLS
             from lab_scanners import SCANNER_TOOLS
             from browser_tools import BROWSER_TOOLS
             from devtools_network import NETWORK_TOOLS
+            from research_web import RESEARCH_WEB_TOOLS
         try:
             remote = self.upstream.initialize()
         except Exception:
             # Offline artifact reasoning remains possible if remote MCP is down.
             remote = []
-        return remote + LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS
+        return remote + LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + RESEARCH_WEB_TOOLS
 
     def _reports(self) -> list[dict]:
         return list(self.artifacts.values())[:MAX_ARTIFACTS]
@@ -94,12 +96,21 @@ class TrafficToolClient:
             from .lab_scanners import SCANNER_TOOL_NAMES, dispatch_scanner
             from .browser_tools import BROWSER_NAMES, browser_call
             from .devtools_network import NETWORK_NAMES, network_call
+            from .research_web import RESEARCH_WEB_NAMES, research_web_call
         except ImportError:
             from domain_tools import DOMAIN_NAMES, domain_call
             from scoped_network_tools import SCOPED_NAMES, scoped_call
             from lab_scanners import SCANNER_TOOL_NAMES, dispatch_scanner
             from browser_tools import BROWSER_NAMES, browser_call
             from devtools_network import NETWORK_NAMES, network_call
+            from research_web import RESEARCH_WEB_NAMES, research_web_call
+        if name in RESEARCH_WEB_NAMES:
+            try:
+                return research_web_call(
+                    name, args, blocked_hosts=self.scope.get("hosts", [])
+                )
+            except (OSError, ValueError) as exc:
+                return {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}, True
         if name in NETWORK_NAMES:
             try:
                 return network_call(name, args, self.upstream,
