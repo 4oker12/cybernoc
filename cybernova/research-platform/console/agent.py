@@ -21,6 +21,11 @@ except ImportError:
         ToolPolicyError,
     )
 
+try:
+    from .research_mission import RESEARCH_MISSION
+except ImportError:
+    from research_mission import RESEARCH_MISSION
+
 OLLAMA_URL = os.environ.get("CYBERNOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MCP_URL = os.environ.get("CYBERNOVA_MCP_URL", "http://127.0.0.1:18792/mcp")
 MODEL = os.environ.get("CYBERNOVA_MODEL", "cybernova-security:30b")
@@ -60,6 +65,7 @@ traffic_hypotheses и traffic_report для последовательного �
 Не утверждай CVE/уязвимость из одной версии ПО или отсутствия HTTP-заголовка.
 Если инструменты недоступны, скажи об этом явно. Пиши на русском.
 """
+BASE_SYSTEM += "\n" + RESEARCH_MISSION
 
 
 class BackendError(RuntimeError):
