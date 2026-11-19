@@ -1,0 +1,131 @@
+"""No-network tests of pluggable local/hosted model providers."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT))
+from console.model_providers import (
+    OpenAICompatibleClient, ModelConfigError, _endpoint, _normalize_context,
+    build_model_client, provider_name,
+)
+from console.agent import OllamaClient, Agent
+
+
+class ModelProviderTests(unittest.TestCase):
+    def test_default_is_legacy_ollama(self):
+        with patch.dict(os.environ, {"CYBERNOVA_LLM_PROVIDER":"ollama"}):
+            self.assertIsInstance(build_model_client(),OllamaClient)
+            self.assertIsInstance(Agent().ollama,OllamaClient)
+
+    def test_selected_remote_provider_uses_same_agent_interface(self):
+        with patch.dict(os.environ, {
+            "CYBERNOVA_LLM_PROVIDER":"openai_compatible",
+            "CYBERNOVA_LLM_BASE_URL":"https://llm.example/v1",
+            "CYBERNOVA_LLM_API_KEY":"test-not-real-key",
+            "CYBERNOVA_MODEL":"hosted-test-model",
+            "CYBERNOVA_LLM_API_KEY_FILE":"",
+        }):
+            backend=build_model_client()
+            self.assertIsInstance(backend,OpenAICompatibleClient)
+            self.assertIsInstance(Agent().ollama,OpenAICompatibleClient)
+            self.assertEqual(backend.endpoint,"https://llm.example/v1/chat/completions")
+            self.assertEqual(backend.model,"hosted-test-model")
+
+    def test_remote_https_required_and_bad_urls_rejected(self):
+        for value in ("http://llm.example/v1",
+                      "https://name:pass@llm.example/v1",
+                      "https://llm.example/v1?password=secret",
+                      "https://llm.example/v1#fragment",
+                      "file:///etc/passwd",
+                      "https://llm.example/evil\nheader:x"):
+            with self.assertRaises(ModelConfigError,msg=value):
+                _endpoint(value)
+        self.assertEqual(_endpoint("http://ollama:11434/v1"),
+                         "http://ollama:11434/v1/chat/completions")
+
+    def test_remote_requires_key_but_local_does_not(self):
+        with patch.dict(os.environ, {
+            "CYBERNOVA_LLM_API_KEY":"",
+            "CYBERNOVA_LLM_API_KEY_FILE":"",
+        }):
+            with self.assertRaises(ModelConfigError):
+                OpenAICompatibleClient(base_url="https://hosted.example/v1",model="test")
+            client=OpenAICompatibleClient(base_url="http://127.0.0.1:8000/v1",model="test")
+            self.assertEqual(client.api_key,"")
+
+    def test_secrets_loaded_from_file_not_logged(self):
+        with tempfile.TemporaryDirectory() as temp:
+            f=Path(temp)/"api_key"
+            f.write_text("test-remote-api-key\n")
+            with patch.dict(os.environ,{
+                "CYBERNOVA_LLM_API_KEY":"",
+                "CYBERNOVA_LLM_API_KEY_FILE":str(f),
+            }):
+                backend=OpenAICompatibleClient(base_url="https://api.example/v1",model="x")
+                self.assertEqual(backend.api_key,"test-remote-api-key")
+
+    def test_tools_translated_from_remote_chat_completion(self):
+        payloads=[]
+        def transport(payload):
+            payloads.append(payload)
+            return {
+                "choices":[{"message":{
+                    "role":"assistant","content":"",
+                    "tool_calls":[{"id":"call_A","type":"function",
+                        "function":{"name":"gateway_status","arguments":"{}"}}]
+                }}],
+            }
+        c=OpenAICompatibleClient(
+            base_url="https://api.example/v1",model="model",
+            api_key="example-test-key",transport=transport,
+        )
+        answer=c.chat([{"role":"system","content":"System"},
+                       {"role":"user","content":"Check"}],
+                      tools=[{"type":"function","function":{
+                          "name":"gateway_status","parameters":{"type":"object"}
+                      }}])
+        self.assertEqual(answer["tool_calls"][0]["function"]["name"],"gateway_status")
+        self.assertEqual(payloads[0]["tools"][0]["function"]["name"],"gateway_status")
+
+    def test_controller_tool_history_translated_to_valid_openai_protocol(self):
+        messages=[
+            {"role":"user","content":"Run"},
+            {"role":"assistant","content":"",
+             "tool_calls":[{"function":{"name":"gateway_status","arguments":{}}},
+                           {"function":{"name":"ip_network_summary","arguments":{"cidr":"192.0.2.1/24"}}}]},
+            {"role":"tool","tool_name":"gateway_status","content":"{\"ok\":true}"},
+            {"role":"tool","tool_name":"ip_network_summary","content":"{\"ok\":true}"},
+        ]
+        converted=_normalize_context(messages)
+        calls=converted[1]["tool_calls"]
+        self.assertEqual(len(calls),2)
+        self.assertEqual([x["tool_call_id"] for x in converted[2:]], [x["id"] for x in calls])
+        self.assertEqual(converted[3]["role"],"tool")
+        with self.assertRaises(ModelConfigError):
+            _normalize_context([{"role":"tool","content":"orphan"}])
+
+    def test_json_mode_and_provider_errors_never_echo_credentials(self):
+        def transport(payload):
+            self.assertEqual(payload["response_format"],{"type":"json_object"})
+            return {"choices":[{"message":{"content":"{\"questions\":[]}"}}]}
+        c=OpenAICompatibleClient(base_url="https://api.example/v1",
+                                 api_key="secret-key-not-log",model="model",
+                                 transport=transport)
+        self.assertEqual(c.chat([{"role":"user","content":"hi"}],json_mode=True)["content"],
+                         "{\"questions\":[]}")
+        bad=OpenAICompatibleClient(base_url="https://api.example/v1",
+                                  api_key="secret-key-not-log",model="model",
+                                  transport=lambda _:{"bad":"payload"})
+        with self.assertRaises(ModelConfigError) as ctx:
+            bad.chat([{"role":"user","content":"hi"}])
+        self.assertNotIn("secret-key-not-log",str(ctx.exception))
+
+
+if __name__=="__main__":
+    unittest.main()
