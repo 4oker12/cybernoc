@@ -8,8 +8,10 @@ from __future__ import annotations
 
 try:
     from .communication import CommunicationStore, CommunicationError
+    from .evidence import EvidenceJournal
 except ImportError:
     from communication import CommunicationStore, CommunicationError
+    from evidence import EvidenceJournal
 
 
 COMMUNICATION_TOOLS = [
@@ -40,6 +42,24 @@ COMMUNICATION_TOOLS = [
         },
     },
     {
+        "name": "comm_record_evidence",
+        "description": "Record Qwen's bounded hypothesis or observation with provenance. "
+                       "It is stored as qwen_reported_unverified, NOT as verified tool evidence. "
+                       "For real tool execution the Controller separately saves SHA256 receipts.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": ["observation", "hypothesis", "negative_control", "limitation"]},
+                "observation": {"type": "string"},
+                "method": {"type": "string"},
+                "source_ref": {"type": "string"},
+                "source_sha256": {"type": "string"},
+            },
+            "required": ["kind", "observation", "method"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "comm_read_dialog",
         "description": "Read recent human, Qwen and ChatGPT messages from the "
                        "current task. Only this task is available.",
@@ -54,6 +74,7 @@ class CommunicationToolClient:
         self.upstream = upstream
         self.store = store
         self.task_id = store.get_task(task_id)["task_id"]
+        self.evidence = EvidenceJournal(store)
 
     def initialize(self) -> list[dict]:
         return self.upstream.initialize() + COMMUNICATION_TOOLS
@@ -80,6 +101,18 @@ class CommunicationToolClient:
                     self.task_id, "qwen", "progress", arguments["summary"],
                 )
                 return {"ok": True, "event_seq": result["seq"]}, False
+            if name == "comm_record_evidence":
+                entry = self.evidence.record_qwen_claim(
+                    self.task_id, arguments["observation"], arguments["method"],
+                    kind=arguments["kind"],
+                    source_ref=arguments.get("source_ref", ""),
+                    source_sha256=arguments.get("source_sha256", ""),
+                )
+                return {
+                    "ok": True, "evidence_id": entry["evidence_id"],
+                    "attribution": "qwen_reported_unverified",
+                    "note": "A model claim is NOT a verified scan result",
+                }, False
             if name == "comm_read_dialog":
                 result = self.store.read_dialog(self.task_id, limit=30)
                 return {
