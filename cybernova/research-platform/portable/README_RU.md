@@ -1,6 +1,6 @@
 # Cybernova Portable — установка на новый Vast, VPS или локальный ПК
 
-**Статус:** переносимое ядро Research Console в ветке feature/cybernova-chat-console. Ветка main ещё не содержит единый production-релиз. Коммит с установщиком не обновляет действующий Vast.
+**Статус:** переносимое ядро Research Console; установщик сейчас проверяется в ветке feature/cybernova-portable-launch (PR #11), затем должен быть объединён с feature/cybernova-chat-console. Ветка main ещё не содержит единый production-релиз. Коммит с установщиком не обновляет действующий Vast.
 
 ## Что переносится
 
@@ -22,13 +22,13 @@ SSH-ключ доступа к приватному репозиторию сл�
 
 Linux / Vast:
 
-    git clone --branch feature/cybernova-chat-console git@github.com:4oker12/cybernoc.git
+    git clone --branch feature/cybernova-portable-launch git@github.com:4oker12/cybernoc.git
     cd cybernoc
     bash install.sh
 
 Windows PowerShell:
 
-    git clone --branch feature/cybernova-chat-console git@github.com:4oker12/cybernoc.git
+    git clone --branch feature/cybernova-portable-launch git@github.com:4oker12/cybernoc.git
     cd cybernoc
     .\install.ps1
 
