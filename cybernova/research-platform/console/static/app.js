@@ -5,7 +5,8 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
   uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Активная модель",
   gptThreadId:null,gptConnected:false,gptPlanUsage:false,
-  researchScope:{hosts:[],capture_detail:"evidence"},profileSettings:null};
+  researchScope:{hosts:[],capture_detail:"evidence"},profileSettings:null,
+  collabRun:null,collabLooping:false,collabStopRequested:false};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка интерфейса",
@@ -289,6 +290,7 @@ function busy(on){
   $("sendStatus").textContent=on?(state.mode==="gpt"?"ChatGPT отвечает…":"Модель выполняет запрос…"):"Готов";
   $("modeQwen").disabled=on;
   $("modeChatGPT").disabled=on;
+  $("modeCollab").disabled=on;
   $("gptTopModel").disabled=on||!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
 }
 async function requestJson(path,data){
@@ -348,34 +350,38 @@ function gptWelcome(){
   $("gptMessages").replaceChildren(window.cybernovaGptWelcome.cloneNode(true));
 }
 function setMode(mode){
-  if(state.running || !["qwen","gpt"].includes(mode))return;
+  if(state.running || !["qwen","gpt","collab"].includes(mode))return;
   state.mode=mode;
-  const qwen=mode==="qwen";
-  $("modeQwen").classList.toggle("selected",qwen);
-  $("modeChatGPT").classList.toggle("selected",!qwen);
-  $("modeQwen").setAttribute("aria-pressed",String(qwen));
-  $("modeChatGPT").setAttribute("aria-pressed",String(!qwen));
+  const qwen=mode==="qwen", gpt=mode==="gpt", collab=mode==="collab";
+  for(const [id,isActive] of [
+    ["modeQwen",qwen],["modeChatGPT",gpt],["modeCollab",collab]
+  ]){
+    $(id).classList.toggle("selected",isActive);
+    $(id).setAttribute("aria-pressed",String(isActive));
+  }
   $("messages").hidden=!qwen;
-  $("gptMessages").hidden=qwen;
+  $("gptMessages").hidden=!gpt;
+  $("collabMessages").hidden=!collab;
   $("qwenSidebar").hidden=!qwen;
-  $("scopeSettings").hidden=!qwen;
-  $("gptSidebar").hidden=qwen;
-  $("gptTopModel").hidden=qwen;
-  $("modelName").hidden=!qwen;
-  $("modelName").textContent=state.qwenModel;
+  $("gptSidebar").hidden=!gpt;
+  $("collabSidebar").hidden=!collab;
+  $("gptTopModel").hidden=!gpt;
+  $("modelName").hidden=gpt;
+  $("modelName").textContent=collab?"ChatGPT ↔ DeepSeek":state.qwenModel;
   document.querySelector(".connection-label").hidden=!qwen;
-  $("navTools").hidden=!qwen;
   document.querySelector(".upload-button").hidden=!qwen;
   document.querySelector(".auto-tools-label").hidden=!qwen;
+  document.querySelector(".composer-area").hidden=collab;
   $("artifactFile").disabled=!qwen;
   $("messageInput").placeholder=qwen?"Сообщение исследовательской модели или задача…":"Сообщение ChatGPT…";
   $("uploadStatus").textContent=qwen?
     "Импорт файлов до "+Math.floor(state.uploadLimit/(1024*1024))+" МиБ · модель":
-    "Чат GPT сохраняется на Vast · MCP не запускается";
+    "ChatGPT · история сохраняется локально";
   $("sendStatus").textContent=!qwen&&!state.gptConnected?
-    "Подключи аккаунт в разделе «Аккаунт GPT»":"Готов";
+    "Подключи ChatGPT через «Аккаунт GPT»":"Готов";
   $("sidebar").classList.remove("open");
-  if(!qwen)void refreshGPTThreads();
+  if(gpt)void refreshGPTThreads();
+  if(collab)void refreshCollabRuns();
   toBottom();
 }
 async function refreshGPTThreads(){
@@ -704,9 +710,11 @@ async function refreshChatGPT(){
     if(callbackResult==="error")statusLine.textContent+=" Последняя авторизация не завершилась.";
     const picker=$("chatgptModel");
     const topPicker=$("gptTopModel");
+    const collaborationPicker=$("collabModel");
     const priorModel=topPicker.value||picker.value;
     picker.replaceChildren();
     topPicker.replaceChildren();
+    collaborationPicker.replaceChildren();
     picker.disabled=true;
     topPicker.disabled=true;
     state.gptConnected=connected;
@@ -722,18 +730,22 @@ async function refreshChatGPT(){
         option.textContent=item.display_name||item.slug;
         picker.append(option);
         topPicker.append(option.cloneNode(true));
+        collaborationPicker.append(option.cloneNode(true));
       }
       if(models.some(item=>item.slug===priorModel)){
         picker.value=priorModel;
         topPicker.value=priorModel;
+        collaborationPicker.value=priorModel;
       }
       picker.disabled=!models.length;
       topPicker.disabled=!models.length;
+      collaborationPicker.disabled=!models.length;
       $("chatgptReview").disabled=!models.length||!state.taskId;
       if(!models.length)statusLine.textContent+=" · Нет доступных моделей в аккаунте.";
       if(state.mode==="gpt")$("sendStatus").textContent=models.length?"Готов":"Для чата нет доступных моделей.";
     }else{
       topPicker.disabled=true;
+      collaborationPicker.disabled=true;
       if(state.mode==="gpt")$("sendStatus").textContent="Открой «Аккаунт GPT» для подключения.";
     }
   }catch(err){
@@ -741,6 +753,7 @@ async function refreshChatGPT(){
     state.gptConnected=false;
     state.gptPlanUsage=false;
     $("gptTopModel").disabled=true;
+    $("collabModel").disabled=true;
     $("chatgptReview").disabled=true;
   }
 }
@@ -865,6 +878,10 @@ async function status(){
 }
 async function reset(){
   if(state.running)return;
+  if(state.mode==="collab"){
+    await newCollab();
+    return;
+  }
   if(state.mode==="gpt"){
     state.gptThreadId=null;
     gptWelcome();
