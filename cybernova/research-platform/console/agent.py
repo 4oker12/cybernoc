@@ -263,12 +263,28 @@ class Agent:
         self.ollama = ollama
         self.mcp_factory = mcp_factory or (lambda: MCPClient())
 
-    def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True) -> dict:
+    def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True, scope: dict | None = None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
         # Only client-visible role/content history enters the model; never forward
         # hidden arguments or previous tool outputs as executable instructions.
         context = [{"role": "system", "content": BASE_SYSTEM}]
+        # Owner-selected scope is trusted policy metadata, not model output.
+        # It describes targets and evidence mode; it is not a blanket
+        # authorization for changing production systems.
+        scope_hosts = list((scope or {}).get("hosts") or [])
+        if scope_hosts:
+            context.append({"role": "system", "content":
+                "Владелец выбрал объект(ы) этой задачи: " +
+                ", ".join(scope_hosts[:20]) +
+                ". Это применимо к пассивному browser_open/browser_network. " +
+                "Если пользователь упомянул сайт без URL, можно читать " +
+                "https://" + scope_hosts[0] + "/. " +
+                "Уровень доказательств Network: " +
+                str((scope or {}).get("capture_detail", "evidence")) +
+                ". Для активных тестов сохраняется отдельное согласование."}
+            )
+
         for msg in history[-16:]:
             if msg.get("role") in ("user", "assistant") and isinstance(msg.get("content"), str):
                 context.append({"role": msg["role"], "content": msg["content"][:MAX_PROMPT]})
@@ -322,16 +338,18 @@ class Agent:
                     # Try exactly one browser evidence call instead of claiming
                     # there is no access. Scope/policy enforcement is in tool.
                     requested_url = re.search(r"https://[A-Za-z0-9.-]+(?:/[A-Za-z0-9_./?=&%+~-]*)?", text)
+                    selected_url = requested_url.group(0) if requested_url else (
+                        "https://" + scope_hosts[0] + "/" if scope_hosts else None)
                     browser_intent = bool(re.search(
                         r"(?i)(?:открой|исследуй|изучи|проверь|проанализируй|собери|network|devtools|браузер|сайт)",
                         text))
-                    if requested_url and browser_intent and round_no == 0:
+                    if selected_url and browser_intent and round_no == 0:
                         chosen = "browser_network" if re.search(
                             r"(?i)(?:network|devtools|сетевы[хе]|запрос[ыов])", text
                         ) else "browser_open"
                         if chosen in descriptors:
                             observed, error_flag = mcp.call(chosen, {
-                                "url": requested_url.group(0)
+                                "url": selected_url
                             })
                             executed += 1
                             selected_by = "evidence_first_fallback"
