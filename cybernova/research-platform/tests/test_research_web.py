@@ -105,6 +105,8 @@ class ResearchWebTests(unittest.TestCase):
             research_source_open("http://vendor.example/advisory", reader=reader)
         with self.assertRaisesRegex(ResearchWebError, "ip_literal"):
             research_source_open("https://127.0.0.1/advisory", reader=reader)
+        with self.assertRaisesRegex(ResearchWebError, "sensitive_query_parameter"):
+            research_source_open("https://vendor.example/advisory?access_token=secret", reader=reader)
 
     def test_toolset_registers_search_and_source_reader_as_read_only(self):
         client = TrafficToolClient(FakeUpstream(), {}, scope={"hosts": ["private.example"]})
