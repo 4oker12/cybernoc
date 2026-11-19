@@ -17,6 +17,47 @@ GitHub, рабочие данные — в отдельном Docker-томе, �
 с API /v1/chat/completions. В Git не хранятся модельные веса, секреты,
 незашифрованные дампы или исследования.
 
+## Нативная установка без Docker — для арендованного Vast-контейнера
+
+В арендованном Vast.ai экземпляре Docker Engine внутри контейнера часто
+недоступен. В этом случае используй native.py: он создаст отдельный Python
+venv и приватный каталог данных, не меняя системный Python.
+
+~~~bash
+git clone --branch feature/cybernova-chat-console git@github.com:4oker12/cybernoc.git
+cd cybernoc/cybernova/research-platform/portable
+python3 native.py --data-dir /workspace/cybernova-portable-data wizard
+~~~
+
+Мастер выбирает Ollama либо внешний OpenAI-совместимый API, устанавливает
+Python-зависимости в отдельный venv и запускает все три внутренних сервиса
+через tmux (если установлен). Для локальной Ollama она уже должна быть
+установлена на хосте с нужной моделью; скрипт не скачивает веса незаметно.
+В качестве стартовой модели можно указать уже установленную Heretic 30B.
+
+Проверка:
+
+~~~bash
+python3 native.py --data-dir /workspace/cybernova-portable-data doctor
+~~~
+
+Собственный Web UI: http://127.0.0.1:18795/ внутри Vast; с ноутбука
+подключаться через SSH -L или защищённый туннель. Пароль хранится в
+/workspace/cybernova-portable-data/web_access.txt. Не публиковать его.
+
+Нативный режим также имеет шифрование и восстановление:
+
+~~~bash
+python3 native.py --data-dir /workspace/cybernova-portable-data init-backup-key
+python3 native.py --data-dir /workspace/cybernova-portable-data export-backup-key --to /SECURE_OFFLINE/cybernova-backup.key
+python3 native.py --data-dir /workspace/cybernova-portable-data backup --to /SECURE_OFFLINE/backups
+python3 native.py --data-dir /workspace/cybernova-portable-data stage-restore --from /SECURE_OFFLINE/backups/ARCHIVE.cnbk --key-file /SECURE_OFFLINE/cybernova-backup.key
+~~~
+
+Важно: путь /workspace сохраняется после удаления аренды ТОЛЬКО если это
+действительно подключённое постоянное хранилище Vast. Проверить тип тома
+до работы, а копии обязательно переносить за пределы арендуемой машины.
+
 ## Установка — новый Vast/Linux
 
 Необходимы Docker + Compose, Python 3.10+, Git и доступ к приватному GitHub.
