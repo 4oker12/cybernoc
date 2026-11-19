@@ -96,6 +96,7 @@ def start_services():
             "CYBERNOVA_COMM_WORKER=1 " +
             "CYBERNOVA_SIWC_DIR=" + str(PRIVATE / "chatgpt-siwc") + " " +
             "CYBERNOVA_SIWC_CALLBACK_PORT=18795 " +
+            "CYBERNOVA_BROWSER_HOSTS=simnet.ua " +
             "PYTHONUNBUFFERED=1 " + str(VENV) +
             " -m " + module + " >>" + str(PRIVATE / filename) + " 2>&1"
         )
@@ -159,6 +160,12 @@ def check_health():
     if status.get("upload_limit_bytes") != MAX_UPLOAD_FILE_BYTES:
         raise RuntimeError("upload_size_not_deployed")
     tools = status.get("tools") or []
+    if "browser_open" not in tools:
+        raise RuntimeError("qwen_browser_tool_missing")
+    if "browser_open" not in status.get("auto_executable", []):
+        raise RuntimeError("qwen_browser_tool_not_executable")
+    if "simnet.ua" not in status.get("browser", {}).get("configured_hosts", []):
+        raise RuntimeError("expected_browser_scope_not_configured")
     if "comm_record_evidence" not in tools:
         raise RuntimeError("qwen_evidence_tool_missing")
     info = mcp_call("initialize", {
@@ -220,6 +227,7 @@ def check_health():
         "chatgpt_oauth_route": "authenticated_ready",
         "gpt_regular_chat": "available",
         "markdown_rendering": "ready",
+        "browser": "scoped_https_html_ready",
     }, ensure_ascii=False), flush=True)
 
 
