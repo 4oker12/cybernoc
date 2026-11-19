@@ -4,7 +4,8 @@ const $=id=>document.getElementById(id);
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
   uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Qwen3-Coder 30B",
-  gptThreadId:null,gptConnected:false,gptPlanUsage:false};
+  gptThreadId:null,gptConnected:false,gptPlanUsage:false,
+  researchScope:{hosts:[],capture_detail:"evidence"}};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка интерфейса",
@@ -347,6 +348,7 @@ function setMode(mode){
   $("messages").hidden=!qwen;
   $("gptMessages").hidden=qwen;
   $("qwenSidebar").hidden=!qwen;
+  $("scopeSettings").hidden=!qwen;
   $("gptSidebar").hidden=qwen;
   $("gptTopModel").hidden=qwen;
   $("modelName").hidden=!qwen;
@@ -437,6 +439,42 @@ async function sendGPT(){
     $("sendStatus").textContent="Ошибка GPT";
   }finally{busy(false);$("messageInput").focus();toBottom();}
 }
+
+function showResearchScope(profile){
+  const scope=profile||{hosts:[],capture_detail:"evidence"};
+  state.researchScope=scope;
+  $("researchTargets").value=(scope.hosts||[]).join("\n");
+  $("captureDetail").value=scope.capture_detail||"evidence";
+  const count=(scope.hosts||[]).length;
+  $("scopeIndicator").textContent=count?count+" целей":"не выбран";
+  $("scopeStatus").textContent=count?
+    "Разрешённые цели: "+scope.hosts.join(", ")+". Активные действия согласуются отдельно.":
+    "Объект не выбран. Укажи домен или IP и нажми «Применить».";
+}
+async function applyResearchScope(){
+  if(state.running)return;
+  const hosts=$("researchTargets").value.split(/[,;\n]+/)
+    .map(x=>x.trim()).filter(Boolean);
+  if(hosts.length>20){
+    $("scopeStatus").textContent="Не больше 20 точных целей в одном профиле.";
+    return;
+  }
+  $("applyResearchScope").disabled=true;
+  $("scopeStatus").textContent="Проверяю и сохраняю профиль…";
+  try{
+    const result=await requestJson("/api/research/scope",{
+      session_id:state.sessionId,hosts,capture_detail:$("captureDetail").value
+    });
+    state.sessionId=result.session_id;
+    showResearchScope(result.scope);
+    $("sendStatus").textContent="Объекты исследования заданы";
+  }catch(err){
+    $("scopeStatus").textContent="Ошибка настройки: "+String(err.message||err);
+  }finally{
+    $("applyResearchScope").disabled=false;
+  }
+}
+
 async function refreshTaskList(){
   try{
     const response=await fetch("/api/comm/tasks",{cache:"no-store"});
@@ -484,6 +522,7 @@ async function resumeTask(taskId){
     const result=await requestJson("/api/comm/resume",{task_id:taskId});
     state.sessionId=result.session_id;
     state.taskId=result.task.task_id;
+    showResearchScope(result.scope);
     lastGptReview=null;
     $("chatgptToQwen").disabled=true;
     void refreshChatGPT();
@@ -832,6 +871,7 @@ async function reset(){
   }
   state.sessionId=null;
   state.taskId=null;
+  showResearchScope({hosts:[],capture_detail:"evidence"});
   lastGptReview=null;
   $("chatgptReview").disabled=true;
   $("chatgptToQwen").disabled=true;
@@ -854,12 +894,14 @@ function toolsPanel(show){
 function init(){
   window.cybernovaWelcome=$("welcome").cloneNode(true);
   window.cybernovaGptWelcome=$("gptWelcome").cloneNode(true);
+  showResearchScope({hosts:[],capture_detail:"evidence"});
   $("sendButton").addEventListener("click",send);
   $("artifactFile").addEventListener("change",event=>importArtifact(event.target.files?.[0]));
   $("messageInput").addEventListener("keydown",e=>{
     if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}
   });
   $("newSession").addEventListener("click",reset);
+  $("applyResearchScope").addEventListener("click",applyResearchScope);
   $("modeQwen").addEventListener("click",()=>setMode("qwen"));
   $("modeChatGPT").addEventListener("click",()=>setMode("gpt"));
   $("gptTopModel").addEventListener("change",()=>{
