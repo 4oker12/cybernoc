@@ -87,7 +87,7 @@ class CollaborationStore:
         with self.lock:
             task = self.comm.create_task(goal.strip()[:150], origin="human")
             task_id = task["task_id"]
-            ResearchScopeStore().save(task_id, scope or scope_profile([]))
+            ResearchScopeStore(self.comm.path).save(task_id, scope or scope_profile([]))
             now = _utc()
             with self.comm._lock, self.comm._connection() as db:
                 db.execute(
