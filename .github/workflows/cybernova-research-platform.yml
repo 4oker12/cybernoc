@@ -54,7 +54,7 @@ jobs:
           c=json.load(open('/tmp/cybernova-catalog-check.json'))
           a=json.load(open('/tmp/cybernova-engine-inventory.json'))
           e=json.load(open('/tmp/cybernova-engagement-check.json'))
-          assert c['valid'] and c['count']==87, c
+          assert c['valid'] and c['count']==89, c
           assert a['selected']==107, a['selected']
           w=json.load(open('/tmp/cybernova-wak-workflow.json'))
           assert w['ok'] and len(w['phases'])==12, w
