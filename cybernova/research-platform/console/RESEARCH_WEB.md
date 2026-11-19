@@ -47,6 +47,7 @@ publication date from the date Cybernova retrieved it.
 - No cookies, authentication, JavaScript, form submission or state-changing
   methods.
 - Source redirects must remain on the original hostname.
+- Source URLs containing credential-like query parameter names are rejected.
 - Eight Google searches and twelve source opens per minute per process.
 - Search and source text are bounded; no arbitrary URL is accepted by the
   Google search tool itself.
