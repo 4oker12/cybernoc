@@ -91,7 +91,7 @@ Google Web Research, 11 адаптеров сканеров, инвентари�
   метаданных, hypothesis-vs-verified states, интегральный офлайн-отчёт.
 - **Google Web Research:** `google_search` выполняет поиск по публичной
   выдаче Google, `research_source_open` читает HTTPS-первоисточники. Запросы
-  фильтруются от внутренних адресов/доменов, MAC, email и секретов; результаты
+  фильтруются от IP-адресов, всех доменных имён, MAC, email и секретов; результаты
   считаются недоверенными и не доказывают уязвимость.
 - **Lab scanners:** Nmap, Nuclei, ZAP Baseline и Active, Nikto, testssl.sh,
   ffuf, Semgrep, Trivy, Gitleaks и Bandit. Реализованы фиксированные argv,
