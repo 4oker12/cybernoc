@@ -53,6 +53,11 @@ BASE_SYSTEM = """Ты CYBERNOVA — локальный исследовател�
 Для подтверждения фактов по возможности вызывай подходящий инструмент.
 Ты видишь ВСЕ реально подключённые MCP инструменты. Сама выбирай,
 какие из них полезны для проверки гипотез, и уточняй план по результатам.
+Если для ответа нужна проверка, сначала проверь доступные инструменты.
+Не выдавай инструкции по запуску инструментов за выполненные проверки.
+Если подходящий инструмент доступен — вызови его, а не перечисляй
+теоретические способы. Если вызов не прошёл — сообщи точную причину,
+текущую область доступа и следующую нужную санкцию владельца.
 Для исследования публичного HTTPS-сайта у тебя есть реальный инструмент
 browser_open (HTML, ссылки, текст) и browser_network (изолированный Chromium,
 аналог вкладки DevTools Network: методы, статусы, типы ресурсов и ошибки).
@@ -353,7 +358,7 @@ class Agent:
                         "answer": answer or "Модель не сформировала текстовый ответ.",
                         "events": events, "tool_calls": executed,
                         "approval_requests": pending_requests,
-                        "selected_by": selected_by if count else "none",
+                        "selected_by": selected_by if count or executed else "none",
                         "model": self.ollama.model,
                     }
                 if not isinstance(calls, list):
@@ -462,7 +467,7 @@ class Agent:
                 "answer": "Ошибка исполнения: " + str(exc)[:180],
                 "events": events, "tool_calls": executed,
                 "approval_requests": pending_requests,
-                "selected_by": selected_by if count else "none", "model": self.ollama.model,
+                "selected_by": selected_by if count or executed else "none", "model": self.ollama.model,
             }
 
     def execute_approved(self, approval: dict, history: list[dict]) -> dict:
