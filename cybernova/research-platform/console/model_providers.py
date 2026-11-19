@@ -143,12 +143,27 @@ class OpenAICompatibleClient:
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              *, json_mode: bool = False) -> dict:
+        token_field = os.environ.get("CYBERNOVA_LLM_TOKEN_PARAMETER", "").strip()
+        if not token_field:
+            token_field = ("max_completion_tokens"
+                           if self.model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4"))
+                           else "max_tokens")
+        if token_field not in {"max_tokens", "max_completion_tokens"}:
+            raise ModelConfigError("invalid_token_parameter")
         payload = {
             "model": self.model, "stream": False,
             "messages": _normalize_context(messages),
-            "temperature": 0.15,
-            "max_tokens": 1100,
+            token_field: 1100,
         }
+        custom_temp = os.environ.get("CYBERNOVA_LLM_TEMPERATURE", "").strip()
+        if custom_temp:
+            try:
+                temperature = float(custom_temp)
+                if not 0 <= temperature <= 2:
+                    raise ValueError("outside_range")
+            except ValueError:
+                raise ModelConfigError("invalid_llm_temperature") from None
+            payload["temperature"] = temperature
         if tools:
             payload["tools"] = tools
         if json_mode:
