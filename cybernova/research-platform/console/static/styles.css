@@ -44,3 +44,13 @@
 @media(max-width:680px){.composer-left{gap:9px}.upload-button{font-size:11px;padding:6px 8px}#uploadStatus{max-width:78%}}
 
 .tool-access.tool-missing{color:#d8a1a1;border-color:#785454;background:#382727}
+
+/* Persistent shared Cybernova tasks and independent ChatGPT reviews. */
+.task-list{display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:42vh;padding:1px 4px}
+.task-item{background:transparent;border:1px solid transparent;color:var(--text);border-radius:8px;padding:8px 11px;text-align:left;display:flex;align-items:center;gap:8px;min-height:35px}
+.task-item:hover,.task-item.selected{background:var(--hover);border-color:#3b4943}
+.task-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;font-size:12px;flex:1}
+.task-state{font-size:9px;color:#a0b9af;white-space:nowrap}
+.chat-msg.from-chatgpt .avatar{background:#344b43;color:#c7f5df}
+.chat-msg.from-chatgpt .message-meta{color:#b9dccb}
+@media(max-width:680px){.task-list{max-height:26vh}}
