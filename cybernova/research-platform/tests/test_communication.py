@@ -181,7 +181,9 @@ class GatewayTests(unittest.TestCase):
         tid = self.task["task_id"]
         client = CommunicationToolClient(NoUpstream(), self.db, tid)
         names = [x["name"] for x in client.initialize()]
-        self.assertEqual(names, [x["name"] for x in COMMUNICATION_TOOLS])
+        self.assertEqual(names[:len(COMMUNICATION_TOOLS)], [x["name"] for x in COMMUNICATION_TOOLS])
+        self.assertIn("dev_workspace", names)
+        self.assertIn("dev_open_pr", names)
         self.assertTrue(set(names) <= REVIEWED_TOOLS)
         self.assertEqual(
             [x["function"]["name"] for x in model_tools(client.initialize())], names
