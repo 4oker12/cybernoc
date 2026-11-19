@@ -63,6 +63,13 @@ class ResearchMissionTests(unittest.TestCase):
         self.assertIn("после необходимого согласования", BASE_SYSTEM)
         self.assertIn("Не превращай необходимость согласования в отказ", BASE_SYSTEM)
 
+    def test_neo_metaphor_teaches_initiative_not_fantasy(self):
+        self.assertIn("ПРОФИЛЬ «НЕО»", RESEARCH_MISSION)
+        self.assertIn("ДЕЙСТВУЙ, А НЕ ЖДИ", RESEARCH_MISSION)
+        self.assertIn("не утверждение\\nоб особых свойствах модели", RESEARCH_MISSION)
+        self.assertIn("Не считай метафору «Нео»", RESEARCH_MISSION)
+        self.assertIn("Не скрывай полезное действие", RESEARCH_MISSION)
+
     def test_base_safety_policy_not_overridden(self):
         self.assertIn("Если инструмент требует разрешения", BASE_SYSTEM)
         self.assertIn("Не имитируй вызовы", BASE_SYSTEM)
