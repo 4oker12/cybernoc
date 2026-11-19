@@ -276,6 +276,10 @@ class CollaborationActionRequest(BaseModel):
     task_id: str = Field(min_length=12, max_length=100)
 
 
+class CollaborationGoalEditRequest(CollaborationActionRequest):
+    goal: str = Field(min_length=1, max_length=3000)
+
+
 class SharedToolRequest(BaseModel):
     name: str = Field(pattern="^(google_search|research_source_open|safe_terminal)$")
     argument: str = Field(min_length=1, max_length=1600)
@@ -324,10 +328,12 @@ def collaboration_start(payload: CollaborationStartRequest):
 
 @app.post("/api/collab/stop")
 def collaboration_stop(payload: CollaborationActionRequest):
-    try:
-        return collaboration_store().halt(payload.task_id)
-    except (CollaborationError, CommunicationError):
-        raise HTTPException(status_code=404, detail="collaboration_not_found") from None
+    # Wait for an in-flight agent answer before pausing, preserving evidence.
+    with collaboration_step_lock:
+        try:
+            return collaboration_store().halt(payload.task_id)
+        except (CollaborationError, CommunicationError):
+            raise HTTPException(status_code=404, detail="collaboration_not_found") from None
 
 
 @app.post("/api/collab/resume")
@@ -340,10 +346,22 @@ def collaboration_resume(payload: CollaborationActionRequest):
 
 @app.post("/api/collab/finish")
 def collaboration_finish(payload: CollaborationActionRequest):
-    try:
-        return collaboration_store().finish(payload.task_id)
-    except (CollaborationError, CommunicationError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
+    with collaboration_step_lock:
+        try:
+            return collaboration_store().finish(payload.task_id)
+        except (CollaborationError, CommunicationError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
+
+@app.post("/api/collab/goal")
+def collaboration_update_goal(payload: CollaborationGoalEditRequest):
+    # Revisions are only committed while paused: no mid-inference mutation.
+    # The scope/permissions are managed separately and never expanded here.
+    with collaboration_step_lock:
+        try:
+            return collaboration_store().update_goal(payload.task_id, payload.goal)
+        except (CollaborationError, CommunicationError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @app.post("/api/collab/step")
