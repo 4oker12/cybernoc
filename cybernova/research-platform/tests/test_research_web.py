@@ -31,13 +31,15 @@ class ResearchWebTests(unittest.TestCase):
     def test_search_query_redacts_private_identifiers_and_secrets(self):
         value = sanitize_search_query(
             "CVE-2026-12345 Apache 2.4.25 10.9.55.44 "
-            "admin@example.com token=abc123 aa:bb:cc:dd:ee:ff portal.example",
+            "admin@example.com token=abc123 aa:bb:cc:dd:ee:ff portal.example "
+            "and admin.simnet.kiev.ua",
             blocked_hosts=["portal.example"],
         )
         self.assertIn("CVE-2026-12345", value)
         self.assertIn("Apache 2.4.25", value)
         for forbidden in ("10.9.55.44", "admin@example.com", "abc123",
-                          "aa:bb:cc:dd:ee:ff", "portal.example"):
+                          "aa:bb:cc:dd:ee:ff", "portal.example",
+                          "admin.simnet.kiev.ua"):
             self.assertNotIn(forbidden, value)
 
     def test_google_search_parses_external_result_and_uses_sanitized_query(self):
