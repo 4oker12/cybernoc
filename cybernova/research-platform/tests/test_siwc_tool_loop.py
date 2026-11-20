@@ -98,9 +98,6 @@ class AccountGPTToolLoopTests(unittest.TestCase):
         self.assertEqual(runtime.calls[0][2], {"185.238.114.6"})
         self.assertEqual(opener.requests[0]["tool_choice"], "auto")
         self.assertNotIn("tools", opener.requests[0])
-        self.assertFalse(any(
-            item.get("type") == "additional_tools" for item in opener.requests[0]["input"]
-        ))
         self.assertEqual(opener.requests[0]["input"][0]["type"], "additional_tools")
         second_input = opener.requests[1]["input"]
         self.assertTrue(any(item.get("type") == "function_call" for item in second_input))
@@ -120,6 +117,9 @@ class AccountGPTToolLoopTests(unittest.TestCase):
             )
         self.assertEqual(result["answer"], "Проверка завершена.")
         self.assertNotIn("tools", opener.requests[0])
+        self.assertFalse(any(
+            item.get("type") == "additional_tools" for item in opener.requests[0]["input"]
+        ))
 
 
 if __name__ == "__main__":
