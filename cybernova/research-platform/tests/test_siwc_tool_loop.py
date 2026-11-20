@@ -80,6 +80,7 @@ class AccountGPTToolLoopTests(unittest.TestCase):
     def test_model_selects_tool_then_receives_result_and_continues(self):
         opener = FakeOpener()
         runtime = FakeRuntime()
+        receipts = []
         with patch.object(siwc_inference, "models", return_value=[
                  {"slug": "gpt-6.2-sol", "display_name": "GPT"},
              ]), \
@@ -90,11 +91,13 @@ class AccountGPTToolLoopTests(unittest.TestCase):
                 [{"role": "user", "content": "Проверь локальный терминал."}],
                 tool_runtime=runtime,
                 authorized_targets={"185.238.114.6"},
+                on_tool_event=receipts.append,
             )
 
         self.assertEqual(result["answer"], "Проверка завершена.")
         self.assertEqual(result["tool_calls"], 1)
         self.assertEqual(len(result["tool_events"]), 1)
+        self.assertEqual(receipts, result["tool_events"])
         self.assertEqual(runtime.calls[0][0], "terminal_status")
         self.assertEqual(runtime.calls[0][2], {"185.238.114.6"})
         self.assertEqual(opener.requests[0]["tool_choice"], "auto")
