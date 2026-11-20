@@ -94,6 +94,25 @@ class GPTToolRuntimeTests(unittest.TestCase):
             "Resolve-DnsName edge.example.net -Type A",
         )
 
+    def test_tcp_probe_is_bound_to_one_explicit_host_and_valid_port(self):
+        self.assertEqual(
+            _validate_terminal_command(
+                "Test-NetConnection -ComputerName edge.example.net -Port 443",
+                {"edge.example.net"},
+            ),
+            "Test-NetConnection -ComputerName edge.example.net -Port 443",
+        )
+        with self.assertRaisesRegex(ValueError, "terminal_test_connection_options_not_allowlisted"):
+            _validate_terminal_command(
+                "Test-NetConnection -ComputerName edge.example.net -TraceRoute",
+                {"edge.example.net"},
+            )
+        with self.assertRaisesRegex(ValueError, "terminal_test_connection_port_out_of_range"):
+            _validate_terminal_command(
+                "Test-NetConnection -ComputerName edge.example.net -Port 70000",
+                {"edge.example.net"},
+            )
+
     def test_dns_tools_cannot_choose_unscoped_resolvers(self):
         with self.assertRaisesRegex(ValueError, "terminal_nslookup_custom_server_or_options_forbidden"):
             _validate_terminal_command("nslookup edge.example.net 8.8.8.8",
