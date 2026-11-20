@@ -36,7 +36,7 @@ try:
     from .safe_terminal import TERMINAL_TOOLS, safe_terminal
     from .research_web import research_web_call
     from .collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
-    from .shared_tool_support import preflight as gpt_tool_preflight
+    from .gpt_tool_runtime import runtime as gpt_tool_runtime, extract_user_targets
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -64,7 +64,7 @@ except ImportError:
     from safe_terminal import TERMINAL_TOOLS, safe_terminal
     from research_web import research_web_call
     from collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
-    from shared_tool_support import preflight as gpt_tool_preflight
+    from gpt_tool_runtime import runtime as gpt_tool_runtime, extract_user_targets
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -126,6 +126,7 @@ async def lifespan(app):
     finally:
         if worker is not None:
             worker.stop()
+        gpt_tool_runtime.close()
 
 
 app = FastAPI(title="Cybernova Console", version="0.2.0",
@@ -362,17 +363,25 @@ def collaboration_step(payload: CollaborationActionRequest):
             blocked = False
             if role == "chatgpt":
                 history = mentor_messages(run)
-                # Only the first mentor turn performs an automatic knowledge
-                # lookup; subsequent turns evaluate DeepSeek's actual evidence.
-                tool_evidence = gpt_tool_preflight(run["goal"], enabled=run["step"] == 0)
-                if tool_evidence["context"] and len(history[-1]["content"]) + len(tool_evidence["context"]) <= 12000:
-                    history[-1] = {**history[-1], "content":
-                                   history[-1]["content"] + tool_evidence["context"]}
                 outcome = chatgpt_chat(
                     run["model"], history,
                     user_context=user_context_for(profile, "chatgpt"),
                     profile_instructions=MENTOR_PROFILE + "\n\n" +
                                          mode_instructions_for(profile, "chatgpt"),
+                    tool_runtime=gpt_tool_runtime,
+                    authorized_targets=extract_user_targets([
+                        {"role": "user", "content": run["goal"]}
+                    ]),
+                )
+                tool_count = int(outcome.get("tool_calls", 0))
+                EvidenceJournal(communication_store()).record_tool_events(
+                    payload.task_id, [{
+                        "type": "tool_result" if event.get("ok") else "tool_error",
+                        "name": event.get("name", ""),
+                        "is_error": not bool(event.get("ok")),
+                        "arguments": event.get("arguments") or {},
+                        "result": event.get("result") or {},
+                    } for event in outcome.get("tool_events", [])],
                 )
             else:
                 history, prompt = researcher_messages(run)
@@ -479,16 +488,14 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
         store = gpt_chat_store()
         try:
             history = store.context(payload.thread_id) if payload.thread_id else []
-            preflight = gpt_tool_preflight(payload.message.strip())
-            message_for_model = payload.message.strip()
-            if len(message_for_model) + len(preflight["context"]) <= 12000:
-                message_for_model += preflight["context"]
-            outgoing = history + [{"role": "user", "content": message_for_model}]
+            outgoing = history + [{"role": "user", "content": payload.message.strip()}]
             profile = profile_settings_store().load()
             outcome = chatgpt_chat(
                 payload.model, outgoing,
                 user_context=user_context_for(profile, "chatgpt"),
                 profile_instructions=mode_instructions_for(profile, "chatgpt"),
+                tool_runtime=gpt_tool_runtime,
+                authorized_targets=extract_user_targets(outgoing),
             )
             thread_id = store.save_exchange(
                 payload.thread_id, payload.model, payload.message, outcome["answer"]
@@ -501,7 +508,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
             raise HTTPException(status_code=409, detail=str(exc)) from None
     return {"thread_id": thread_id, "model": payload.model,
             "answer": outcome["answer"], "source": outcome["source"],
-            "tool_events": preflight["events"]}
+            "tool_events": outcome.get("tool_events", [])}
 
 
 @app.get("/api/siwc/status")
