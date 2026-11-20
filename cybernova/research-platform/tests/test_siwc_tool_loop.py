@@ -38,7 +38,10 @@ class FakeOpener:
     def open(self, req, **_):
         payload = json.loads(req.data)
         self.requests.append(payload)
-        if len(self.requests) == 1 and payload.get("tools"):
+        has_additional_tools = any(
+            item.get("type") == "additional_tools" for item in payload.get("input", [])
+        )
+        if len(self.requests) == 1 and has_additional_tools:
             return FakeStream(sse({
                 "output": [{
                     "type": "function_call",
@@ -94,6 +97,11 @@ class AccountGPTToolLoopTests(unittest.TestCase):
         self.assertEqual(runtime.calls[0][0], "terminal_status")
         self.assertEqual(runtime.calls[0][2], {"185.238.114.6"})
         self.assertEqual(opener.requests[0]["tool_choice"], "auto")
+        self.assertNotIn("tools", opener.requests[0])
+        self.assertFalse(any(
+            item.get("type") == "additional_tools" for item in opener.requests[0]["input"]
+        ))
+        self.assertEqual(opener.requests[0]["input"][0]["type"], "additional_tools")
         second_input = opener.requests[1]["input"]
         self.assertTrue(any(item.get("type") == "function_call" for item in second_input))
         self.assertTrue(any(item.get("type") == "function_call_output" for item in second_input))
