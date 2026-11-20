@@ -40,7 +40,8 @@ class BrowserControlTests(unittest.TestCase):
             "browser_back", "browser_wait", "browser_submit",
             "browser_forward", "browser_reload", "browser_tabs",
             "browser_new_tab", "browser_switch_tab", "browser_close_tab",
-            "browser_press", "browser_scroll", "browser_console", "browser_network",
+            "browser_press", "browser_scroll", "browser_screenshot",
+            "browser_console", "browser_network",
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
         self.assertIn("explicit user approval", submit["description"])
