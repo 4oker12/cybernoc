@@ -48,6 +48,8 @@ python .\native.py --data-dir "$env:LOCALAPPDATA\CyberNova\data" install-browser
 
 Используй тот же `--data-dir`, с которым установлен Cybernova. На Windows
 Chromium открывается видимым окном; личный профиль Chrome не подключается.
+Публичные HTTPS-сайты доступны для чтения, а внутренние/private-хосты —
+только если их точное имя или IP пользователь указал в текущей задаче.
 Проверить установку можно командой `doctor`.
 
 Проверка:
