@@ -533,7 +533,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 "Цикл ChatGPT прерван: " + str(exc) +
                 ". Уже выполненные вызовы инструментов сохранены в истории этого диалога."
             )
-            thread_id = store.finish_exchange(thread_id, partial_answer) and thread_id
+            store.finish_exchange(thread_id, partial_answer)
             outcome = {
                 "answer": partial_answer, "source": "chatgpt_plan_responses_partial",
                 "tool_events": persisted_tool_events,
