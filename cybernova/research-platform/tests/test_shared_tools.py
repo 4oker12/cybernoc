@@ -110,7 +110,7 @@ class SharedToolTests(unittest.TestCase):
                 response=client.post("/api/siwc/chat",
                                      json={"model":"gpt-test","message":"Проверь локальный терминал"})
             self.assertEqual(response.status_code,200,response.text)
-            self.assertIn("уже выполненные вызовы инструментов сохранены",
+            self.assertIn("Уже выполненные вызовы инструментов сохранены",
                           response.json()["answer"])
             saved=store.get_thread(response.json()["thread_id"])
             self.assertEqual(len(saved["tool_events"]),1)
