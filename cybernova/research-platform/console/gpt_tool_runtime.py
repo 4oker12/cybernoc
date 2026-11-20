@@ -67,6 +67,8 @@ def extract_user_targets(messages: list[dict]) -> set[str]:
         for item in messages if isinstance(item, dict) and item.get("role") == "user"
     )
     targets = {x.lower().rstrip(".") for x in _DOMAIN.findall(text)}
+    if re.search(r"(?i)\blocalhost\b", text):
+        targets.add("localhost")
     for raw in _IPV4.findall(text):
         try:
             ipaddress.ip_address(raw)
@@ -320,6 +322,7 @@ class GPTToolRuntime:
                         raise ValueError("browser_submit_requires_separate_approval")
                     if self._browser is None:
                         self._browser = BrowserSession()
+                    self._browser.set_authorized_hosts(authorized_targets or set())
                     return browser_control_call(name, args, self._browser)
                 raise ValueError("gpt_tool_not_implemented")
             except (OSError, ValueError, TypeError) as exc:
