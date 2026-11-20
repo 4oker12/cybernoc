@@ -500,6 +500,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
             thread_id = store.save_exchange(
                 payload.thread_id, payload.model, payload.message, outcome["answer"]
             )
+            store.save_tool_events(thread_id, outcome.get("tool_events", []))
         except GPTChatError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         except ProfileSettingsError as exc:
