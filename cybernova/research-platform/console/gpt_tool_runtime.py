@@ -118,7 +118,8 @@ def build_tool_catalog() -> list[dict]:
                     "Get-NetIPInterface, Get-NetNeighbor, Get-NetAdapterStatistics, "
                     "Get-NetFirewallProfile, Get-Process, Get-Service, "
                     "ipconfig /all, route print -4, netstat -ano, arp -a, "
-                    "ping, tracert, pathping, nslookup, Resolve-DnsName, Test-NetConnection, "
+                    "ping, tracert, pathping, nslookup, Resolve-DnsName, "
+                    "Test-NetConnection -ComputerName <host> [-Port <port>], "
                     "git status, git log, git diff --stat, python --version, pwsh --version. "
                     "Exactly one command; no pipes, semicolons, scripts or writes. "
                     "Network targets must have been named by the user in this task."
@@ -226,6 +227,14 @@ def _validate_terminal_command(command: object, authorized_targets: set[str]) ->
             r"(?i)Resolve-DnsName\s+[A-Za-z0-9._:-]+(?:\s+-Type\s+(?:A|AAAA|CNAME|MX|TXT|SRV|NS))?",
             command):
         raise ValueError("terminal_resolve_dnsname_options_not_allowlisted")
+    if first == "test-netconnection":
+        if not re.fullmatch(
+                r"(?i)Test-NetConnection\s+-ComputerName\s+[A-Za-z0-9._:-]+(?:\s+-Port\s+\d{1,5})?",
+                command):
+            raise ValueError("terminal_test_connection_options_not_allowlisted")
+        port_match = re.search(r"(?i)\s+-Port\s+(\d+)", command)
+        if port_match and not 1 <= int(port_match.group(1)) <= 65535:
+            raise ValueError("terminal_test_connection_port_out_of_range")
 
     target = _target_from_command(command, first)
     if not target:
