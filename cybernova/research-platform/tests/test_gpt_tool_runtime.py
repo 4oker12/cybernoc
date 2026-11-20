@@ -46,6 +46,10 @@ class GPTToolRuntimeTests(unittest.TestCase):
             "route print -4",
         )
         self.assertEqual(
+            _validate_terminal_command("route print -6", set()),
+            "route print -6",
+        )
+        self.assertEqual(
             _validate_terminal_command("git status --short", set()),
             "git status --short",
         )
