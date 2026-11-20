@@ -22,6 +22,7 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("browser_navigate", names)
         self.assertIn("browser_tabs", names)
         self.assertIn("browser_network", names)
+        self.assertIn("browser_screenshot", names)
         self.assertIn("google_search", names)
         self.assertIn("research_source_open", names)
         self.assertNotIn("browser_submit", names)
