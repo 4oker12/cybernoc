@@ -224,6 +224,15 @@ def _safe_url(url: str) -> str:
 
 def _redact_text(value: str) -> str:
     value = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~-]{8,}", "[REDACTED TOKEN]", value)
+    value = re.sub(
+        r"(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|"
+        r"secret|authorization|cookie)\b\s*[:=]\s*['\"]?[^\s,;'\"<>]+",
+        "[REDACTED SECRET]", value,
+    )
+    value = re.sub(
+        r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",
+        "[REDACTED JWT]", value,
+    )
     value = re.sub(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "[REDACTED EMAIL]", value, flags=re.I)
     value = re.sub(r"(?<!\d)(?:\+?\d[\d\s().-]{7,}\d)(?!\d)", "[REDACTED PHONE]", value)
     value = re.sub(r"(?<!\d)(?:\d[ -]*?){13,19}(?!\d)", "[REDACTED NUMBER]", value)
