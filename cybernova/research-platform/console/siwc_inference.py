@@ -306,8 +306,16 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                     name, arguments, authorized_targets=authorized_targets,
                 )
             total_calls += 1
+            audit_arguments = dict(arguments)
+            if name == "browser_fill" and "value" in audit_arguments:
+                audit_arguments["value"] = "[REDACTED FORM INPUT]"
+            if name in {"browser_navigate", "browser_new_tab", "research_source_open"}:
+                if isinstance(audit_arguments.get("url"), str):
+                    audit_arguments["url"] = re.sub(r"[?#].*$", "", audit_arguments["url"])[:1200]
+            if name == "google_search":
+                audit_arguments = {"query": result.get("query", "[privacy-filtered query]")}
             event = {
-                "name": name, "arguments": arguments,
+                "name": name, "arguments": audit_arguments,
                 "result": result, "ok": not bool(is_error),
                 "is_error": bool(is_error), "round": round_index + 1,
             }
