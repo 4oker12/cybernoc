@@ -45,22 +45,24 @@ class BrowserControlTests(unittest.TestCase):
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
         self.assertIn("explicit user approval", submit["description"])
 
-    def test_tools_are_registered_in_composite_client_and_policy(self):
+    def test_browser_tools_are_exposed_to_account_gpt_not_deepseek(self):
+        from console.gpt_tool_runtime import build_tool_catalog
         from console.traffic_tools import TrafficToolClient
-        from console.tool_policy import REVIEWED_TOOLS
         class Remote:
             def initialize(self):
                 return []
             def call(self, name, args):
                 return {}, True
-        names={item["name"] for item in TrafficToolClient(
-            Remote(), {}, browser_state={"browser_session": None}
-        ).initialize()}
-        self.assertIn("browser_navigate", names)
-        self.assertIn("browser_snapshot", names)
-        self.assertIn("browser_submit", names)
-        self.assertIn("browser_navigate", REVIEWED_TOOLS)
-        self.assertNotIn("browser_submit", REVIEWED_TOOLS)
+        deepseek_names = {
+            item["name"] for item in TrafficToolClient(Remote(), {}).initialize()
+        }
+        gpt_names = {item["name"] for item in build_tool_catalog()}
+        self.assertIn("browser_navigate", gpt_names)
+        self.assertIn("browser_snapshot", gpt_names)
+        self.assertIn("browser_network", gpt_names)
+        self.assertNotIn("browser_submit", gpt_names)
+        self.assertNotIn("browser_navigate", deepseek_names)
+        self.assertNotIn("browser_submit", deepseek_names)
 
     def test_public_https_url_validation_and_query_redaction(self):
         with patch("console.browser_control._resolve_public", return_value=["93.184.215.14"]):
