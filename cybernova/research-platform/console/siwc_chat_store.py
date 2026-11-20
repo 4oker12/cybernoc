@@ -199,6 +199,57 @@ class GPTChatStore:
             history.append({"role": "assistant", "content": note})
         return history
 
+    def begin_exchange(self, thread_id: str | None, model: str, user: str) -> tuple[str, int]:
+        user = _validate_content(user, limit=10000)
+        if not isinstance(model, str) or not 1 <= len(model) <= 160:
+            raise GPTChatError("invalid_gpt_model")
+        now = _utc()
+        with self._lock, self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if thread_id is None:
+                thread_id = "gpt_" + secrets.token_urlsafe(18)
+                db.execute(
+                    "INSERT INTO gpt_threads(thread_id,title,model,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (thread_id, user[:100], model, now, now)
+                )
+            else:
+                _validate_id(thread_id)
+                updated = db.execute(
+                    "UPDATE gpt_threads SET model=?,updated_at=? WHERE thread_id=?",
+                    (model, now, thread_id)
+                )
+                if updated.rowcount != 1:
+                    raise GPTChatError("gpt_thread_not_found")
+            cursor = db.execute(
+                "INSERT INTO gpt_messages(thread_id,role,content,created_at) "
+                "VALUES(?,?,?,?)",
+                (thread_id, "user", user, now)
+            )
+            return thread_id, int(cursor.lastrowid)
+
+    def finish_exchange(self, thread_id: str, assistant: str) -> int:
+        _validate_id(thread_id)
+        assistant = _validate_content(assistant)
+        now = _utc()
+        with self._lock, self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            present = db.execute(
+                "SELECT 1 FROM gpt_threads WHERE thread_id=?", (thread_id,)
+            ).fetchone()
+            if not present:
+                raise GPTChatError("gpt_thread_not_found")
+            cursor = db.execute(
+                "INSERT INTO gpt_messages(thread_id,role,content,created_at) "
+                "VALUES(?,?,?,?)",
+                (thread_id, "assistant", assistant, now)
+            )
+            db.execute(
+                "UPDATE gpt_threads SET updated_at=? WHERE thread_id=?",
+                (now, thread_id)
+            )
+            return int(cursor.lastrowid)
+
     def save_exchange(self, thread_id: str | None, model: str,
                       user: str, assistant: str) -> str:
         user = _validate_content(user, limit=10000)
@@ -231,20 +282,29 @@ class GPTChatStore:
             )
         return thread_id
 
-    def save_tool_events(self, thread_id: str, events: list[dict]) -> None:
+    def save_tool_events(self, thread_id: str, events: list[dict], *,
+                         message_seq: int | None = None) -> None:
         _validate_id(thread_id)
         if not isinstance(events, list) or len(events) > 24:
             raise GPTChatError("invalid_gpt_tool_events")
         now = _utc()
         with self._lock, self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                "SELECT seq FROM gpt_messages WHERE thread_id=? AND role='assistant' "
-                "ORDER BY seq DESC LIMIT 1", (thread_id,)
-            ).fetchone()
-            if row is None:
-                raise GPTChatError("gpt_assistant_message_not_found")
-            message_seq = int(row["seq"])
+            if message_seq is None:
+                row = db.execute(
+                    "SELECT seq FROM gpt_messages WHERE thread_id=? AND role='assistant' "
+                    "ORDER BY seq DESC LIMIT 1", (thread_id,)
+                ).fetchone()
+                if row is None:
+                    raise GPTChatError("gpt_assistant_message_not_found")
+                message_seq = int(row["seq"])
+            else:
+                row = db.execute(
+                    "SELECT seq FROM gpt_messages WHERE thread_id=? AND seq=?",
+                    (thread_id, message_seq)
+                ).fetchone()
+                if row is None:
+                    raise GPTChatError("gpt_message_not_found")
             for event in events:
                 if not isinstance(event, dict):
                     continue
