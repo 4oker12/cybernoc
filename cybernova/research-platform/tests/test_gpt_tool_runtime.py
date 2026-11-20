@@ -50,6 +50,17 @@ class GPTToolRuntimeTests(unittest.TestCase):
             "git status --short",
         )
 
+    def test_local_cmdlets_reject_remote_session_arguments(self):
+        for command in (
+            "Get-NetAdapter -CimSession 185.238.114.6",
+            "Get-NetIPConfiguration -CimSession edge.example.net",
+            "Get-Service -ComputerName edge.example.net",
+            "Get-Process -ComputerName edge.example.net",
+        ):
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(ValueError, "terminal_local_command_arguments_forbidden"):
+                    _validate_terminal_command(command, {"185.238.114.6", "edge.example.net"})
+
     def test_network_commands_require_user_named_target(self):
         with self.assertRaisesRegex(ValueError, "terminal_target_not_explicitly_named_by_user"):
             _validate_terminal_command("tracert -d 185.238.114.6", set())
