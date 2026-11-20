@@ -89,8 +89,14 @@ def _function_tool(name: str, description: str, parameters: dict) -> dict:
 
 
 def _convert_mcp_tool(item: dict) -> dict:
+    description = item.get("description", "")
+    if item["name"] == "browser_click_button":
+        description += (
+            " In Account GPT, high-impact confirmation actions cannot be submitted; "
+            "stop and ask the user to perform or explicitly authorize the action."
+        )
     return _function_tool(
-        item["name"], item.get("description", "")[:900],
+        item["name"], description[:1100],
         item.get("inputSchema") or {
             "type": "object", "properties": {}, "required": [],
             "additionalProperties": False,
