@@ -1,7 +1,9 @@
-"""ChatGPT-plan inference: documented public Models and Responses API only.
+"""ChatGPT plan-usage adapter with a Responses API-compatible function loop.
 
+The local function-calling extension is a preview compatibility path, not a
+claim that hosted tools or this exact payload are part of the public API.
 Every invocation is triggered by a deliberate Cybernova UI action.
-No automatic export of local evidence or Qwen chat to OpenAI.
+Tool results are sent to the selected ChatGPT model; Qwen history is not.
 """
 from __future__ import annotations
 import json
@@ -117,9 +119,9 @@ def _response_once(model: str, instructions: str, input_items: list[dict],
                    token: str, tools: list[dict] | None = None) -> dict:
     request_input = list(input_items)
     if tools:
-        # Sign in with ChatGPT plan-usage preview accepts client functions as
-        # additional_tools input items; top-level tools/hosted MCP are not
-        # supported on this route.
+        # Preview compatibility path: expose local functions as additional_tools
+        # input items. This payload must be validated against a live SIWC account;
+        # mocked unit tests do not prove server-side acceptance.
         request_input.insert(0, {
             "type": "additional_tools",
             "role": "developer",
