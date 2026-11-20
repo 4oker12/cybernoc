@@ -112,6 +112,8 @@ class GPTToolRuntimeTests(unittest.TestCase):
             "Remove-Item C:\\temp",
             "Get-ChildItem C:\\",
             "python -c print(1)",
+            "git diff --stat --output=leak.txt",
+            "git log --output=leak.txt",
         ):
             with self.subTest(command=command):
                 with self.assertRaises(ValueError):
