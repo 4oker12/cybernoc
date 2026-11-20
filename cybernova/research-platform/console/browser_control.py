@@ -97,6 +97,14 @@ def _origin(url: str) -> str:
     return parsed.scheme + "://" + (parsed.hostname or "") + (":" + str(parsed.port) if parsed.port else "")
 
 
+def _is_allowed_private(ip) -> bool:
+    if ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+        return False
+    if ip.is_private or ip.is_loopback:
+        return True
+    return ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10")
+
+
 def _resolve_public(host: str) -> list[str]:
     try:
         literal = ipaddress.ip_address(host)
@@ -123,7 +131,40 @@ def _resolve_public(host: str) -> list[str]:
     return addresses
 
 
-def validate_public_url(url: str) -> tuple[str, list[str]]:
+def _resolve_authorized(host: str, port: int) -> list[str]:
+    try:
+        literal = ipaddress.ip_address(host)
+        if literal.is_global or _is_allowed_private(literal):
+            return [str(literal)]
+        raise ValueError("browser_authorized_host_resolves_to_reserved_address")
+    except ValueError as exc:
+        if str(exc) == "browser_authorized_host_resolves_to_reserved_address":
+            raise
+    try:
+        rows = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        raise ValueError("browser_dns_resolution_failed") from None
+    addresses = sorted({row[4][0] for row in rows})
+    if not addresses:
+        raise ValueError("browser_dns_no_addresses")
+    classes = set()
+    for raw in addresses:
+        try:
+            ip = ipaddress.ip_address(raw)
+        except ValueError:
+            raise ValueError("browser_dns_returned_invalid_address") from None
+        if ip.is_global:
+            classes.add("public")
+        elif _is_allowed_private(ip):
+            classes.add("private")
+        else:
+            raise ValueError("browser_authorized_host_resolves_to_reserved_address")
+    if len(classes) > 1:
+        raise ValueError("browser_dns_mixed_public_private_addresses")
+    return addresses
+
+
+def validate_public_url(url: str, authorized_hosts=None) -> tuple[str, list[str]]:
     if not isinstance(url, str) or not url or len(url) > MAX_URL:
         raise ValueError("browser_url_invalid")
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in url) or "\\" in url:
@@ -133,23 +174,32 @@ def validate_public_url(url: str) -> tuple[str, list[str]]:
         port = parsed.port
     except ValueError:
         raise ValueError("browser_url_invalid") from None
-    if (parsed.scheme != "https" or not parsed.hostname or
-            parsed.username or parsed.password or port not in (None, 443)):
-        raise ValueError("browser_requires_public_https_url")
+    if not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("browser_url_invalid")
     host = parsed.hostname.lower().rstrip(".")
-    if ".." in host or not re.fullmatch(
-            r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host):
-        raise ValueError("browser_hostname_invalid")
-    if host in {"localhost", "localdomain"} or host.endswith(
-            (".localhost", ".local", ".internal")):
-        raise ValueError("browser_private_or_reserved_address")
+    allowed = {str(item).lower().rstrip(".") for item in (authorized_hosts or set())}
+    is_authorized = host in allowed
     try:
-        literal = ipaddress.ip_address(host)
+        ipaddress.ip_address(host)
+        valid_host = True
     except ValueError:
-        literal = None
-    if literal is not None and not literal.is_global:
+        valid_host = bool(re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host)) and ".." not in host
+    if not valid_host:
+        raise ValueError("browser_hostname_invalid")
+    local_name = (
+        host in {"localhost", "localdomain"} or
+        host.endswith((".localhost", ".local", ".internal"))
+    )
+    if local_name and not is_authorized:
         raise ValueError("browser_private_or_reserved_address")
-    addresses = _resolve_public(host)
+    if is_authorized:
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("browser_url_scheme_invalid")
+        addresses = _resolve_authorized(host, port or (443 if parsed.scheme == "https" else 80))
+    else:
+        if parsed.scheme != "https" or port not in (None, 443):
+            raise ValueError("browser_requires_public_https_url")
+        addresses = _resolve_public(host)
     return host, addresses
 
 
@@ -184,6 +234,7 @@ class BrowserSession:
             configured = os.environ.get("CYBERNOVA_GPT_BROWSER_HEADLESS")
             headless = (sys.platform != "win32") if configured is None else configured.strip().lower() in {"1", "true", "yes", "on"}
         self._headless = bool(headless)
+        self._authorized_hosts: set[str] = set()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cybernova-chromium")
         self._closed = False
         self._pw = None
@@ -206,6 +257,22 @@ class BrowserSession:
             return self._executor.submit(self._dispatch, name, args).result(timeout=45)
         except FutureTimeout:
             raise ValueError("browser_action_timeout") from None
+
+    def set_authorized_hosts(self, hosts):
+        clean = set()
+        for raw in hosts or ():
+            if not isinstance(raw, str):
+                continue
+            host = raw.lower().rstrip(".")
+            try:
+                ipaddress.ip_address(host)
+                clean.add(host)
+            except ValueError:
+                if host == "localhost" or re.fullmatch(
+                        r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host):
+                    clean.add(host)
+        self._authorized_hosts = clean
+        self._dns_cache.clear()
 
     def close(self):
         if self._closed:
@@ -313,12 +380,7 @@ class BrowserSession:
             if parsed.scheme in {"data", "blob", "about"}:
                 route.continue_()
                 return
-            if (parsed.scheme != "https" or not parsed.hostname or
-                    parsed.username or parsed.password or parsed.port not in (None, 443)):
-                self._blocked.append({"url": _safe_url(raw), "reason": "blocked_unsafe_url"})
-                route.abort("blockedbyclient")
-                return
-            self._host_is_public(parsed.hostname.lower().rstrip("."))
+            validate_public_url(raw, self._authorized_hosts)
             method = req.method.upper()
             if method not in SAFE_METHODS:
                 same_origin = _origin(raw) == self._allow_post_origin
@@ -415,7 +477,7 @@ class BrowserSession:
         if name == "browser_navigate":
             if set(args) != {"url"}:
                 raise ValueError("browser_arguments_invalid")
-            validate_public_url(args["url"])
+            validate_public_url(args["url"], self._authorized_hosts)
             response = self._page.goto(args["url"], wait_until="domcontentloaded",
                                        timeout=ACTION_TIMEOUT_MS)
             try:
@@ -520,7 +582,7 @@ class BrowserSession:
             href = link.get_attribute("href") or ""
             if href and not href.startswith("#"):
                 target = urljoin(self._page.url, href)
-                validate_public_url(target)
+                validate_public_url(target, self._authorized_hosts)
                 self._page.goto(target, wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
             else:
                 link.click(timeout=7000)
