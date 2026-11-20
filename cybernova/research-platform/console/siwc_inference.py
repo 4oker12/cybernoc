@@ -315,7 +315,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                 )
             total_calls += 1
             audit_arguments = dict(arguments)
-            if name == "browser_fill" and "value" in audit_arguments:
+            if name in {"browser_fill", "browser_select"} and "value" in audit_arguments:
                 audit_arguments["value"] = "[REDACTED FORM INPUT]"
             if name in {"browser_navigate", "browser_new_tab", "research_source_open"}:
                 if isinstance(audit_arguments.get("url"), str):
