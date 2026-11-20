@@ -202,15 +202,19 @@ def _validate_terminal_command(command: object, authorized_targets: set[str]) ->
             raise ValueError("terminal_pwsh_command_not_allowlisted")
         return command
     if first in _LOCAL_COMMANDS:
-        if first == "ipconfig" and not re.fullmatch(r"(?i)ipconfig(?:\.exe)?\s+/(?:all|displaydns)", command):
-            raise ValueError("terminal_ipconfig_argument_not_allowlisted")
-        if first == "route" and not re.fullmatch(r"(?i)route(?:\.exe)?\s+print(?:\s+-4|-6)?", command):
-            raise ValueError("terminal_route_argument_not_allowlisted")
-        if first == "netstat" and not re.fullmatch(r"(?i)netstat(?:\.exe)?\s+-an(?:o)?", command):
-            raise ValueError("terminal_netstat_argument_not_allowlisted")
-        if first == "arp" and not re.fullmatch(r"(?i)arp(?:\.exe)?\s+-a", command):
-            raise ValueError("terminal_arp_argument_not_allowlisted")
+        # These cmdlets are deliberately local-only. Do not allow -CimSession,
+        # -ComputerName or other arguments that could redirect them remotely.
+        if len(command.split()) != 1:
+            raise ValueError("terminal_local_command_arguments_forbidden")
         return command
+    if first == "ipconfig" and not re.fullmatch(r"(?i)ipconfig(?:\\.exe)?\\s+/(?:all|displaydns)", command):
+        raise ValueError("terminal_ipconfig_argument_not_allowlisted")
+    if first == "route" and not re.fullmatch(r"(?i)route(?:\\.exe)?\\s+print(?:\\s+-4|-6)?", command):
+        raise ValueError("terminal_route_argument_not_allowlisted")
+    if first == "netstat" and not re.fullmatch(r"(?i)netstat(?:\\.exe)?\\s+-an(?:o)?", command):
+        raise ValueError("terminal_netstat_argument_not_allowlisted")
+    if first == "arp" and not re.fullmatch(r"(?i)arp(?:\\.exe)?\\s+-a", command):
+        raise ValueError("terminal_arp_argument_not_allowlisted")
     if first not in _TARGET_COMMANDS:
         raise ValueError("terminal_command_not_allowlisted")
 
