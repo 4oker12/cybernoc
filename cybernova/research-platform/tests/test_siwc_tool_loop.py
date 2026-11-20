@@ -38,7 +38,7 @@ class FakeOpener:
     def open(self, req, **_):
         payload = json.loads(req.data)
         self.requests.append(payload)
-        if len(self.requests) == 1:
+        if len(self.requests) == 1 and payload.get("tools"):
             return FakeStream(sse({
                 "output": [{
                     "type": "function_call",
