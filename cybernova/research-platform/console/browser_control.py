@@ -717,7 +717,7 @@ class BrowserSession:
                     "reason": "high_impact_button_or_form",
                     "button": target[:180],
                     "form_action": _safe_url(form_action) if form_action else "",
-                    "suggested_tool": "browser_submit",
+                    "suggested_action": "user_must_complete_manually",
                     "message": "Кнопка или форма похожа на оформление, покупку, оплату или бронирование. Для неё нужен отдельный запрос разрешения.",
                 }
             if name == "browser_submit":
