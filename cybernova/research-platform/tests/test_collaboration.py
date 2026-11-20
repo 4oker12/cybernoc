@@ -158,9 +158,7 @@ class CollaborationTests(unittest.TestCase):
              patch.object(server, "profile_settings_store", return_value=self.profile), \
              patch.object(server, "chatgpt_models", return_value=[{"slug":"gpt-test"}]), \
              patch.object(server, "chatgpt_chat", side_effect=fake_gpt), \
-             patch.object(server, "Agent", FakeResearchAgent), \
-             patch.object(server, "gpt_tool_preflight",
-                          return_value={"context": "", "events": []}):
+             patch.object(server, "Agent", FakeResearchAgent):
             client = TestClient(server.app, base_url="http://127.0.0.1:18794")
             created = client.post("/api/collab/start", json={
                 "goal": "Проверить изолированное приложение",
