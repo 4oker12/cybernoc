@@ -215,6 +215,8 @@ def _validate_terminal_command(command: object, authorized_targets: set[str]) ->
         raise ValueError("terminal_netstat_argument_not_allowlisted")
     if first == "arp" and not re.fullmatch(r"(?i)arp(?:\.exe)?\s+-a", command):
         raise ValueError("terminal_arp_argument_not_allowlisted")
+    if first in {"ipconfig", "route", "netstat", "arp"}:
+        return command
     if first not in _TARGET_COMMANDS:
         raise ValueError("terminal_command_not_allowlisted")
 
