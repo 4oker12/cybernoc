@@ -46,7 +46,7 @@ def _tool(name: str, description: str, properties=None, required=None):
 STRING = {"type": "string"}
 BROWSER_CONTROL_TOOLS = [
     _tool("browser_navigate",
-          "Open a user-requested public HTTPS page in the isolated Cybernova Chromium session. JavaScript is enabled. Private/local IPs, credentials in URLs, nonstandard ports and unsafe requests are blocked.",
+          "Open a public HTTPS page, or an exact private/internal host explicitly named by the user in this task. Private hosts and custom ports are allowed only for those exact named hosts. Credentials in URLs and unsafe requests are blocked.",
           {"url": {**STRING, "description": "Public HTTPS URL or explicitly user-scoped internal URL"}}, ["url"]),
     _tool("browser_snapshot",
           "Read the current Chromium page: title, visible text, links, buttons and form field labels. Input values, passwords and likely personal identifiers are not returned."),
@@ -73,7 +73,7 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_reload", "Reload the current Chromium tab and return its new snapshot."),
     _tool("browser_tabs", "List open tabs with index, safe URL and title."),
     _tool("browser_new_tab", "Open a new isolated Chromium tab at a public HTTPS URL or an explicitly user-scoped internal URL.",
-          {"url": {**STRING, "description": "Absolute public HTTPS URL"}}, ["url"]),
+          {"url": {**STRING, "description": "Public HTTPS URL or exact internal URL whose host the user named in this task"}}, ["url"]),
     _tool("browser_switch_tab", "Switch the active tab by its current zero-based index.",
           {"index": {"type": "integer", "description": "Current tab index"}}, ["index"]),
     _tool("browser_close_tab", "Close one tab by its current zero-based index; the final tab cannot be closed.",
