@@ -264,9 +264,9 @@ class GPTChatStore:
                 args_json = json.dumps(arguments, ensure_ascii=False, default=str)
                 result_json = json.dumps(result, ensure_ascii=False, default=str)
                 if len(args_json) > 3000:
-                    args_json = args_json[:3000]
+                    args_json = json.dumps({"truncated": True, "preview": args_json[:2400]}, ensure_ascii=False)
                 if len(result_json) > 12000:
-                    result_json = result_json[:12000]
+                    result_json = json.dumps({"truncated": True, "preview": result_json[:10800]}, ensure_ascii=False)
                 db.execute(
                     "INSERT INTO gpt_tool_events(thread_id,message_seq,name,arguments_json,"
                     "result_json,is_error,created_at) VALUES(?,?,?,?,?,?,?)",
