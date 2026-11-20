@@ -30,8 +30,12 @@ SENSITIVE_LABEL = re.compile(
 HIGH_IMPACT = re.compile(
     r"(?i)(pay|payment|purchase|buy\s+now|place\s+order|checkout|"
     r"confirm|complete\s+(?:booking|purchase)|\bbook(?:\s+now)?\b|"
-    r"\breserve\b|\border\b|"
-    r"оплат|купить|заказать|оформить|подтвердить|брон|резерв)"
+    r"\breserve\b|\border\b|\bsubmit\b|\bsend\b|"
+    r"\bdelete\b|\bremove\b|\bunsubscribe\b|\bcancel\b|\brevoke\b|"
+    r"\bdisable\b|\bdeactivate\b|\blog\s*out\b|\bsign\s*out\b|"
+    r"\breset\b|\bdisconnect\b|\bterminate\b|\berase\b|\bdestroy\b|"
+    r"оплат|купить|заказать|оформить|подтвердить|брон|резерв|"
+    r"удал|отмен|отпис|выйти|сброс|отключ|разорвать|деактив|стереть)"
 )
 
 def _tool(name: str, description: str, properties=None, required=None):
@@ -659,6 +663,12 @@ class BrowserSession:
         if name == "browser_follow_link":
             if set(args) != {"name"}:
                 raise ValueError("browser_arguments_invalid")
+            if HIGH_IMPACT.search(args["name"]):
+                return {
+                    "ok": False, "status": "manual_action_required",
+                    "reason": "high_impact_link",
+                    "message": "Ссылка может отменить, удалить, отключить или изменить удалённое состояние. Выполни это действие вручную после отдельного подтверждения.",
+                }
             link = self._one("link", args["name"])
             href = link.get_attribute("href") or ""
             if href and not href.startswith("#"):
