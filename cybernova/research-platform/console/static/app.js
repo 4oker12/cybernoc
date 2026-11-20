@@ -377,7 +377,7 @@ function setMode(mode){
   $("messageInput").placeholder=qwen?"Сообщение исследовательской модели или задача…":"Сообщение ChatGPT…";
   $("uploadStatus").textContent=qwen?
     "Импорт файлов до "+Math.floor(state.uploadLimit/(1024*1024))+" МиБ · модель":
-    "ChatGPT · история сохраняется локально";
+    "GPT-диалог хранится локально; его сообщения и результаты локальных инструментов отправляются выбранной модели ChatGPT";
   $("sendStatus").textContent=!qwen&&!state.gptConnected?
     "Подключи ChatGPT через «Аккаунт GPT»":"Готов";
   $("sidebar").classList.remove("open");
