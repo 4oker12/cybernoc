@@ -91,6 +91,33 @@ class SharedToolTests(unittest.TestCase):
         self.assertEqual(client.post("/api/tools/run",
                          json={"name":"arbitrary_shell","argument":"echo test"}).status_code,422)
 
+    def test_gpt_keeps_tool_receipts_when_inference_fails_after_execution(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            from console.siwc_chat_store import GPTChatStore
+            store=GPTChatStore(Path(dirname)/"comm.sqlite3")
+            event={
+                "name":"terminal_status",
+                "arguments":{},
+                "result":{"ok":True,"os":"Windows"},
+                "ok":True,"is_error":False,
+            }
+            def fake(model,messages,**kwargs):
+                kwargs["on_tool_event"](event)
+                raise server.SIWCError("gpt_transport_unavailable")
+            with patch.object(server,"gpt_chat_store",return_value=store), \
+                 patch.object(server,"chatgpt_chat",side_effect=fake):
+                client=TestClient(server.app,base_url="http://127.0.0.1:18794")
+                response=client.post("/api/siwc/chat",
+                                     json={"model":"gpt-test","message":"Проверь локальный терминал"})
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertIn("уже выполненные вызовы инструментов сохранены",
+                          response.json()["answer"])
+            saved=store.get_thread(response.json()["thread_id"])
+            self.assertEqual(len(saved["tool_events"]),1)
+            self.assertEqual(saved["tool_events"][0]["name"],"terminal_status")
+            self.assertEqual(saved["tool_events"][0]["message_seq"],
+                             saved["messages"][0]["seq"])
+
     def test_gpt_uses_its_own_runtime_and_persists_tool_evidence(self):
         calls=[]
         with tempfile.TemporaryDirectory() as dirname:
