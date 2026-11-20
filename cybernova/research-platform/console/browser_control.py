@@ -244,8 +244,9 @@ def _redact_text(value: str) -> str:
 class BrowserSession:
     """One isolated persistent browser context, serialized on its own worker thread.
 
-    Playwright sync objects never cross threads. Cookies/local storage remain
-    in memory for this chat session only and are never returned to the model.
+    Playwright sync objects never cross threads. Cookies/local storage persist
+    in this dedicated profile on disk and are never returned to the model.
+    The user's personal Chrome profile is never opened or inspected.
     """
     def __init__(self, *, headless: bool | None = None):
         if headless is None:
@@ -646,7 +647,9 @@ class BrowserSession:
             if args:
                 raise ValueError("browser_arguments_invalid")
             return {"ok": True, "events": self._network_events[-60:],
-                    "bodies_captured": False, "headers_captured": False,
+                    "request_response_bodies_captured": False,
+                    "sensitive_headers_captured": False,
+                    "safe_response_headers_captured": True,
                     "untrusted_page_content": True}
         if name == "browser_wait":
             if set(args) != {"milliseconds"} or type(args["milliseconds"]) is not int or not 0 <= args["milliseconds"] <= 3000:
