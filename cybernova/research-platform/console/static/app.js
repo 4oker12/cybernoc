@@ -452,13 +452,16 @@ async function sendGPT(){
       const details=node("div","inline-tools");
       for(const event of result.tool_events){
         details.append(makeToolDetails({
-          name:event.name,arguments:{source:"Cybernova read-only tool"},
-          result:event.summary,is_error:!event.ok,
+          name:event.name,
+          arguments:event.arguments||{},
+          result:event.result||event.summary||{},
+          is_error:typeof event.is_error==="boolean"?event.is_error:!event.ok,
         }));
       }
       pending.wrap.append(details);
     }
-    $("sendStatus").textContent="Ответ ChatGPT · диалог сохранён";
+    $("sendStatus").textContent="Ответ ChatGPT · диалог сохранён"+
+      (result.tool_events && result.tool_events.length ? " · инструментов: "+result.tool_events.length : "");
     void refreshGPTThreads();
   void refreshCollabRuns();
   }catch(err){
