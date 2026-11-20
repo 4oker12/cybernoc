@@ -467,7 +467,9 @@ async function sendGPT(){
       }
       userMessage.wrap.append(details);
     }
-    $("sendStatus").textContent="Ответ ChatGPT · диалог сохранён"+
+    $("sendStatus").textContent=(result.source==="chatgpt_plan_responses_partial"?
+      "ChatGPT прервал цикл · частичные результаты сохранены":
+      "Ответ ChatGPT · диалог сохранён")+
       (result.tool_events && result.tool_events.length ? " · инструментов: "+result.tool_events.length : "");
     void refreshGPTThreads();
   void refreshCollabRuns();
