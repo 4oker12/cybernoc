@@ -1,10 +1,9 @@
-"""Interactive, isolated Chromium browser tools for one Cybernova chat session.
+"""Interactive, isolated Chromium browser tools for Account GPT.
 
-The browser is driven by model-selected, typed actions; no arbitrary JavaScript,
-filesystem access, unscoped private-network navigation, downloads, or host Chrome
-profile. Private hosts are reachable only when the user explicitly names them in
-the current task. Read/navigation/form-preparation actions are automatic. A form submit is a
-separate, explicitly approved action and permits at most one same-origin POST.
+The browser uses a dedicated local profile, never the user's personal Chrome
+profile. The user signs in manually; browser cookies are not returned to the
+model. Private hosts are reachable only when explicitly named in the task.
+Downloads and unapproved form submissions are blocked.
 """
 from __future__ import annotations
 
@@ -12,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import base64
 import ipaddress
 import os
+from pathlib import Path
 import re
 import socket
 import sys
@@ -311,25 +311,54 @@ class BrowserSession:
             raise ValueError("playwright_python_not_installed") from None
         if self._pw is None:
             self._pw = sync_playwright().start()
-        if self._browser is None or not self._browser.is_connected():
-            if self._context is not None:
-                try:
-                    self._context.close()
-                except Exception:
-                    pass
-            self._context = None
-            self._page = None
-            self._browser = self._pw.chromium.launch(headless=self._headless, args=[
+        if self._context is not None:
+            try:
+                _ = self._context.pages
+            except Exception:
+                self._context = None
+                self._browser = None
+                self._page = None
+        if self._context is None:
+            launch_args = [
                 "--disable-background-networking", "--disable-sync",
                 "--disable-default-apps", "--no-first-run",
                 "--disable-dev-shm-usage",
-            ])
-        if self._context is None:
-            self._context = self._browser.new_context(
-                accept_downloads=False, service_workers="block",
-                ignore_https_errors=False, java_script_enabled=True,
-                viewport={"width": 1440, "height": 1000},
-            )
+            ]
+            ephemeral = os.environ.get("CYBERNOVA_GPT_BROWSER_EPHEMERAL", "").strip().lower() in {
+                "1", "true", "yes", "on",
+            }
+            if ephemeral:
+                self._browser = self._pw.chromium.launch(
+                    headless=self._headless, args=launch_args,
+                )
+                self._context = self._browser.new_context(
+                    accept_downloads=False, service_workers="block",
+                    ignore_https_errors=False, java_script_enabled=True,
+                    viewport={"width": 1440, "height": 1000},
+                )
+            else:
+                configured_profile = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")
+                if configured_profile:
+                    profile_dir = Path(configured_profile).expanduser()
+                elif os.environ.get("LOCALAPPDATA"):
+                    profile_dir = Path(os.environ["LOCALAPPDATA"]) / "CyberNova" / "data" / "gpt-chromium-profile"
+                else:
+                    profile_dir = Path.home() / ".local" / "share" / "cybernova" / "gpt-chromium-profile"
+                profile_dir.mkdir(parents=True, exist_ok=True)
+                if os.name != "nt":
+                    try:
+                        profile_dir.chmod(0o700)
+                    except OSError:
+                        pass
+                self._context = self._pw.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir),
+                    headless=self._headless,
+                    args=launch_args,
+                    accept_downloads=False, service_workers="block",
+                    ignore_https_errors=False, java_script_enabled=True,
+                    viewport={"width": 1440, "height": 1000},
+                )
+                self._browser = None
             self._context.route("**/*", self._route)
             # WebSockets bypass the ordinary HTTP route handler; block them
             # explicitly so a page cannot open an uninspected socket.
@@ -338,7 +367,8 @@ class BrowserSession:
                     code=1008, reason="Cybernova browser policy",
                 ),
             )
-        self._page = self._context.new_page()
+        pages = list(self._context.pages)
+        self._page = pages[0] if pages else self._context.new_page()
         self._attach_page(self._page)
 
     def _attach_page(self, page):
