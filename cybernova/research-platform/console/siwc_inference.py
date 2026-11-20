@@ -322,9 +322,15 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                     audit_arguments["url"] = re.sub(r"[?#].*$", "", audit_arguments["url"])[:1200]
             if name == "google_search":
                 audit_arguments = {"query": result.get("query", "[privacy-filtered query]")}
+
+            model_result = dict(result) if isinstance(result, dict) else {"value": str(result)}
+            image_data_url = model_result.pop("image_data_url", None)
+            display_result = dict(model_result)
+            if isinstance(image_data_url, str) and image_data_url.startswith("data:image/"):
+                display_result["screenshot"] = "captured and sent to the model"
             event = {
                 "name": name, "arguments": audit_arguments,
-                "result": result, "ok": not bool(is_error),
+                "result": display_result, "ok": not bool(is_error),
                 "is_error": bool(is_error), "round": round_index + 1,
             }
             tool_events.append(event)
@@ -332,12 +338,19 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                 "type": "function_call", "call_id": call_id,
                 "name": name, "arguments": json.dumps(arguments, ensure_ascii=False),
             })
-            output_text = json.dumps(result, ensure_ascii=False, default=str)
-            if len(output_text) > 14000:
-                output_text = output_text[:14000] + "…[truncated]"
+            if isinstance(image_data_url, str) and image_data_url.startswith("data:image/"):
+                output_content = [
+                    {"type": "input_text", "text": json.dumps(display_result, ensure_ascii=False, default=str)[:12000]},
+                    {"type": "input_image", "image_url": image_data_url, "detail": "high"},
+                ]
+            else:
+                output_text = json.dumps(model_result, ensure_ascii=False, default=str)
+                if len(output_text) > 14000:
+                    output_text = output_text[:14000] + "…[truncated]"
+                output_content = output_text
             input_items.append({
                 "type": "function_call_output", "call_id": call_id,
-                "output": output_text,
+                "output": output_content,
             })
 
     return {
