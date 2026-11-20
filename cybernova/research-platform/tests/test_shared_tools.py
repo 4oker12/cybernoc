@@ -101,6 +101,11 @@ class SharedToolTests(unittest.TestCase):
                 "arguments":{"query":"Apache CVE"},
                 "result":{"ok":True,"query":"Apache CVE","results":[{"title":"Advisory"}]},
                 "ok":True,"is_error":False,
+            },{
+                "name":"browser_select",
+                "arguments":{"label":"Account type","value":"private"},
+                "result":{"ok":True},
+                "ok":True,"is_error":False,
             }]
             def fake(model,messages,**kwargs):
                 calls.append((messages,kwargs))
@@ -119,6 +124,8 @@ class SharedToolTests(unittest.TestCase):
             saved=store.get_thread(response.json()["thread_id"])
             self.assertEqual(saved["tool_events"][0]["name"],"google_search")
             self.assertIn("Apache CVE",json.dumps(saved["tool_events"]))
+            self.assertEqual(saved["tool_events"][1]["arguments"]["value"],
+                             "[REDACTED FORM INPUT]")
 
 
 if __name__=="__main__":
