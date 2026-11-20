@@ -486,6 +486,21 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
     """
     with gpt_turn_lock:
         store = gpt_chat_store()
+        thread_id = payload.thread_id
+        user_message_seq = None
+        persisted_tool_events = []
+
+        def persist_tool_event(event):
+            nonlocal thread_id, user_message_seq
+            if user_message_seq is None:
+                thread_id, user_message_seq = store.begin_exchange(
+                    payload.thread_id, payload.model, payload.message
+                )
+            store.save_tool_events(
+                thread_id, [event], message_seq=user_message_seq,
+            )
+            persisted_tool_events.append(event)
+
         try:
             history = store.context(payload.thread_id) if payload.thread_id else []
             outgoing = history + [{"role": "user", "content": payload.message.strip()}]
@@ -496,17 +511,34 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 profile_instructions=mode_instructions_for(profile, "chatgpt"),
                 tool_runtime=gpt_tool_runtime,
                 authorized_targets=extract_user_targets(outgoing),
+                on_tool_event=persist_tool_event,
             )
-            thread_id = store.save_exchange(
-                payload.thread_id, payload.model, payload.message, outcome["answer"]
-            )
-            store.save_tool_events(thread_id, outcome.get("tool_events", []))
+            if user_message_seq is None:
+                thread_id = store.save_exchange(
+                    payload.thread_id, payload.model, payload.message, outcome["answer"]
+                )
+                # Compatibility for mocked/legacy inference adapters that return
+                # events but do not invoke the incremental receipt callback.
+                store.save_tool_events(thread_id, outcome.get("tool_events", []))
+            else:
+                store.finish_exchange(thread_id, outcome["answer"])
         except GPTChatError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         except ProfileSettingsError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from None
         except SIWCError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from None
+            if user_message_seq is None:
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+            partial_answer = (
+                "Цикл ChatGPT прерван: " + str(exc) +
+                ". Уже выполненные вызовы инструментов сохранены в истории этого диалога."
+            )
+            thread_id = store.finish_exchange(thread_id, partial_answer) and thread_id
+            outcome = {
+                "answer": partial_answer, "source": "chatgpt_plan_responses_partial",
+                "tool_events": persisted_tool_events,
+                "tool_calls": len(persisted_tool_events),
+            }
     return {"thread_id": thread_id, "model": payload.model,
             "answer": outcome["answer"], "source": outcome["source"],
             "tool_events": outcome.get("tool_events", [])}
