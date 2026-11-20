@@ -220,6 +220,13 @@ def _validate_terminal_command(command: object, authorized_targets: set[str]) ->
     if first not in _TARGET_COMMANDS:
         raise ValueError("terminal_command_not_allowlisted")
 
+    if first in {"nslookup", "nslookup.exe"} and len(command.split()) != 2:
+        raise ValueError("terminal_nslookup_custom_server_or_options_forbidden")
+    if first == "resolve-dnsname" and not re.fullmatch(
+            r"(?i)Resolve-DnsName\s+[A-Za-z0-9._:-]+(?:\s+-Type\s+(?:A|AAAA|CNAME|MX|TXT|SRV|NS))?",
+            command):
+        raise ValueError("terminal_resolve_dnsname_options_not_allowlisted")
+
     target = _target_from_command(command, first)
     if not target:
         raise ValueError("terminal_network_target_missing")
