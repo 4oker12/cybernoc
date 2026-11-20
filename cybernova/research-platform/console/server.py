@@ -482,7 +482,8 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
     """Explicit user turn, no implicit Qwen history/tools or external fetch.
 
     Lock ensures two browser tabs cannot interleave turns in the same
-    conversation. Commit the user+assistant pair only after a complete reply.
+    conversation. Tool receipts are committed as soon as each local action ends;
+    the final assistant message is stored after inference completes.
     """
     with gpt_turn_lock:
         store = gpt_chat_store()
