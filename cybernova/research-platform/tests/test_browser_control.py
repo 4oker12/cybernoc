@@ -89,6 +89,20 @@ class BrowserControlTests(unittest.TestCase):
                         validate_public_url(url)
             resolve.assert_not_called()
 
+    def test_explicit_user_scope_allows_private_host_and_internal_http(self):
+        host, addresses = validate_public_url(
+            "http://172.16.0.24:8080/admin", {"172.16.0.24"}
+        )
+        self.assertEqual(host, "172.16.0.24")
+        self.assertEqual(addresses, ["172.16.0.24"])
+        with self.assertRaises(ValueError):
+            validate_public_url("http://172.16.0.24:8080/admin")
+        with self.assertRaises(ValueError):
+            validate_public_url(
+                "http://169.254.169.254/latest/meta-data",
+                {"169.254.169.254"},
+            )
+
     def test_dns_private_or_reserved_address_is_rejected(self):
         rows = [(2, 1, 6, "", ("192.168.1.10", 443))]
         with patch("console.browser_control.socket.getaddrinfo", return_value=rows):
