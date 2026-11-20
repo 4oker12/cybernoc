@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 from console.browser_control import (
     BROWSER_CONTROL_TOOLS, BROWSER_CONTROL_NAMES, BrowserSession,
-    HIGH_IMPACT, _safe_url, validate_public_url,
+    HIGH_IMPACT, _redact_text, _safe_url, validate_public_url,
 )
 
 
@@ -63,6 +63,13 @@ class BrowserControlTests(unittest.TestCase):
         self.assertNotIn("browser_submit", gpt_names)
         self.assertNotIn("browser_navigate", deepseek_names)
         self.assertNotIn("browser_submit", deepseek_names)
+
+    def test_browser_text_redacts_credentials_and_jwts(self):
+        value = "api_key=abc12345 Bearer abcdefghijklmnop eyJabcdefghijk.abcdefghijk.abcdefghijk"
+        redacted = _redact_text(value)
+        self.assertNotIn("abc12345", redacted)
+        self.assertNotIn("abcdefghijklmnop", redacted)
+        self.assertNotIn("eyJabcdefghijk", redacted)
 
     def test_public_https_url_validation_and_query_redaction(self):
         with patch("console.browser_control._resolve_public", return_value=["93.184.215.14"]):
