@@ -663,14 +663,14 @@ class BrowserSession:
         if name == "browser_follow_link":
             if set(args) != {"name"}:
                 raise ValueError("browser_arguments_invalid")
-            if HIGH_IMPACT.search(args["name"]):
+            link = self._one("link", args["name"])
+            href = link.get_attribute("href") or ""
+            if HIGH_IMPACT.search(args["name"]) or HIGH_IMPACT.search(href):
                 return {
                     "ok": False, "status": "manual_action_required",
                     "reason": "high_impact_link",
                     "message": "Ссылка может отменить, удалить, отключить или изменить удалённое состояние. Выполни это действие вручную после отдельного подтверждения.",
                 }
-            link = self._one("link", args["name"])
-            href = link.get_attribute("href") or ""
             if href and not href.startswith("#"):
                 target = urljoin(self._page.url, href)
                 validate_public_url(target, self._authorized_hosts)
