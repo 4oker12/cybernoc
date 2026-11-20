@@ -257,7 +257,7 @@ class GPTChatStore:
                     arguments = {}
                 if not isinstance(result, dict):
                     result = {"value": str(result)[:1000]}
-                if name == "browser_fill" and "value" in arguments:
+                if name in {"browser_fill", "browser_select"} and "value" in arguments:
                     arguments = {**arguments, "value": "[REDACTED FORM INPUT]"}
                 if "url" in arguments and isinstance(arguments["url"], str):
                     arguments = {**arguments, "url": re.sub(r"([?#]).*$", "", arguments["url"])[:1200]}
