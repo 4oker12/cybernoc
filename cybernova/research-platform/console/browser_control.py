@@ -1,8 +1,9 @@
 """Interactive, isolated Chromium browser tools for one Cybernova chat session.
 
 The browser is driven by model-selected, typed actions; no arbitrary JavaScript,
-filesystem access, local-network navigation, downloads, or host Chrome profile.
-Read/navigation/form-preparation actions are automatic. A form submit is a
+filesystem access, unscoped private-network navigation, downloads, or host Chrome
+profile. Private hosts are reachable only when the user explicitly names them in
+the current task. Read/navigation/form-preparation actions are automatic. A form submit is a
 separate, explicitly approved action and permits at most one same-origin POST.
 """
 from __future__ import annotations
@@ -46,7 +47,7 @@ STRING = {"type": "string"}
 BROWSER_CONTROL_TOOLS = [
     _tool("browser_navigate",
           "Open a user-requested public HTTPS page in the isolated Cybernova Chromium session. JavaScript is enabled. Private/local IPs, credentials in URLs, nonstandard ports and unsafe requests are blocked.",
-          {"url": {**STRING, "description": "Absolute public HTTPS URL"}}, ["url"]),
+          {"url": {**STRING, "description": "Public HTTPS URL or explicitly user-scoped internal URL"}}, ["url"]),
     _tool("browser_snapshot",
           "Read the current Chromium page: title, visible text, links, buttons and form field labels. Input values, passwords and likely personal identifiers are not returned."),
     _tool("browser_follow_link",
@@ -71,7 +72,7 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_forward", "Navigate forward one page in the current Chromium tab."),
     _tool("browser_reload", "Reload the current Chromium tab and return its new snapshot."),
     _tool("browser_tabs", "List open tabs with index, safe URL and title."),
-    _tool("browser_new_tab", "Open a new isolated Chromium tab at a public HTTPS URL.",
+    _tool("browser_new_tab", "Open a new isolated Chromium tab at a public HTTPS URL or an explicitly user-scoped internal URL.",
           {"url": {**STRING, "description": "Absolute public HTTPS URL"}}, ["url"]),
     _tool("browser_switch_tab", "Switch the active tab by its current zero-based index.",
           {"index": {"type": "integer", "description": "Current tab index"}}, ["index"]),
