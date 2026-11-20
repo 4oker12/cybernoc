@@ -115,15 +115,24 @@ def review(model: str, prompt: str, *, user_context: str = "") -> dict:
 
 def _response_once(model: str, instructions: str, input_items: list[dict],
                    token: str, tools: list[dict] | None = None) -> dict:
+    request_input = list(input_items)
+    if tools:
+        # Sign in with ChatGPT plan-usage preview accepts client functions as
+        # additional_tools input items; top-level tools/hosted MCP are not
+        # supported on this route.
+        request_input.insert(0, {
+            "type": "additional_tools",
+            "role": "developer",
+            "tools": tools,
+        })
     payload = {
         "model": model,
         "store": False,
         "stream": True,
         "instructions": instructions,
-        "input": input_items,
+        "input": request_input,
     }
     if tools:
-        payload["tools"] = tools
         payload["tool_choice"] = "auto"
     req = request.Request(
         RESOURCE + "/responses", method="POST",
