@@ -86,7 +86,7 @@ BROWSER_CONTROL_TOOLS = [
            "pixels": {"type": "integer", "description": "100 to 1200 pixels"}}, ["direction", "pixels"]),
     _tool("browser_screenshot", "Capture the visible viewport of the current Chromium tab as an image for visual inspection. The image is sent to the Account GPT model; use only when DOM inspection is insufficient."),
     _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers."),
-    _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status and duration. Request/response bodies and secrets are never returned."),
+    _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
           "SUBMIT or confirm a form/button. This may change remote state or create an order/booking. Requires explicit user approval. After approval, permits at most one same-origin POST request; cross-origin and other write methods remain blocked.",
           {"name": {**STRING, "description": "Exact accessible name of the submit/confirm button"}}, ["name"]),
@@ -393,10 +393,22 @@ class BrowserSession:
         req = response.request
         started = self._request_started.pop(id(req), None)
         elapsed = round((time.monotonic() - started) * 1000, 1) if started else None
+        headers = response.headers
+        safe_headers = {
+            key: _redact_text(str(headers[key]))[:240]
+            for key in (
+                "content-type", "content-length", "cache-control", "server",
+                "date", "via", "x-powered-by", "strict-transport-security",
+                "content-security-policy", "x-frame-options",
+                "x-content-type-options", "referrer-policy", "permissions-policy",
+                "etag",
+            ) if key in headers
+        }
         self._network_events.append({
             "url": _safe_url(response.url), "method": req.method,
             "resource_type": req.resource_type, "status": int(response.status),
             "ok": bool(response.ok), "duration_ms": elapsed,
+            "safe_response_headers": safe_headers,
         })
         self._network_events = self._network_events[-200:]
 
