@@ -27,6 +27,19 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("research_source_open", names)
         self.assertNotIn("browser_submit", names)
 
+    def test_all_account_gpt_function_schemas_are_strict_and_closed(self):
+        for tool in build_tool_catalog():
+            with self.subTest(tool=tool["name"]):
+                self.assertEqual(tool["type"], "function")
+                self.assertTrue(tool["strict"])
+                schema = tool["parameters"]
+                self.assertEqual(schema["type"], "object")
+                self.assertFalse(schema["additionalProperties"])
+                self.assertEqual(
+                    set(schema.get("properties", {})),
+                    set(schema.get("required", [])),
+                )
+
     def test_targets_are_taken_only_from_user_messages(self):
         targets = extract_user_targets([
             {"role": "user", "content": "Проверь 185.238.114.6 и edge.example.net"},
