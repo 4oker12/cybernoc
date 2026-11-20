@@ -174,8 +174,12 @@ class BrowserControlTests(unittest.TestCase):
             "browser_press", "browser_scroll", "browser_console", "browser_network",
         }.issubset(names))
 
-    def test_high_impact_labels_require_explicit_submit(self):
-        for label in ("Pay now", "Confirm booking", "Оплатить", "Оформить заказ"):
+    def test_high_impact_labels_require_manual_user_action(self):
+        for label in (
+            "Pay now", "Confirm booking", "Оплатить", "Оформить заказ",
+            "Delete account", "Unsubscribe", "Cancel service", "Log out",
+            "Удалить", "Отключить услугу",
+        ):
             self.assertRegex(label, HIGH_IMPACT)
         for label in ("Search trains", "Find tickets", "Continue reading"):
             self.assertIsNone(HIGH_IMPACT.search(label))
