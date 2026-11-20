@@ -336,6 +336,10 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                 "is_error": bool(is_error), "round": round_index + 1,
             }
             tool_events.append(event)
+            if on_tool_event is not None:
+                # Persist the receipt immediately after execution, before the
+                # next model round can fail or the process can be interrupted.
+                on_tool_event(event)
             input_items.append({
                 "type": "function_call", "call_id": call_id,
                 "name": name, "arguments": json.dumps(arguments, ensure_ascii=False),
