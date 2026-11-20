@@ -178,7 +178,7 @@ class BrowserControlTests(unittest.TestCase):
         for label in (
             "Pay now", "Confirm booking", "Оплатить", "Оформить заказ",
             "Delete account", "Unsubscribe", "Cancel service", "Log out",
-            "Удалить", "Отключить услугу",
+            "Удалить", "Отключить услугу", "/account/unsubscribe?token=secret",
         ):
             self.assertRegex(label, HIGH_IMPACT)
         for label in ("Search trains", "Find tickets", "Continue reading"):
