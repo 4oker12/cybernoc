@@ -413,8 +413,15 @@ async function openGPTThread(threadId){
     if(!response.ok)throw Error(data.detail||"Не удалось загрузить диалог");
     state.gptThreadId=threadId;
     $("gptMessages").replaceChildren();
+    const savedToolEvents=data.tool_events||[];
     for(const m of data.messages||[]){
-      renderMessage(m.role==="user"?"user":"chatgpt",m.content,false,"gptMessages");
+      const rendered=renderMessage(m.role==="user"?"user":"chatgpt",m.content,false,"gptMessages");
+      const events=savedToolEvents.filter(event=>event.message_seq===m.seq);
+      if(events.length){
+        const details=node("div","inline-tools");
+        for(const event of events)details.append(makeToolDetails(event));
+        rendered.wrap.append(details);
+      }
     }
     const model=data.thread?.model;
     if(model&&[...$("gptTopModel").options].some(x=>x.value===model))
