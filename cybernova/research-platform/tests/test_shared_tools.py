@@ -56,12 +56,13 @@ class SharedToolTests(unittest.TestCase):
             for secret in [".env", "credentials.json", "id_rsa"]:
                 self.assertNotIn(secret,result["output"])
 
-    def test_both_modes_advertise_same_three_tools(self):
+    def test_deepseek_shared_registry_keeps_its_three_base_tools(self):
         client=TrafficToolClient(FakeUpstream(),{},scope={"hosts":[]})
         names={tool["name"] for tool in client.initialize()}
         for item in ["safe_terminal","google_search","research_source_open"]:
             self.assertIn(item,names)
             self.assertIn(item,REVIEWED_TOOLS)
+        self.assertNotIn("browser_navigate",names)
 
     def test_preflight_search_and_direct_source(self):
         choice=shared_tool_support.choose_safe_tool("Найди реальные кейсы CVE-2026-12345")
@@ -90,26 +91,34 @@ class SharedToolTests(unittest.TestCase):
         self.assertEqual(client.post("/api/tools/run",
                          json={"name":"arbitrary_shell","argument":"echo test"}).status_code,422)
 
-    def test_gpt_receives_tool_observation_without_mcp_shell_access(self):
+    def test_gpt_uses_its_own_runtime_and_persists_tool_evidence(self):
         calls=[]
         with tempfile.TemporaryDirectory() as dirname:
             from console.siwc_chat_store import GPTChatStore
             store=GPTChatStore(Path(dirname)/"comm.sqlite3")
+            events=[{
+                "name":"google_search",
+                "arguments":{"query":"Apache CVE"},
+                "result":{"ok":True,"query":"Apache CVE","results":[{"title":"Advisory"}]},
+                "ok":True,"is_error":False,
+            }]
             def fake(model,messages,**kwargs):
-                calls.append(messages)
-                return {"answer":"Исследовал бюллетень, подтверждение требует проверки.","source":"mock"}
+                calls.append((messages,kwargs))
+                return {
+                    "answer":"Исследовал бюллетень, подтверждение требует проверки.",
+                    "source":"mock","tool_events":events,"tool_calls":1,
+                }
             with patch.object(server,"gpt_chat_store",return_value=store), \
-                 patch.object(server,"chatgpt_chat",side_effect=fake), \
-                 patch.object(server,"gpt_tool_preflight",
-                              return_value={"context":"\n[REAL TOOL EVENT]", "events":[{"name":"google_search","ok":True}]}):
+                 patch.object(server,"chatgpt_chat",side_effect=fake):
                 client=TestClient(server.app,base_url="http://127.0.0.1:18794")
                 response=client.post("/api/siwc/chat",
                                      json={"model":"gpt-test","message":"Найди CVE"})
             self.assertEqual(response.status_code,200,response.text)
-            self.assertIn("REAL TOOL EVENT",calls[0][-1]["content"])
+            self.assertIs(calls[0][1]["tool_runtime"],server.gpt_tool_runtime)
             self.assertEqual(response.json()["tool_events"][0]["name"],"google_search")
             saved=store.get_thread(response.json()["thread_id"])
-            self.assertNotIn("REAL TOOL EVENT",json.dumps(saved))
+            self.assertEqual(saved["tool_events"][0]["name"],"google_search")
+            self.assertIn("Apache CVE",json.dumps(saved["tool_events"]))
 
 
 if __name__=="__main__":
