@@ -188,7 +188,7 @@ def _validate_terminal_command(command: object, authorized_targets: set[str]) ->
     first = command.split(None, 1)[0].lower()
     if first == "git":
         if not re.fullmatch(
-            r"(?i)git\s+(?:status|log|diff\s+--stat|diff\s+--name-only)(?:\s+--\S+)*",
+            r"(?i)git\s+(?:status(?:\s+--short)?|log(?:\s+--oneline)?|diff\s+--stat|diff\s+--name-only)",
             command,
         ):
             raise ValueError("terminal_git_subcommand_not_allowlisted")
