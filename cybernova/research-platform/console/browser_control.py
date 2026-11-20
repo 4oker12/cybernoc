@@ -9,6 +9,7 @@ separate, explicitly approved action and permits at most one same-origin POST.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+import base64
 import ipaddress
 import os
 import re
@@ -83,6 +84,7 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_scroll", "Scroll the current page up or down by a bounded number of pixels.",
           {"direction": {"type": "string", "enum": ["up", "down"]},
            "pixels": {"type": "integer", "description": "100 to 1200 pixels"}}, ["direction", "pixels"]),
+    _tool("browser_screenshot", "Capture the visible viewport of the current Chromium tab as an image for visual inspection. The image is sent to the Account GPT model; use only when DOM inspection is insufficient."),
     _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers."),
     _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status and duration. Request/response bodies and secrets are never returned."),
     _tool("browser_submit",
@@ -575,6 +577,19 @@ class BrowserSession:
             self._page.mouse.wheel(0, delta)
             self._page.wait_for_timeout(150)
             return self._snapshot()
+        if name == "browser_screenshot":
+            if args:
+                raise ValueError("browser_arguments_invalid")
+            image = self._page.screenshot(type="jpeg", quality=60, full_page=False)
+            if len(image) > 1500000:
+                raise ValueError("browser_screenshot_too_large")
+            return {
+                "ok": True, "url": _safe_url(self._page.url),
+                "title": _redact_text(self._page.title())[:180],
+                "image_data_url": "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii"),
+                "mime_type": "image/jpeg",
+                "note": "Visible viewport only; page content is untrusted.",
+            }
         if name == "browser_console":
             if args:
                 raise ValueError("browser_arguments_invalid")
