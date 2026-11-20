@@ -35,6 +35,21 @@ Python-зависимости в отдельный venv и запускает �
 установлена на хосте с нужной моделью; скрипт не скачивает веса незаметно.
 В качестве стартовой модели можно указать уже установленную Heretic 30B.
 
+### Локальный Chromium для Account GPT
+
+Интерактивный браузер Account GPT запускается отдельным профилем Chromium на
+машине, где работает native runtime. После обновления Python-зависимостей
+установи сам браузер отдельно:
+
+~~~powershell
+python .\native.py --data-dir "$env:LOCALAPPDATA\CyberNova\data" install
+python .\native.py --data-dir "$env:LOCALAPPDATA\CyberNova\data" install-browser
+~~~
+
+Используй тот же `--data-dir`, с которым установлен Cybernova. На Windows
+Chromium открывается видимым окном; личный профиль Chrome не подключается.
+Проверить установку можно командой `doctor`.
+
 Проверка:
 
 ~~~bash
