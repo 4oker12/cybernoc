@@ -45,9 +45,8 @@ _LOCAL_COMMANDS = {
     "get-netadapter", "get-netipconfiguration", "get-netroute",
     "get-nettcpconnection", "get-netudpendpoint", "get-dnsclientserveraddress",
     "get-netipinterface", "get-netneighbor", "get-netadapterstatistics",
-    "get-netfirewallprofile", "get-process", "get-service", "get-computerinfo",
-    "get-date", "hostname", "whoami", "ipconfig", "route", "netstat", "arp",
-    "systeminfo",
+    "get-netfirewallprofile", "get-process", "get-service",
+    "get-date", "ipconfig", "route", "netstat", "arp",
 }
 _TARGET_COMMANDS = {
     "ping", "ping.exe", "tracert", "tracert.exe", "pathping", "pathping.exe",
@@ -109,8 +108,8 @@ def build_tool_catalog() -> list[dict]:
                     "Get-NetAdapter, Get-NetIPConfiguration, Get-NetRoute, "
                     "Get-NetTCPConnection, Get-NetUDPEndpoint, Get-DnsClientServerAddress, "
                     "Get-NetIPInterface, Get-NetNeighbor, Get-NetAdapterStatistics, "
-                    "Get-NetFirewallProfile, Get-Process, Get-Service, Get-ComputerInfo, "
-                    "ipconfig /all, route print -4, netstat -ano, arp -a, hostname, whoami, "
+                    "Get-NetFirewallProfile, Get-Process, Get-Service, "
+                    "ipconfig /all, route print -4, netstat -ano, arp -a, "
                     "ping, tracert, pathping, nslookup, Resolve-DnsName, Test-NetConnection, "
                     "git status, git log, git diff --stat, python --version, pwsh --version. "
                     "Exactly one command; no pipes, semicolons, scripts or writes. "
@@ -217,10 +216,32 @@ def _validate_terminal_command(command: object, authorized_targets: set[str]) ->
         pass
     if normalized not in authorized_targets:
         raise ValueError("terminal_target_not_explicitly_named_by_user")
-    if first.startswith("ping") and re.search(r"(?i)(?:^|\s)-t(?:\s|$)", command):
-        raise ValueError("terminal_infinite_ping_forbidden")
-    if first.startswith("tracert") and re.search(r"(?i)(?:^|\s)-j(?:\s|$)", command):
-        raise ValueError("terminal_source_route_forbidden")
+    def option_int(flag):
+        match = re.search(r"(?i)(?:^|\s)" + re.escape(flag) + r"\s+(\d+)(?:\s|$)", command)
+        return int(match.group(1)) if match else None
+
+    if first.startswith("ping"):
+        if re.search(r"(?i)(?:^|\s)-t(?:\s|$)", command):
+            raise ValueError("terminal_infinite_ping_forbidden")
+        count = option_int("-n")
+        if count is not None and not 1 <= count <= 20:
+            raise ValueError("terminal_ping_count_out_of_range")
+    if first.startswith("tracert"):
+        if re.search(r"(?i)(?:^|\s)-(?:j|r|s)(?:\s|$)", command):
+            raise ValueError("terminal_source_route_forbidden")
+        hops = option_int("-h")
+        wait = option_int("-w")
+        if hops is not None and not 1 <= hops <= 30:
+            raise ValueError("terminal_traceroute_hops_out_of_range")
+        if wait is not None and not 100 <= wait <= 2000:
+            raise ValueError("terminal_traceroute_timeout_out_of_range")
+    if first.startswith("pathping"):
+        queries = option_int("-q")
+        if queries is None or not 1 <= queries <= 10:
+            raise ValueError("terminal_pathping_requires_q_1_to_10")
+        wait = option_int("-w")
+        if wait is not None and not 100 <= wait <= 2000:
+            raise ValueError("terminal_pathping_timeout_out_of_range")
     return command
 
 
