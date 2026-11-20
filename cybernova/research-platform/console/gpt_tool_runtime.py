@@ -209,7 +209,7 @@ def _validate_terminal_command(command: object, authorized_targets: set[str]) ->
         return command
     if first == "ipconfig" and not re.fullmatch(r"(?i)ipconfig(?:\.exe)?\s+/(?:all|displaydns)", command):
         raise ValueError("terminal_ipconfig_argument_not_allowlisted")
-    if first == "route" and not re.fullmatch(r"(?i)route(?:\.exe)?\s+print(?:\s+-4|-6)?", command):
+    if first == "route" and not re.fullmatch(r"(?i)route(?:\.exe)?\s+print(?:\s+-(?:4|6))?", command):
         raise ValueError("terminal_route_argument_not_allowlisted")
     if first == "netstat" and not re.fullmatch(r"(?i)netstat(?:\.exe)?\s+-an(?:o)?", command):
         raise ValueError("terminal_netstat_argument_not_allowlisted")
