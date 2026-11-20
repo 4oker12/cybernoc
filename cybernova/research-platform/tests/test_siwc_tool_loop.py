@@ -32,8 +32,9 @@ class FakeStream:
 
 
 class FakeOpener:
-    def __init__(self):
+    def __init__(self, tool_name="terminal_status"):
         self.requests = []
+        self.tool_name = tool_name
 
     def open(self, req, **_):
         payload = json.loads(req.data)
@@ -46,7 +47,7 @@ class FakeOpener:
                 "output": [{
                     "type": "function_call",
                     "call_id": "call_terminal_1",
-                    "name": "terminal_status",
+                    "name": self.tool_name,
                     "arguments": "{}",
                 }]
             }))
@@ -59,20 +60,20 @@ class FakeOpener:
 
 
 class FakeRuntime:
-    tools = [{
-        "type": "function", "name": "terminal_status",
-        "description": "Check local executor status.",
-        "parameters": {"type": "object", "properties": {},
-                       "required": [], "additionalProperties": False},
-        "strict": True,
-    }]
-
-    def __init__(self):
+    def __init__(self, tool_name="terminal_status", result=None):
+        self.tools = [{
+            "type": "function", "name": tool_name,
+            "description": "Test local tool.",
+            "parameters": {"type": "object", "properties": {},
+                           "required": [], "additionalProperties": False},
+            "strict": True,
+        }]
+        self.result = result or {"ok": True, "os": "Windows", "powershell_7": True}
         self.calls = []
 
     def call(self, name, args, *, authorized_targets=None):
         self.calls.append((name, args, authorized_targets))
-        return {"ok": True, "os": "Windows", "powershell_7": True}, False
+        return self.result, False
 
 
 class AccountGPTToolLoopTests(unittest.TestCase):
@@ -103,6 +104,35 @@ class AccountGPTToolLoopTests(unittest.TestCase):
         self.assertTrue(any(item.get("type") == "function_call" for item in second_input))
         self.assertTrue(any(item.get("type") == "function_call_output" for item in second_input))
         self.assertFalse(opener.requests[0]["store"])
+
+    def test_screenshot_is_returned_to_model_as_image_content(self):
+        opener = FakeOpener(tool_name="browser_screenshot")
+        runtime = FakeRuntime(
+            tool_name="browser_screenshot",
+            result={
+                "ok": True, "url": "https://example.com/",
+                "image_data_url": "data:image/jpeg;base64,ZmFrZQ==",
+            },
+        )
+        with patch.object(siwc_inference, "models", return_value=[
+                 {"slug": "gpt-6.2-sol", "display_name": "GPT"},
+             ]), \
+             patch.object(siwc_inference.connection, "access", return_value="test-token"), \
+             patch.object(siwc_inference.request, "build_opener", return_value=opener):
+            result = siwc_inference.chat(
+                "gpt-6.2-sol",
+                [{"role": "user", "content": "Посмотри страницу визуально."}],
+                tool_runtime=runtime,
+            )
+        second_input = opener.requests[1]["input"]
+        function_output = next(
+            item for item in second_input if item.get("type") == "function_call_output"
+        )
+        self.assertIsInstance(function_output["output"], list)
+        self.assertEqual(function_output["output"][1]["type"], "input_image")
+        self.assertNotIn("image_data_url", result["tool_events"][0]["result"])
+        self.assertEqual(result["tool_events"][0]["result"]["screenshot"],
+                         "captured and sent to the model")
 
     def test_text_only_mode_does_not_send_tools(self):
         opener = FakeOpener()
