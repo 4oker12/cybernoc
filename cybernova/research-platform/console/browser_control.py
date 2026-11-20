@@ -517,7 +517,7 @@ class BrowserSession:
         if name == "browser_new_tab":
             if set(args) != {"url"}:
                 raise ValueError("browser_arguments_invalid")
-            validate_public_url(args["url"])
+            validate_public_url(args["url"], self._authorized_hosts)
             self._page = self._context.new_page()
             self._attach_page(self._page)
             response = self._page.goto(args["url"], wait_until="domcontentloaded",
