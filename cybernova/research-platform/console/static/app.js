@@ -444,7 +444,7 @@ async function sendGPT(){
     return;
   }
   $("gptWelcome")?.remove();
-  renderMessage("user",message,false,"gptMessages");
+  const userMessage=renderMessage("user",message,false,"gptMessages");
   $("messageInput").value="";
   const pending=renderMessage("chatgpt","ChatGPT формирует ответ…",true,"gptMessages");
   busy(true);
@@ -465,7 +465,7 @@ async function sendGPT(){
           is_error:typeof event.is_error==="boolean"?event.is_error:!event.ok,
         }));
       }
-      pending.wrap.append(details);
+      userMessage.wrap.append(details);
     }
     $("sendStatus").textContent="Ответ ChatGPT · диалог сохранён"+
       (result.tool_events && result.tool_events.length ? " · инструментов: "+result.tool_events.length : "");
