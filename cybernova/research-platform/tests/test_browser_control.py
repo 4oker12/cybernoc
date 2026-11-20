@@ -155,6 +155,17 @@ class BrowserControlTests(unittest.TestCase):
         finally:
             browser._executor.shutdown(wait=False, cancel_futures=True)
 
+    def test_browser_network_reports_safe_headers_without_sensitive_headers(self):
+        browser = BrowserSession()
+        try:
+            with patch.object(browser, "_ensure"):
+                result = browser._dispatch("browser_network", {})
+            self.assertFalse(result["request_response_bodies_captured"])
+            self.assertFalse(result["sensitive_headers_captured"])
+            self.assertTrue(result["safe_response_headers_captured"])
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+
     def test_browser_controls_include_full_tab_and_diagnostics_surface(self):
         names = {item["name"] for item in BROWSER_CONTROL_TOOLS}
         self.assertTrue({
