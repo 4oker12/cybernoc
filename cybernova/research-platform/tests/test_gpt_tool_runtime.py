@@ -94,6 +94,16 @@ class GPTToolRuntimeTests(unittest.TestCase):
             "Resolve-DnsName edge.example.net -Type A",
         )
 
+    def test_dns_tools_cannot_choose_unscoped_resolvers(self):
+        with self.assertRaisesRegex(ValueError, "terminal_nslookup_custom_server_or_options_forbidden"):
+            _validate_terminal_command("nslookup edge.example.net 8.8.8.8",
+                                       {"edge.example.net", "8.8.8.8"})
+        with self.assertRaisesRegex(ValueError, "terminal_resolve_dnsname_options_not_allowlisted"):
+            _validate_terminal_command(
+                "Resolve-DnsName edge.example.net -Server 8.8.8.8",
+                {"edge.example.net", "8.8.8.8"},
+            )
+
     def test_shell_chaining_scripts_and_writes_are_rejected(self):
         for command in (
             "Get-NetAdapter; Remove-Item C:\\temp",
