@@ -267,6 +267,7 @@ class BrowserSession:
         self._console_events: list[dict] = []
         self._network_events: list[dict] = []
         self._request_started: dict[int, float] = {}
+        self._attached_pages: set[int] = set()
 
     def call(self, name: str, args: dict) -> dict:
         if self._closed:
@@ -372,6 +373,10 @@ class BrowserSession:
         self._attach_page(self._page)
 
     def _attach_page(self, page):
+        page_id = id(page)
+        if page_id in self._attached_pages:
+            return
+        self._attached_pages.add(page_id)
         page.set_default_timeout(7000)
         page.on("dialog", lambda dialog: dialog.dismiss())
         page.on("download", lambda download: download.cancel())
@@ -755,6 +760,7 @@ class BrowserSession:
         except Exception:
             pass
         self._page = self._context = self._browser = self._pw = None
+        self._attached_pages.clear()
 
 
 def browser_control_call(name: str, args: dict, session: BrowserSession) -> tuple[dict, bool]:
