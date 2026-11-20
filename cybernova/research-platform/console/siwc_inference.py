@@ -211,7 +211,8 @@ def _response_once(model: str, instructions: str, input_items: list[dict],
 
 def chat(model: str, messages: list[dict], *, user_context: str = "",
          profile_instructions: str = "", tool_runtime=None,
-         authorized_targets: set[str] | None = None) -> dict:
+         authorized_targets: set[str] | None = None,
+         on_tool_event=None) -> dict:
     """Stateless Responses API loop with Account GPT-only local tools.
 
     The complete input history and function-call/output items are sent on every
