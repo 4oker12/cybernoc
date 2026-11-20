@@ -172,8 +172,7 @@ def _response_once(model: str, instructions: str, input_items: list[dict],
                         output_items.append(item)
                 elif kind == "response.completed":
                     response = event.get("response")
-                    if isinstance(response, dict):
-                        completed_response = response
+                    completed_response = response if isinstance(response, dict) else {}
                     break
                 elif kind in {"response.failed", "error"}:
                     raise SIWCError("gpt_response_failed")
