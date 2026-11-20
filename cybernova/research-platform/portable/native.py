@@ -212,6 +212,7 @@ def run(data: Path):
     # and point the coding tools at the actual checked-out Git repository.
     env.setdefault("CYBERNOVA_DEV_SOURCE", str(ROOT.parents[1]))
     env.setdefault("CYBERNOVA_DEV_WORKSPACES", str(data/"dev-workspaces"))
+    env.setdefault("CYBERNOVA_GPT_BROWSER_PROFILE", str(data/"gpt-chromium-profile"))
     env["PYTHONPATH"]=str(ROOT)+(os.pathsep+env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     return subprocess.call([str(python),"-u","-m","console.portable_runtime"],
                            cwd=ROOT,env=env)
