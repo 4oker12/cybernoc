@@ -181,9 +181,10 @@ def validate_public_url(url: str, authorized_hosts=None) -> tuple[str, list[str]
     allowed = {str(item).lower().rstrip(".") for item in (authorized_hosts or set())}
     is_authorized = host in allowed
     try:
-        ipaddress.ip_address(host)
+        literal = ipaddress.ip_address(host)
         valid_host = True
     except ValueError:
+        literal = None
         valid_host = bool(re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host)) and ".." not in host
     if not valid_host:
         raise ValueError("browser_hostname_invalid")
@@ -200,7 +201,12 @@ def validate_public_url(url: str, authorized_hosts=None) -> tuple[str, list[str]
     else:
         if parsed.scheme != "https" or port not in (None, 443):
             raise ValueError("browser_requires_public_https_url")
-        addresses = _resolve_public(host)
+        if literal is not None:
+            if not literal.is_global:
+                raise ValueError("browser_private_or_reserved_address")
+            addresses = [str(literal)]
+        else:
+            addresses = _resolve_public(host)
     return host, addresses
 
 
