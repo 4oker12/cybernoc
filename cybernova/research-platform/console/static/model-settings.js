@@ -93,10 +93,7 @@
     const save = el("button", "profile-save", "Применить модель");
     save.type = "button";
     save.id = "modelConfigSave";
-    const clear = el("button", "header-button", "Удалить сохранённый ключ");
-    clear.type = "button";
-    clear.id = "modelConfigClear";
-    actions.append(save, clear);
+    actions.append(save);
     panel.append(actions);
     panel.append(el("p", "model-config-note", "Изменение применяется к следующим запросам без перезапуска Cybernova. Для DeepSeek укажи свой API-ключ и точный идентификатор модели. Не вставляй ключ ChatGPT: OAuth-подключение настраивается отдельно."));
     const uiPanel = panels.querySelector('[data-profile-panel="ui"]');
@@ -105,7 +102,6 @@
 
     provider.addEventListener("change", updateProviderFields);
     save.addEventListener("click", saveModelConfig);
-    clear.addEventListener("click", clearModelKey);
     updateProviderFields();
   }
 
@@ -191,33 +187,6 @@
 
   function stateModeIsResearcher() {
     return !$("modeChatGPT")?.classList.contains("selected");
-  }
-
-  async function clearModelKey() {
-    if (!window.confirm("Удалить сохранённый API-ключ DeepSeek из локального хранилища Cybernova?")) return;
-    const button = $("modelConfigClear");
-    const status = $("modelKeyStatus");
-    button.disabled = true;
-    try {
-      const response = await fetch("/api/model-config", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          provider:$("modelProvider").value === "ollama" ? "ollama" : "openai_compatible",
-          model:$("modelId").value.trim(),
-          base_url:$("modelProvider").value === "deepseek" ? "https://api.deepseek.com" : $("modelBaseUrl").value.trim(),
-          api_key:null, clear_api_key:true,
-        }), cache:"no-store",
-      });
-      const data = await response.json();
-      if (!response.ok) throw Error(data.detail || "Не удалось удалить ключ");
-      $("modelApiKey").value = "";
-      $("modelApiKey").placeholder = "Ключ удалён";
-      status.textContent = "Сохранённый ключ удалён.";
-    } catch (error) {
-      status.textContent = "Ошибка: " + String(error.message || error);
-    } finally {
-      button.disabled = false;
-    }
   }
 
   function init() {
