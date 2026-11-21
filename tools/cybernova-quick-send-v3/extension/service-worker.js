@@ -2,9 +2,7 @@
 
 const MENU_SELECTION = 'cybernova-send-selection';
 const MENU_CLIPBOARD = 'cybernova-paste-clipboard-send';
-const OFFSCREEN_PATH = 'offscreen.html';
 const MAX_TEXT_CHARS = 500000;
-let offscreenCreating = null;
 
 function isChatGPTUrl(url) {
   try {
@@ -16,7 +14,10 @@ function isChatGPTUrl(url) {
 
 function createMenus() {
   chrome.contextMenus.removeAll(() => {
-    if (chrome.runtime.lastError) return;
+    if (chrome.runtime.lastError) {
+      console.error('[Cybernova Quick Send] removeAll:', chrome.runtime.lastError.message);
+      return;
+    }
     chrome.contextMenus.create({
       id: MENU_SELECTION,
       title: 'Cybernova → отправить выделенное в ChatGPT',
@@ -32,36 +33,6 @@ function createMenus() {
 }
 chrome.runtime.onInstalled.addListener(createMenus);
 chrome.runtime.onStartup.addListener(createMenus);
-
-async function ensureOffscreenDocument() {
-  const url = chrome.runtime.getURL(OFFSCREEN_PATH);
-  const contexts = await chrome.runtime.getContexts({
-    contextTypes: ['OFFSCREEN_DOCUMENT'],
-    documentUrls: [url]
-  });
-  if (contexts.length) return;
-  if (!offscreenCreating) {
-    offscreenCreating = chrome.offscreen.createDocument({
-      url: OFFSCREEN_PATH,
-      reasons: ['CLIPBOARD'],
-      justification: 'Read clipboard text only after the user explicitly selects the Cybernova paste-and-send command.'
-    }).finally(() => { offscreenCreating = null; });
-  }
-  await offscreenCreating;
-}
-
-async function readClipboardText() {
-  await ensureOffscreenDocument();
-  const result = await chrome.runtime.sendMessage({
-    target: 'offscreen',
-    type: 'CYBERNOVA_READ_CLIPBOARD'
-  });
-  if (!result || result.ok !== true) throw new Error(result?.error || 'clipboard_read_failed');
-  const text = String(result.text || '');
-  if (!text.trim()) throw new Error('clipboard_empty');
-  if (text.length > MAX_TEXT_CHARS) throw new Error('clipboard_too_large');
-  return text;
-}
 
 function waitForTabComplete(tabId, timeoutMs) {
   return new Promise((resolve) => {
@@ -111,6 +82,12 @@ async function sendToContent(tabId, payload) {
   }
 }
 
+async function setSuccessBadge() {
+  await chrome.action.setBadgeBackgroundColor({color:'#16834a'});
+  await chrome.action.setBadgeText({text:'OK'});
+  await chrome.action.setTitle({title:'Cybernova Quick Send — отправлено в ChatGPT'});
+}
+
 async function sendTextToChatGPT(text, preferredTab, sourceKind, sourceLabel) {
   const cleanText = String(text || '');
   if (!cleanText.trim()) throw new Error('empty_text');
@@ -125,9 +102,23 @@ async function sendTextToChatGPT(text, preferredTab, sourceKind, sourceLabel) {
     sourceLabel:sourceLabel || ''
   });
   if (!response || response.ok !== true) throw new Error(response?.error || 'chatgpt_send_failed');
-  await chrome.action.setBadgeBackgroundColor({color:'#16834a'});
-  await chrome.action.setBadgeText({text:'OK'});
-  await chrome.action.setTitle({title:'Cybernova Quick Send — отправлено в ChatGPT'});
+  await setSuccessBadge();
+  return response;
+}
+
+async function sendClipboardFromChatGPT(preferredTab, activateTab = false) {
+  const target = await findChatGPTTab(preferredTab);
+  if (!target || !target.id) throw new Error('chatgpt_tab_unavailable');
+  if (activateTab && !target.active) {
+    await chrome.tabs.update(target.id,{active:true});
+    await new Promise(resolve => setTimeout(resolve,250));
+  }
+  if (target.status !== 'complete') await waitForTabComplete(target.id,20000);
+  const response = await sendToContent(target.id,{
+    type:'CYBERNOVA_READ_CLIPBOARD_AND_SEND'
+  });
+  if (!response || response.ok !== true) throw new Error(response?.error || 'clipboard_send_failed');
+  await setSuccessBadge();
   return response;
 }
 
@@ -146,12 +137,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       if (!selected.trim()) throw new Error('no_selected_text');
       let label = 'website';
       try { label = new URL(tab?.url || '').hostname; } catch (_) {}
-      await sendTextToChatGPT(selected, tab, 'selection', label);
+      await sendTextToChatGPT(selected,tab,'selection',label);
       return;
     }
     if (info.menuItemId === MENU_CLIPBOARD) {
-      const text = await readClipboardText();
-      await sendTextToChatGPT(text, tab, 'clipboard', 'Windows clipboard');
+      // Clipboard is read by the focused ChatGPT content script, never by an offscreen document.
+      await sendClipboardFromChatGPT(tab,false);
     }
   } catch (error) { await reportError(error); }
 });
@@ -159,16 +150,14 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 chrome.commands.onCommand.addListener(async command => {
   if (command !== 'send-clipboard-to-chatgpt') return;
   try {
-    const text = await readClipboardText();
-    await sendTextToChatGPT(text, null, 'clipboard', 'Windows clipboard');
+    await sendClipboardFromChatGPT(null,true);
   } catch (error) { await reportError(error); }
 });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.target === 'offscreen') return false;
+chrome.runtime.onMessage.addListener((message,sender,sendResponse) => {
   if (message?.type === 'CYBERNOVA_GET_STATUS') {
-    sendResponse({ok:true, version:chrome.runtime.getManifest().version,
-      architecture:'extension-content-script-no-local-server'});
+    sendResponse({ok:true,version:chrome.runtime.getManifest().version,
+      architecture:'focused-chatgpt-content-script-no-local-server'});
   }
   return false;
 });
