@@ -193,6 +193,30 @@ def run():
         }, ensure_ascii=True))
         if not pagination_ok:
             warnings.append("search_pagination_not_distinct")
+        from console.research_web import _bing_html_fallback, _bing_rss_fallback
+        for provider, fn in (
+            ("bing_html", _bing_html_fallback),
+            ("bing_rss", _bing_rss_fallback),
+        ):
+            try:
+                p1 = fn("Playwright Python official documentation", 1)
+                p2 = fn("Playwright Python official documentation", 2)
+                u1 = {x.get("url") for x in p1.get("results", [])}
+                u2 = {x.get("url") for x in p2.get("results", [])}
+                print(json.dumps({
+                    "test": "search_pagination_provider_probe",
+                    "provider": provider, "page1_count": len(u1),
+                    "page2_count": len(u2), "overlap": len(u1 & u2),
+                    "new_page2_results": len(u2 - u1),
+                    "page1_sample": sorted(u1)[:3],
+                    "page2_sample": sorted(u2)[:3],
+                }, ensure_ascii=False))
+            except Exception as exc:
+                print(json.dumps({
+                    "test": "search_pagination_provider_probe",
+                    "provider": provider, "error": str(exc)[:180],
+                }, ensure_ascii=False))
+
         # Probe alternative read-only public search providers if Google's
         # JavaScript shell returns no results; never attempt a challenge bypass.
         from console.browser_tools import _read_page
