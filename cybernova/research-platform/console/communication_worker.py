@@ -18,6 +18,7 @@ try:
     from .evidence import EvidenceJournal
     from .traffic_tools import TrafficToolClient
     from .research_scope import ResearchScopeStore
+    from .gpt_tool_runtime import runtime as shared_local_tool_runtime
 except ImportError:
     from agent import Agent, MCPClient
     from communication import CommunicationStore
@@ -25,6 +26,7 @@ except ImportError:
     from evidence import EvidenceJournal
     from traffic_tools import TrafficToolClient
     from research_scope import ResearchScopeStore
+    from gpt_tool_runtime import runtime as shared_local_tool_runtime
 
 
 def _history_from_dialog(messages: list[dict]) -> tuple[list[dict], str] | None:
@@ -54,11 +56,14 @@ class CommunicationWorker:
     def _agent_for(self, task_id: str):
         if self.agent_factory is not None:
             return self.agent_factory(task_id)
-        return Agent(mcp_factory=lambda: CommunicationToolClient(
-            TrafficToolClient(MCPClient(), {},
-                              scope=ResearchScopeStore().load(task_id)),
-            self.store, task_id
-        ))
+        return Agent(
+            mcp_factory=lambda: CommunicationToolClient(
+                TrafficToolClient(MCPClient(), {},
+                                  scope=ResearchScopeStore().load(task_id)),
+                self.store, task_id
+            ),
+            local_tool_runtime=shared_local_tool_runtime,
+        )
 
     def run_once(self) -> dict | None:
         task = self.store.claim_queued()
