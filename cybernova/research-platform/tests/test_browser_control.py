@@ -41,7 +41,7 @@ class BrowserControlTests(unittest.TestCase):
             "browser_forward", "browser_reload", "browser_tabs",
             "browser_new_tab", "browser_switch_tab", "browser_close_tab",
             "browser_press", "browser_scroll", "browser_screenshot",
-            "browser_console", "browser_network",
+            "browser_console", "browser_network", "browser_find_text",
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
         self.assertIn("explicit user approval", submit["description"])
@@ -68,12 +68,105 @@ class BrowserControlTests(unittest.TestCase):
         )
         deepseek_names = {item["function"]["name"] for item in model.tools}
         gpt_names = {item["name"] for item in runtime.tools}
-        for name in ("browser_navigate", "browser_snapshot", "browser_follow_link",
-                     "browser_tabs", "browser_network"):
+        for name in ("browser_navigate", "browser_snapshot", "browser_find_text",
+                     "browser_follow_link", "browser_tabs", "browser_network"):
             self.assertIn(name, gpt_names)
             self.assertIn(name, deepseek_names)
         self.assertNotIn("browser_submit", gpt_names)
         self.assertNotIn("browser_submit", deepseek_names)
+
+
+    def test_browser_snapshot_returns_structured_reading_map_without_field_values(self):
+        class FakePage:
+            url = "https://docs.example.org/guide?session=private"
+            def is_closed(self):
+                return False
+            def evaluate(self, script):
+                return {
+                    "url": "https://docs.example.org/guide?session=private",
+                    "title": "API Documentation",
+                    "language": "en",
+                    "description": "Installation guide",
+                    "canonical": "https://docs.example.org/guide",
+                    "page_type": "documentation",
+                    "visible_text": "Install the package. Configure the client.",
+                    "headings": [{"level": 1, "text": "Installation", "id": "install"}],
+                    "landmarks": [{"type": "main", "label": "Main content"}],
+                    "links": [{"name": "API reference", "url": "https://docs.example.org/api?token=secret",
+                               "kind": "internal", "rel": "", "target": "", "download": False}],
+                    "buttons": [{"name": "Search", "type": "button", "disabled": False}],
+                    "form_fields": [{"label": "Password", "type": "password", "sensitive": True,
+                                     "value": "must-never-appear"}],
+                    "tables": [{"caption": "Versions", "headers": ["Version", "Status"],
+                               "rows": [["1.0", "Stable"]]}],
+                    "search_forms": [{"label": "Search docs", "placeholder": "Search",
+                                      "method": "GET", "action": "https://docs.example.org/search"}],
+                    "pagination": {"current_page": "1", "next_url": "https://docs.example.org/guide?page=2",
+                                   "previous_url": "", "controls": [{"kind": "next", "label": "Next"}]},
+                    "focused_element": {"tag": "input", "role": "searchbox", "label": "Search docs",
+                                        "type": "search", "sensitive": False},
+                    "counts": {"headings": 1, "links": 1, "buttons": 1, "form_fields": 1, "tables": 1},
+                    "text_truncated": False
+                }
+        browser = BrowserSession()
+        browser._page = FakePage()
+        try:
+            result = browser._snapshot()
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["page_type"], "documentation")
+        self.assertEqual(result["headings"][0]["text"], "Installation")
+        self.assertEqual(result["links"][0]["kind"], "internal")
+        self.assertEqual(result["links"][0]["url"], "https://docs.example.org/api")
+        self.assertEqual(result["tables"][0]["headers"], ["Version", "Status"])
+        self.assertEqual(result["pagination"]["current_page"], "1")
+        self.assertNotIn("must-never-appear", str(result))
+        self.assertNotIn("token=secret", str(result))
+
+    def test_browser_find_text_returns_bounded_heading_context(self):
+        class FakePage:
+            url = "https://docs.example.org/guide"
+            def is_closed(self):
+                return False
+            def title(self):
+                return "API Documentation"
+            def evaluate(self, script, args):
+                self.args = args
+                return {
+                    "matches": [{"heading_context": "Installation", "element": "p",
+                                 "role": "", "snippet": "Install the package with pip."}],
+                    "total_matches": 1, "scanned_blocks": 12, "scan_limit_reached": False
+                }
+        browser = BrowserSession()
+        browser._page = FakePage()
+        try:
+            result = browser._dispatch("browser_find_text", {"query": "install", "max_matches": 3})
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["matches"][0]["heading_context"], "Installation")
+        self.assertEqual(browser._page.args, {"query": "install", "limit": 3})
+        self.assertFalse(result["scan_limit_reached"])
+
+    def test_browser_find_text_rejects_short_queries_and_invalid_limits(self):
+        class FakePage:
+            url = "https://docs.example.org/"
+            def is_closed(self):
+                return False
+            def title(self):
+                return "Docs"
+            def evaluate(self, script, args):
+                raise AssertionError("evaluate must not run for invalid input")
+        browser = BrowserSession()
+        browser._page = FakePage()
+        try:
+            short = browser._dispatch("browser_find_text", {"query": "x"})
+            bad_limit = browser._dispatch("browser_find_text", {"query": "install", "max_matches": 99})
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+        self.assertIn("browser_search_query_invalid", short["error"])
+        self.assertIn("browser_search_limit_invalid", bad_limit["error"])
 
     def test_browser_text_redacts_credentials_and_jwts(self):
         value = "api_key=abc12345 Bearer abcdefghijklmnop eyJabcdefghijk.abcdefghijk.abcdefghijk"
