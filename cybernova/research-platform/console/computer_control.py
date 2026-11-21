@@ -244,8 +244,11 @@ def _resolve_local_path(raw: object, *, must_exist=True) -> Path:
         raise ValueError("computer_path_not_found_or_unavailable") from None
     if any(_sensitive_component(part) for part in absolute.parts):
         raise ValueError("computer_sensitive_path_blocked")
-    if any(node.is_symlink() for node in [absolute, *absolute.parents]):
-        raise ValueError("computer_symlink_path_blocked")
+    if any(
+        node.is_symlink() or getattr(node, "is_junction", lambda: False)()
+        for node in [absolute, *absolute.parents]
+    ):
+        raise ValueError("computer_symlink_or_junction_path_blocked")
     if not any(resolved == root or resolved.is_relative_to(root) for root in _roots()):
         raise ValueError("computer_path_outside_approved_roots")
     if must_exist and not resolved.exists():
@@ -446,7 +449,7 @@ def _list_directory(path_raw: str, limit: int) -> dict:
     rows = []
     with os.scandir(path) as entries:
         for entry in sorted(entries, key=lambda item: (not item.is_dir(follow_symlinks=False), item.name.casefold())):
-            if entry.is_symlink() or _sensitive_component(entry.name):
+            if entry.is_symlink() or getattr(Path(entry.path), "is_junction", lambda: False)() or _sensitive_component(entry.name):
                 continue
             try:
                 stat = entry.stat(follow_symlinks=False)
@@ -482,6 +485,7 @@ def _search_files(root_raw: str, pattern: str, limit: int) -> dict:
             dirs[:] = [
                 d for d in dirs
                 if not _sensitive_component(d) and not (base_path / d).is_symlink()
+                and not getattr(base_path / d, "is_junction", lambda: False)()
                 and not d.startswith("$")
             ]
         for name in names:
@@ -1126,7 +1130,7 @@ def _organization_plan(source_raw: str, destination_raw: str, group_by: str) -> 
         raise ValueError("organization_grouping_invalid")
     moves = []
     for item in sorted(source.iterdir(), key=lambda x: x.name.casefold()):
-        if item.is_symlink() or not item.is_file() or _sensitive_component(item.name):
+        if item.is_symlink() or getattr(item, "is_junction", lambda: False)() or not item.is_file() or _sensitive_component(item.name):
             continue
         category = _organization_category(item, group_by)
         target_dir = destination / category
@@ -1169,7 +1173,10 @@ def _apply_organization(source_raw: str, destination_raw: str, group_by: str,
         src, dst = Path(item["source"]), Path(item["destination"])
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)
-            if dst.exists() or src.is_symlink():
+            if (dst.exists() or src.is_symlink()
+                    or getattr(src, "is_junction", lambda: False)()
+                    or dst.parent.is_symlink()
+                    or getattr(dst.parent, "is_junction", lambda: False)()):
                 skipped.append({**item, "status": "skipped_changed_since_preview"})
                 continue
             shutil.move(str(src), str(dst))
