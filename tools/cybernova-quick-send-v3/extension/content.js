@@ -113,7 +113,7 @@
       'cybernova-quick-send-toast success' : 'cybernova-quick-send-toast error';
     toast.textContent = message;
     document.documentElement.appendChild(toast);
-    setTimeout(() => toast.remove(),3200);
+    setTimeout(() => toast.remove(),4000);
   }
   async function sendText(message) {
     const text = String(message.text || '');
@@ -135,13 +135,43 @@
     showToast('Cybernova: сообщение отправлено в ChatGPT',true);
     return {ok:true,sent:true};
   }
+  async function readClipboardAndSend() {
+    if (!document.hasFocus()) {
+      throw new Error('chatgpt_page_not_focused: click the ChatGPT tab and retry');
+    }
+    if (!navigator.clipboard || typeof navigator.clipboard.readText !== 'function') {
+      throw new Error('clipboard_api_unavailable_in_chatgpt_page');
+    }
+    let text;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (error) {
+      const name = String(error?.name || 'unknown');
+      throw new Error('clipboard_read_denied: '+name+
+        '. Check Chrome extension permission "Read data you copy and paste" and ensure ChatGPT tab is focused.');
+    }
+    if (!String(text || '').trim()) throw new Error('clipboard_empty: copy terminal output first');
+    if (text.length > MAX_TEXT_CHARS) throw new Error('text_too_large');
+    return sendText({text,sourceKind:'clipboard'});
+  }
+
   chrome.runtime.onMessage.addListener((message,sender,sendResponse) => {
-    if (message?.type !== 'CYBERNOVA_SEND_TEXT') return false;
-    sendText(message).then(sendResponse).catch(error => {
-      const reason = String(error?.message || 'send_failed');
-      showToast('Cybernova: '+reason,false);
-      sendResponse({ok:false,error:reason});
-    });
-    return true;
+    if (message?.type === 'CYBERNOVA_SEND_TEXT') {
+      sendText(message).then(sendResponse).catch(error => {
+        const reason = String(error?.message || 'send_failed');
+        showToast('Cybernova: '+reason,false);
+        sendResponse({ok:false,error:reason});
+      });
+      return true;
+    }
+    if (message?.type === 'CYBERNOVA_READ_CLIPBOARD_AND_SEND') {
+      readClipboardAndSend().then(sendResponse).catch(error => {
+        const reason = String(error?.message || 'clipboard_send_failed');
+        showToast('Cybernova: '+reason,false);
+        sendResponse({ok:false,error:reason});
+      });
+      return true;
+    }
+    return false;
   });
 })();
