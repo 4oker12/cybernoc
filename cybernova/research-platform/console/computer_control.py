@@ -1375,7 +1375,7 @@ def computer_control_call(name: str, args: dict, *, user_messages=None) -> tuple
                     "computer_service_overview", "computer_startup_items",
                     "computer_defender_status", "computer_defender_events",
                     "computer_defender_scan_status", "computer_screenshot",
-                    "computer_ui_windows"} and args:
+                    "computer_ui_windows", "computer_power_overview"} and args:
             raise ValueError("computer_tool_takes_no_arguments")
         if name == "computer_system_overview":
             return _system_overview(), False
@@ -1434,6 +1434,47 @@ def computer_control_call(name: str, args: dict, *, user_messages=None) -> tuple
             return result, not bool(result.get("ok"))
         if name == "computer_defender_scan_status":
             return _defender_scan_status(), False
+        if name == "computer_installed_programs":
+            return _installed_programs(args.get("limit", 80)), False
+        if name == "computer_power_overview":
+            return _power_overview(), False
+        if name == "computer_file_hash":
+            if set(args) != {"path"}:
+                raise ValueError("computer_file_hash_arguments_invalid")
+            return _file_hash(args["path"]), False
+        if name == "computer_package_search":
+            if set(args) != {"query"}:
+                raise ValueError("computer_package_search_arguments_invalid")
+            return _package_search(args["query"]), False
+        if name == "computer_package_details":
+            if set(args) != {"package_id"}:
+                raise ValueError("computer_package_details_arguments_invalid")
+            return _package_details(args["package_id"]), False
+        if name == "computer_package_install":
+            if set(args) != {"package_id"}:
+                raise ValueError("computer_package_install_arguments_invalid")
+            result = _package_install(args["package_id"], user_messages or [])
+            return result, not bool(result.get("ok"))
+        if name == "computer_archive_inspect":
+            if set(args) != {"path"}:
+                raise ValueError("computer_archive_inspect_arguments_invalid")
+            return _archive_inspect(args["path"]), False
+        if name == "computer_archive_extract":
+            if set(args) != {"path", "destination"}:
+                raise ValueError("computer_archive_extract_arguments_invalid")
+            result = _archive_extract(args["path"], args["destination"], user_messages or [])
+            return result, not bool(result.get("ok"))
+        if name == "computer_plan_file_organization":
+            if set(args) != {"source", "destination", "group_by"}:
+                raise ValueError("computer_plan_file_organization_arguments_invalid")
+            return _organization_plan(args["source"], args["destination"], args["group_by"]), False
+        if name == "computer_apply_file_organization":
+            if set(args) != {"source", "destination", "group_by"}:
+                raise ValueError("computer_apply_file_organization_arguments_invalid")
+            result = _apply_organization(
+                args["source"], args["destination"], args["group_by"], user_messages or []
+            )
+            return result, not bool(result.get("ok"))
         raise ValueError("computer_tool_not_implemented")
-    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+    except (OSError, ValueError, TypeError, RuntimeError, zipfile.BadZipFile, tarfile.TarError) as exc:
         return {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:220]}, True
