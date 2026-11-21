@@ -930,16 +930,28 @@ def _archive_member_path(destination: Path, name: str) -> Path:
     normalized = name.replace("\\", "/")
     posix = PurePosixPath(normalized)
     windows = PureWindowsPath(name)
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {
+        f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10)
+    }
     if posix.is_absolute() or windows.is_absolute() or windows.drive or any(
-        part in {"..", ""} for part in posix.parts
+        part in {"..", ""} or ":" in part or part.endswith((" ", "."))
+        or part.split(".", 1)[0].upper() in reserved
+        for part in posix.parts
     ):
         raise ValueError("archive_path_traversal_blocked")
     if any(_sensitive_component(part) for part in posix.parts):
         raise ValueError("archive_sensitive_member_blocked")
+    root = destination.resolve()
     target = destination.joinpath(*posix.parts)
     resolved = Path(os.path.abspath(target))
-    if not resolved.is_relative_to(destination.resolve()):
+    if not resolved.is_relative_to(root):
         raise ValueError("archive_path_traversal_blocked")
+    current = destination
+    for part in posix.parts:
+        current = current / part
+        is_junction = getattr(current, "is_junction", lambda: False)
+        if current.is_symlink() or is_junction():
+            raise ValueError("archive_reparse_point_blocked")
     return resolved
 
 
@@ -1003,8 +1015,16 @@ def _archive_extract(path_raw: str, destination_raw: str, user_messages) -> dict
             if len(items) > 500 or total > 1024 * 1024 * 1024:
                 raise ValueError("archive_size_limit_exceeded")
             plan = []
+            seen_targets, planned_files = set(), set()
             for item in items:
                 target = _archive_member_path(destination, item.filename)
+                key = os.path.normcase(str(target)).casefold()
+                if key in seen_targets or any(
+                    os.path.normcase(str(parent)).casefold() in planned_files
+                    for parent in target.parents if parent != destination
+                ):
+                    raise ValueError("archive_duplicate_or_conflicting_paths")
+                seen_targets.add(key)
                 mode = item.external_attr >> 16
                 if __import__("stat").S_ISLNK(mode):
                     raise ValueError("archive_links_not_supported")
@@ -1014,6 +1034,8 @@ def _archive_extract(path_raw: str, destination_raw: str, user_messages) -> dict
                     raise ValueError("archive_compression_ratio_limit_exceeded")
                 if target.exists():
                     raise ValueError("archive_extraction_would_overwrite")
+                if not item.is_dir():
+                    planned_files.add(key)
                 plan.append((item, target))
             extracted = []
             for item, target in plan:
@@ -1033,14 +1055,24 @@ def _archive_extract(path_raw: str, destination_raw: str, user_messages) -> dict
             if len(items) > 500 or total > 1024 * 1024 * 1024:
                 raise ValueError("archive_size_limit_exceeded")
             plan = []
+            seen_targets, planned_files = set(), set()
             for item in items:
                 target = _archive_member_path(destination, item.name)
+                key = os.path.normcase(str(target)).casefold()
+                if key in seen_targets or any(
+                    os.path.normcase(str(parent)).casefold() in planned_files
+                    for parent in target.parents if parent != destination
+                ):
+                    raise ValueError("archive_duplicate_or_conflicting_paths")
+                seen_targets.add(key)
                 if not (item.isfile() or item.isdir()):
                     raise ValueError("archive_links_or_special_files_not_supported")
                 if item.size > 256 * 1024 * 1024:
                     raise ValueError("archive_member_size_limit_exceeded")
                 if target.exists():
                     raise ValueError("archive_extraction_would_overwrite")
+                if item.isfile():
+                    planned_files.add(key)
                 plan.append((item, target))
             extracted = []
             for item, target in plan:
