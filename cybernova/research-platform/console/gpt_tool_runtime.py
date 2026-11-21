@@ -151,6 +151,13 @@ def build_tool_catalog() -> list[dict]:
     return rows
 
 
+def _decode_cmd_output(value: bytes) -> str:
+    try:
+        return value.decode("oem", errors="replace")
+    except LookupError:
+        return value.decode("utf-8", errors="replace")
+
+
 def _redact_output(value: str) -> str:
     value = _SECRET.sub("[REDACTED]", value)
     value = _EMAIL.sub("[REDACTED EMAIL]", value)
@@ -325,8 +332,8 @@ def _run_terminal(command: str, authorized_targets: set[str]) -> dict:
                 "timeout_seconds": timeout}
     except OSError as exc:
         return {"ok": False, "command": command, "error": type(exc).__name__}
-    stdout = (result.stdout or b"").decode("oem", errors="replace")
-    stderr = (result.stderr or b"").decode("oem", errors="replace")
+    stdout = _decode_cmd_output(result.stdout or b"")
+    stderr = _decode_cmd_output(result.stderr or b"")
     output = _redact_output((stdout + "\n" + stderr).strip())
     return {
         "ok": result.returncode == 0,
