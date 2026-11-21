@@ -139,20 +139,59 @@ def run():
                 warnings.append("browser_follow_link_no_matching_link")
                 print('{"test":"browser_follow_link","status":"SKIP","reason":"link_unavailable"}')
 
+            call("browser_new_tab", {"url": "https://example.org/"})
+            tabs = call("browser_tabs", detail=lambda x: {
+                "tab_count": len(x.get("tabs", [])),
+                "active_index": x.get("active_index"),
+            })
+            if len(tabs.get("tabs", [])) >= 2:
+                call("browser_switch_tab", {"index": 0})
+                call("browser_switch_tab", {"index": 1})
+                call("browser_navigate", {"url": "https://www.iana.org/domains/reserved"})
+                call("browser_back")
+                call("browser_forward")
+                call("browser_reload")
+            else:
+                warnings.append("browser_multi_tab_not_available")
+                print('{"test":"browser_switch_tab","status":"SKIP","reason":"second_tab_missing"}')
+        search_pages = {}
+        first_search_url = None
         for query, page in [
             ("Playwright Python official documentation", 1),
             ("Playwright Python official documentation", 2),
             ("Windows UI Automation Python examples", 1),
             ("Microsoft Defender Antivirus operational logs official", 1),
         ]:
-            call("google_search", {"query": query, "page": page},
+            result = call("google_search", {"query": query, "page": page},
                  detail=lambda x: {"page": x.get("page"),
                                    "provider": x.get("provider"),
                                    "fallback_reason": x.get("fallback_reason"),
                                    "fallback_error": x.get("fallback_error"),
                                    "result_count": x.get("result_count"),
-                                   "source_status": x.get("source_status"),
-                                   "excerpt_sample": str(x.get("search_page_excerpt") or "")[:180]})
+                                   "sample_result_domain": (x.get("results") or [{}])[0].get("domain"),
+                                   "source_status": x.get("source_status")})
+            if query == "Playwright Python official documentation":
+                search_pages[page] = result
+                if page == 1 and result.get("results"):
+                    first_search_url = result["results"][0].get("url")
+        if first_search_url:
+            call("research_source_open", {"url": first_search_url},
+                 detail=lambda x: {"http_status": x.get("http_status"),
+                                   "title": x.get("title"),
+                                   "content_chars": len(x.get("text_excerpt") or "")})
+        page_one = {x.get("url") for x in search_pages.get(1, {}).get("results", [])}
+        page_two = {x.get("url") for x in search_pages.get(2, {}).get("results", [])}
+        overlap = len(page_one & page_two)
+        pagination_ok = bool(page_one and page_two and len(page_two - page_one) > 0)
+        print(json.dumps({
+            "test": "search_pagination_and_open",
+            "status": "PASS" if pagination_ok and first_search_url else "WARN",
+            "page1_results": len(page_one), "page2_results": len(page_two),
+            "overlap": overlap, "new_page2_results": len(page_two - page_one),
+            "first_result_opened": bool(first_search_url),
+        }, ensure_ascii=False))
+        if not pagination_ok:
+            warnings.append("search_pagination_not_distinct")
         # Probe alternative read-only public search providers if Google's
         # JavaScript shell returns no results; never attempt a challenge bypass.
         from console.browser_tools import _read_page
