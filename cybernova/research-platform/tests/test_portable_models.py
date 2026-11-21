@@ -161,7 +161,8 @@ class ModelProviderTests(unittest.TestCase):
         self.assertEqual(result["answer"],"Профиль получен.")
         system=transmitted[0]["messages"][0]
         self.assertEqual(system["role"],"system")
-        self.assertIn("единственной активной моделью",system["content"])
+        self.assertIn("ChatGPT в основном проектном чате пользователя",system["content"])
+        self.assertIn("локальный исполнитель Cybernova",system["content"])
         self.assertIn("разработчик самой Cybernova",system["content"])
         self.assertIn("Chromium/Playwright",system["content"])
 
