@@ -48,8 +48,8 @@ class GPTConversationTests(unittest.TestCase):
                     "usage":{"available":True,"input_tokens":10,"output_tokens":5,
                              "total_tokens":15,"requests":1,"measured_requests":1,
                              "complete":True,"provider":"test"}}
-        with patch.object(server,"gpt_chat_store",return_value=self.store),\
-             patch.object(server,"chatgpt_chat",side_effect=answer),\
+        with (patch.object(server, "gpt_chat_store", return_value=self.store),
+              patch.object(server, "chatgpt_chat") as inference):
              patch.object(server,"agent") as agent:
             first=server.siwc_chat_message(server.ChatGPTMessageRequest(
                 model="gpt-6.2-sol",message="Первый вопрос",tool_groups=["browser"]))
