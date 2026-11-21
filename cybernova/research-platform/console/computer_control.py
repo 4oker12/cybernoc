@@ -1195,7 +1195,7 @@ def _apply_organization(source_raw: str, destination_raw: str, group_by: str,
 def extract_user_computer_approvals(messages) -> set[str]:
     """Only the latest user turn can authorize a Defender scan."""
     if not isinstance(messages, list):
-        return set()
+        return approvals
     latest_user_index = None
     for index in range(len(messages) - 1, -1, -1):
         item = messages[index]
@@ -1205,6 +1205,15 @@ def extract_user_computer_approvals(messages) -> set[str]:
     if latest_user_index is None:
         return set()
     latest = str(messages[latest_user_index].get("content") or "").casefold()
+    # Fail closed: a negated instruction is never authorization.
+    if re.search(r"(?i)(?:\\bне\\b|\\bнет\\b|\\bнельзя\\b|\\bзапрещаю\\b|\\bотказываюсь\\b|\\bотмена\\b|\\bdo\\s+not\\b|\\bdon't\\b|\\bnever\\b|\\bdeny\\b|\\brefuse\\b)", latest):
+        return set()
+    approvals = set()
+    if re.fullmatch(
+        r"\\s*разрешаю\\s+(?:сделать|снять)\\s+(?:скриншот|снимок)\\s+экрана\\s+и\\s+передать\\s+(?:его\\s+)?chatgpt\\s+для\\s+анализа[.! ]*\\s*",
+        latest, flags=re.I,
+    ):
+        approvals.add("computer_screenshot")
     previous_assistant = ""
     for index in range(latest_user_index - 1, -1, -1):
         item = messages[index]
@@ -1221,20 +1230,23 @@ def extract_user_computer_approvals(messages) -> set[str]:
             previous_assistant,
         ))
     if not affirmative:
-        return set()
+        return approvals
     context = latest + " " + previous_assistant
     if not re.search(r"(defender|антивирус|вирус|защит[аы]|malware)", context):
-        return set()
+        return approvals
     affirmative_only = bool(re.fullmatch(
         r"\s*(да|yes|подтверждаю|разрешаю)[!. ]*\s*", latest
     ))
     scan_context = latest + (" " + previous_assistant if affirmative_only else "")
     if re.search(r"(полную|полный|full)\s*(провер|скан|scan)", scan_context):
-        return {"defender_full_scan"}
+        approvals.add("defender_full_scan")
+        return approvals
     if re.search(r"(быструю|быстрый|quick)\s*(провер|скан|scan)", scan_context):
-        return {"defender_quick_scan"}
+        approvals.add("defender_quick_scan")
+        return approvals
     if re.search(r"(провер|скан|scan)", latest):
-        return {"defender_quick_scan"}
+        approvals.add("defender_quick_scan")
+        return approvals
     return set()
 
 
