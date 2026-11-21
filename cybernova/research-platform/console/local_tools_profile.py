@@ -28,6 +28,11 @@ LOCAL_TOOLS_PROFILE = """
   computer_open_app запускает разрешённые диагностические приложения.
   Для навигации по окнам используй computer_ui_windows и computer_ui_controls.
   computer_ui_click допускает только безопасные навигационные элементы.
+- Вызывай computer_screenshot/browser_screenshot только если текущая модельная
+  связка действительно принимает изображения. Текущий DeepSeek chat adapter
+  текстовый: используй UI Automation и DOM/Network snapshot, не передавай
+  base64-скриншоты в текстовый контекст. Account GPT Responses path принимает
+  image input и может анализировать снимки.
 - Не пытайся обходить ограничения каталогов, читать хранилища паролей, cookies,
   приватные ключи, токены, профили браузера, системные базы SAM/SECURITY или
   другие секретные файлы.
