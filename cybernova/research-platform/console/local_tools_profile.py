@@ -92,7 +92,10 @@ LOCAL_TOOLS_PROFILE = """
   время, действие Defender и статус обработки.
 
 6. WINDOWS CMD
-- terminal_status проверяет реальный локальный исполнитель.
+- terminal_status проверяет реальный локальный исполнитель и наличие модулей
+  psutil/pyautogui/pywinauto/pywin32/Playwright. Перед использованием функций
+  оцени computer_tool_dependencies и computer_tool_dependencies_ready. Если
+  зависимость отсутствует, сообщи точное имя и не имитируй работу инструмента.
 - terminal_run запускает одну разрешённую read-only команду в Windows CMD.
   Это не PowerShell. Не используй PowerShell cmdlet, конвейеры, цепочки,
   переменные, перенаправления или произвольные скрипты.
