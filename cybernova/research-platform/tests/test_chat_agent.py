@@ -84,6 +84,11 @@ class AgentTests(unittest.TestCase):
         self.assertIn("отдельным посредником", BASE_SYSTEM)
         self.assertIn("ИССЛЕДОВАТЕЛЬСКАЯ МИССИЯ CYBERNOVA", BASE_SYSTEM)
         self.assertIn("РАЗБОР НЕЧЁТКОГО ЗАПРОСА", BASE_SYSTEM)
+        self.assertIn("ОБЩИЙ ИНСТРУМЕНТАЛЬНЫЙ СТАНДАРТ", BASE_SYSTEM)
+        self.assertIn("computer_package_install", BASE_SYSTEM)
+        self.assertIn("computer_archive_extract", BASE_SYSTEM)
+        self.assertIn("browser_follow_link", BASE_SYSTEM)
+        self.assertIn("google_search", BASE_SYSTEM)
         self.assertNotIn("Рекомендация Qwen", BASE_SYSTEM)
 
     def test_user_and_mode_profiles_are_added_as_system_context(self):
