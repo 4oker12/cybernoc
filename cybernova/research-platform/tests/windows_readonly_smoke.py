@@ -24,7 +24,7 @@ def summary(name, result, failed, *, detail=None):
         text.update(detail)
     if outcome == "WARN":
         text["error"] = str(result.get("error") or result.get("reason") or "tool_reported_failure")[:160]
-    print(json.dumps(text, ensure_ascii=False, sort_keys=True), flush=True)
+    print(json.dumps(text, ensure_ascii=True, sort_keys=True), flush=True)
     return outcome == "PASS"
 
 class StubMCP:
