@@ -71,8 +71,8 @@ class FakeRuntime:
         self.result = result or {"ok": True, "os": "Windows", "powershell_7": True}
         self.calls = []
 
-    def call(self, name, args, *, authorized_targets=None):
-        self.calls.append((name, args, authorized_targets))
+    def call(self, name, args, *, authorized_targets=None, user_messages=None):
+        self.calls.append((name, args, authorized_targets, user_messages))
         return self.result, False
 
 
@@ -100,6 +100,7 @@ class AccountGPTToolLoopTests(unittest.TestCase):
         self.assertEqual(receipts, result["tool_events"])
         self.assertEqual(runtime.calls[0][0], "terminal_status")
         self.assertEqual(runtime.calls[0][2], {"185.238.114.6"})
+        self.assertEqual(runtime.calls[0][3], [{"role": "user", "content": "Проверь локальный терминал."}])
         self.assertEqual(opener.requests[0]["tool_choice"], "auto")
         self.assertNotIn("tools", opener.requests[0])
         self.assertEqual(opener.requests[0]["input"][0]["type"], "additional_tools")
