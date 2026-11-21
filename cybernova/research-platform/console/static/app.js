@@ -982,7 +982,8 @@ async function reviewWithChatGPT(){
     }
     lastGptReview=answer.answer||null;
     state.lastSeq=Math.max(state.lastSeq,answer.event_seq||0);
-    renderMessage("chatgpt",answer.answer||"Ответ GPT пуст.");
+    const reviewReply=renderMessage("chatgpt",answer.answer||"Ответ GPT пуст.");
+    recordUsage(answer.usage,"gpt",reviewReply);
     $("chatgptToQwen").disabled=!lastGptReview;
     $("chatgptStatus").textContent="Рецензия GPT получена. Можно отправить её модели.";
   }catch(err){
