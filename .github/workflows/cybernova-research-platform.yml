@@ -7,12 +7,17 @@ on:
       - feature/account-gpt-local-tools
       - feature/full-shell-computer-discovery
     paths:
+      - AGENTS.md
       - cybernova/research-platform/**
       - tools/chatgpt-terminal-paste/**
+      - tools/windows/**
       - .github/workflows/cybernova-research-platform.yml
   pull_request:
     paths:
+      - AGENTS.md
       - cybernova/research-platform/**
+      - tools/chatgpt-terminal-paste/**
+      - tools/windows/**
       - .github/workflows/cybernova-research-platform.yml
 permissions:
   contents: read
