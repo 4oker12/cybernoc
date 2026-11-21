@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 from console.gpt_tool_runtime import (
     GPTToolRuntime, _run_terminal, _validate_terminal_command, build_tool_catalog,
-    extract_user_targets,
+    extract_user_targets, TOOL_GROUPS, normalize_tool_groups,
 )
 from console.computer_control import (
     COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, extract_user_computer_approvals,
@@ -60,6 +60,28 @@ class GPTToolRuntimeTests(unittest.TestCase):
                     set(row["inputSchema"].get("properties", {})),
                     set(row["inputSchema"].get("required", [])),
                 )
+
+    def test_tool_bundles_filter_catalog_and_enforce_runtime_calls(self):
+        runtime = GPTToolRuntime()
+        browser = runtime.mcp_tools(["browser"])
+        names = {row["name"] for row in browser}
+        self.assertIn("browser_navigate", names)
+        self.assertIn("browser_tabs", names)
+        self.assertIn("browser_switch_tab", names)
+        self.assertNotIn("computer_system_overview", names)
+        self.assertNotIn("terminal_run", names)
+        self.assertEqual(
+            {row["name"] for row in runtime.mcp_tools(["computer"])},
+            COMPUTER_TOOL_NAMES,
+        )
+        result, failed = runtime.call(
+            "terminal_status", {}, enabled_groups=["browser"]
+        )
+        self.assertTrue(failed)
+        self.assertEqual(result["error"], "tool_group_not_enabled")
+        self.assertEqual(len(TOOL_GROUPS), 9)
+        with self.assertRaises(ValueError):
+            normalize_tool_groups(["not-a-real-tool-group"])
 
     def test_all_account_gpt_function_schemas_are_strict_and_closed(self):
         for tool in build_tool_catalog():
