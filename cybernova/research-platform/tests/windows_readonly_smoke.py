@@ -58,7 +58,7 @@ def run():
         "computer_installed_programs", "computer_startup_items",
         "computer_defender_status", "computer_defender_events",
         "computer_file_hash", "computer_list_directory",
-        "computer_search_files", "computer_ui_windows",
+        "computer_search_files", "computer_search_everywhere", "computer_ui_windows",
         "browser_navigate", "browser_snapshot", "browser_follow_link",
         "browser_network", "google_search", "research_source_open",
     }
@@ -84,8 +84,27 @@ def run():
         for cmd in (
             "systeminfo", "tasklist /fo csv", "powercfg /getactivescheme",
         ):
-            call("terminal_run", {"command": cmd}, important=True,
-                 detail=lambda x: {"exit_code": x.get("exit_code")})
+            call("terminal_run", {
+                "command": cmd, "shell": "cmd", "cwd": str(Path.home()),
+                "timeout_seconds": 90, "max_output_chars": 12000,
+            }, important=True, detail=lambda x: {
+                "exit_code": x.get("exit_code"), "shell": x.get("shell_id"),
+            })
+        ps = call("terminal_run", {
+            "command": "Get-Process | Select-Object -First 3 ProcessName,Id",
+            "shell": "powershell", "cwd": str(Path.home()),
+            "timeout_seconds": 30, "max_output_chars": 8000,
+        }, important=True, detail=lambda x: {
+            "exit_code": x.get("exit_code"), "shell": x.get("shell_id"),
+        })
+        if status.get("powershell_7"):
+            call("terminal_run", {
+                "command": "Get-ChildItem -Force | Select-Object -First 3 Name",
+                "shell": "pwsh", "cwd": str(Path.home()),
+                "timeout_seconds": 30, "max_output_chars": 8000,
+            }, detail=lambda x: {
+                "exit_code": x.get("exit_code"), "shell": x.get("shell_id"),
+            })
 
         system = call("computer_system_overview", important=True,
                       detail=lambda x: {
