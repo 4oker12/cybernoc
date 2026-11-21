@@ -199,8 +199,8 @@ def run():
             ("bing_rss", _bing_rss_fallback),
         ):
             try:
-                p1 = fn("Playwright Python official documentation", 1)
-                p2 = fn("Playwright Python official documentation", 2)
+                p1 = fn("Python programming tutorials", 1)
+                p2 = fn("Python programming tutorials", 2)
                 u1 = {x.get("url") for x in p1.get("results", [])}
                 u2 = {x.get("url") for x in p2.get("results", [])}
                 print(json.dumps({
@@ -208,6 +208,9 @@ def run():
                     "provider": provider, "page1_count": len(u1),
                     "page2_count": len(u2), "overlap": len(u1 & u2),
                     "new_page2_results": len(u2 - u1),
+                    "source_hashes_differ": p1.get("source_sha256") != p2.get("source_sha256"),
+                    "page1_hash": p1.get("source_sha256"),
+                    "page2_hash": p2.get("source_sha256"),
                     "page1_sample": sorted(u1)[:3],
                     "page2_sample": sorted(u2)[:3],
                 }, ensure_ascii=False))
