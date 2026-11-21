@@ -248,6 +248,11 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertTrue(result["cmd_exe"])
         self.assertEqual(result["terminal"], "Windows CMD")
         self.assertEqual(result["execution_host"], "local_windows")
+        self.assertIn("computer_tool_dependencies", result)
+        self.assertTrue({
+            "psutil", "pyautogui", "pywinauto", "win32com", "playwright",
+        }.issubset(result["computer_tool_dependencies"]))
+        self.assertIsInstance(result["computer_tool_dependencies_ready"], bool)
         self.assertNotIn("powershell_7", result)
 
     def test_runtime_does_not_execute_terminal_on_non_windows_host(self):
