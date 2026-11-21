@@ -46,23 +46,33 @@ class BrowserControlTests(unittest.TestCase):
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
         self.assertIn("explicit user approval", submit["description"])
 
-    def test_browser_tools_are_exposed_to_account_gpt_not_deepseek(self):
-        from console.gpt_tool_runtime import build_tool_catalog
-        from console.traffic_tools import TrafficToolClient
+    def test_browser_tools_are_shared_with_the_deepseek_agent(self):
+        from console.agent import Agent
+        from console.gpt_tool_runtime import GPTToolRuntime
         class Remote:
             def initialize(self):
                 return []
             def call(self, name, args):
                 return {}, True
-        deepseek_names = {
-            item["name"] for item in TrafficToolClient(Remote(), {}).initialize()
-        }
-        gpt_names = {item["name"] for item in build_tool_catalog()}
-        self.assertIn("browser_navigate", gpt_names)
-        self.assertIn("browser_snapshot", gpt_names)
-        self.assertIn("browser_network", gpt_names)
+        class Model:
+            model = "deepseek-test"
+            def __init__(self):
+                self.tools = []
+            def chat(self, messages, tools=None, **kwargs):
+                self.tools = tools or []
+                return {"content": "done"}
+        runtime = GPTToolRuntime()
+        model = Model()
+        Agent(model, lambda: Remote(), local_tool_runtime=runtime).run(
+            [], "Проверь доступные инструменты", force_tools=False,
+        )
+        deepseek_names = {item["function"]["name"] for item in model.tools}
+        gpt_names = {item["name"] for item in runtime.tools}
+        for name in ("browser_navigate", "browser_snapshot", "browser_follow_link",
+                     "browser_tabs", "browser_network"):
+            self.assertIn(name, gpt_names)
+            self.assertIn(name, deepseek_names)
         self.assertNotIn("browser_submit", gpt_names)
-        self.assertNotIn("browser_navigate", deepseek_names)
         self.assertNotIn("browser_submit", deepseek_names)
 
     def test_browser_text_redacts_credentials_and_jwts(self):
