@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT))
 from console.computer_control import (
     APP_COMMANDS, COMPUTER_TOOLS, COMPUTER_TOOL_NAMES,
     HIGH_IMPACT_UI, SAFE_UI_CONTROL_TYPES,
+    _archive_member_path, _explicit_action_approved,
     _sensitive_component, _ui_click, extract_user_computer_approvals,
 )
 
@@ -26,6 +27,11 @@ class ComputerControlTests(unittest.TestCase):
             "computer_ui_windows", "computer_ui_controls", "computer_ui_click",
             "computer_defender_status", "computer_defender_events",
             "computer_defender_scan", "computer_defender_scan_status",
+            "computer_installed_programs", "computer_power_overview",
+            "computer_file_hash", "computer_package_search",
+            "computer_package_details", "computer_package_install",
+            "computer_archive_inspect", "computer_archive_extract",
+            "computer_plan_file_organization", "computer_apply_file_organization",
         }.issubset(names))
         self.assertEqual(COMPUTER_TOOL_NAMES, names)
 
@@ -92,6 +98,60 @@ class ComputerControlTests(unittest.TestCase):
                 {"role": "user", "content": "Запусти проверку на вирусы."},
             ]),
             {"defender_quick_scan"},
+        )
+
+    def test_package_install_requires_exact_package_approval(self):
+        package_id = "VideoLAN.VLC"
+        self.assertFalse(_explicit_action_approved(
+            [{"role": "user", "content": "Установи VLC"}],
+            r"(установ|install)", [package_id],
+        ))
+        self.assertTrue(_explicit_action_approved(
+            [{"role": "user", "content": "Разрешаю установить пакет VideoLAN.VLC из winget."}],
+            r"(установ|install)", [package_id],
+        ))
+        self.assertTrue(_explicit_action_approved(
+            [
+                {"role": "assistant", "content": "Разрешаешь установить пакет VideoLAN.VLC из winget?"},
+                {"role": "user", "content": "Да."},
+            ],
+            r"(установ|install)", [package_id],
+        ))
+        self.assertFalse(_explicit_action_approved(
+            [
+                {"role": "assistant", "content": "Разрешаешь установить пакет VideoLAN.VLC из winget?"},
+                {"role": "user", "content": "Да."},
+            ],
+            r"(установ|install)", ["Other.Publisher.App"],
+        ))
+
+    def test_archive_and_file_move_approvals_bind_exact_paths(self):
+        source = r"C:\Users\Andrei\Downloads\sample.zip"
+        destination = r"C:\Users\Andrei\Documents\Extracted"
+        self.assertTrue(_explicit_action_approved(
+            [{"role": "user", "content": f"Разрешаю распаковать {source} в {destination}."}],
+            r"(распак|extract)", [source, destination],
+        ))
+        self.assertFalse(_explicit_action_approved(
+            [{"role": "user", "content": f"Разрешаю распаковать {source} в {destination}."}],
+            r"(распак|extract)", [source, r"C:\Users\Andrei\Desktop\Other"],
+        ))
+        self.assertTrue(_explicit_action_approved(
+            [{"role": "user", "content":
+              f"Разрешаю переместить файлы из {destination} в {source} с группировкой extension."}],
+            r"(перемест|move)", [destination, source, "extension"],
+        ))
+
+    def test_archive_path_traversal_and_windows_ads_are_blocked(self):
+        root = Path("/tmp/cybernova-archive-test")
+        for name in ("../escape.txt", r"..\\escape.txt", r"C:\\Windows\\evil.dll",
+                     r"\\\\server\\share\\evil.dll", "folder/secret.key"):
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    _archive_member_path(root, name)
+        self.assertEqual(
+            _archive_member_path(root, "folder/report.txt"),
+            root / "folder" / "report.txt",
         )
 
     def test_full_scan_requires_explicit_full_scan_authorization(self):
