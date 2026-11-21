@@ -31,7 +31,7 @@ MAX_TOOL_OUTPUT_CHARS = 12000
 
 # Only one simple command is accepted per call. No shell operators, variables,
 # command substitution, script blocks, redirection or chained commands.
-_FORBIDDEN_SCRIPT = re.compile(r"[;\|&<>$(){}" + chr(96) + r"%!^\\"'"]")
+_FORBIDDEN_SCRIPT = re.compile(r"[;\|&<>$(){}" + chr(96) + r"%!^\"']")
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 _DOMAIN = re.compile(r"(?i)(?<![a-z0-9.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?![a-z0-9.-])")
 _SECRET = re.compile(
@@ -138,7 +138,7 @@ def build_tool_catalog() -> list[dict]:
         ),
         _function_tool(
             "terminal_status",
-            "Check which operating system and PowerShell executable host this Account GPT tool runtime. Does not expose environment variables or secrets.",
+            "Check which operating system and local Windows CMD executable host this Account GPT tool runtime. Does not expose environment variables or secrets.",
             status_schema,
         ),
     ]
