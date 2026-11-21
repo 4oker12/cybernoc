@@ -8,8 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from console.gpt_tool_runtime import (
-    GPTToolRuntime, _run_terminal, _validate_terminal_command, build_tool_catalog,
-    extract_user_targets, TOOL_GROUPS, normalize_tool_groups,
+    GPTToolRuntime, _run_terminal, _validate_terminal_request, _terminal_argv,
+    build_tool_catalog, extract_user_targets, TOOL_GROUPS, normalize_tool_groups,
 )
 from console.computer_control import (
     COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, extract_user_computer_approvals,
@@ -33,7 +33,8 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertTrue({
             "computer_system_overview", "computer_performance_snapshot",
             "computer_process_list", "computer_disk_overview",
-            "computer_list_directory", "computer_open_folder",
+            "computer_list_directory", "computer_search_everywhere",
+            "computer_open_folder",
             "computer_open_app", "computer_screenshot",
             "computer_ui_windows", "computer_ui_controls", "computer_ui_click",
             "computer_defender_status", "computer_defender_events",
@@ -105,183 +106,106 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("edge.example.net", targets)
         self.assertNotIn("attacker.invalid", targets)
 
-    def test_readonly_cmd_commands_are_allowed(self):
-        for command in (
-            "hostname",
-            "whoami",
-            "whoami /groups",
-            "whoami /priv",
-            "ver",
-            "systeminfo",
-            "ipconfig /all",
-            "ipconfig /displaydns",
-            "tasklist /fo csv",
-            "tasklist /fo table",
-            "driverquery /fo csv",
-            "sc query",
-            "sc query WinDefend",
-            "powercfg /getactivescheme",
-            "where.exe winget",
-            "route print -4",
-            "route print -6",
-            "netstat -ano",
-            "netstat -e",
-            "arp -a",
-            "getmac /v",
-            "netsh interface show interface",
-            "netsh interface ipv4 show config",
-            "netsh advfirewall show allprofiles",
-            "netsh wlan show interfaces",
-            "git status --short",
-            "python --version",
-        ):
-            with self.subTest(command=command):
-                self.assertEqual(_validate_terminal_command(command, set()), command)
+    def test_terminal_accepts_arbitrary_multiline_commands_for_all_shells(self):
+        cwd = str(Path.home())
+        samples = (
+            ("cmd", "for %f in (*.log) do @echo %f\r\nwhoami"),
+            ("powershell", "Get-Process | Where-Object CPU -gt 1; Get-Service"),
+            ("pwsh", "$items = Get-ChildItem -Force\n$items | Select-Object Name"),
+        )
+        for shell, command in samples:
+            with self.subTest(shell=shell):
+                validated = _validate_terminal_request(
+                    command, shell, cwd, 90, 24000
+                )
+                self.assertEqual(validated[0], command)
+                self.assertEqual(validated[1], shell)
+                self.assertEqual(validated[2], Path(cwd).resolve())
+                self.assertEqual(validated[3:], (90, 24000))
 
-    def test_powershell_specific_commands_are_not_used_by_cmd_backend(self):
-        for command in (
-            "Get-NetAdapter",
-            "Get-NetIPConfiguration",
-            "Get-NetRoute",
-            "Test-NetConnection -ComputerName edge.example.net -Port 443",
-            "Resolve-DnsName edge.example.net",
-            "pwsh --version",
-        ):
-            with self.subTest(command=command):
-                with self.assertRaises(ValueError):
-                    _validate_terminal_command(command, {"edge.example.net"})
-
-    def test_cmd_diagnostic_allowlist_rejects_mutating_process_and_service_commands(self):
-        for command in (
-            "taskkill /im chrome.exe /f",
-            "sc config WinDefend start= disabled",
-            "sc stop WinDefend",
-            "powercfg /setactive SCHEME_MAX",
-            "where.exe powershell",
-            "driverquery /v /fo list",
-        ):
-            with self.subTest(command=command):
-                with self.assertRaises(ValueError):
-                    _validate_terminal_command(command, set())
-
-    def test_cmd_backend_rejects_mutating_network_commands(self):
-        for command in (
-            "route add 10.0.0.0 mask 255.0.0.0 192.168.1.1",
-            "arp -s 192.168.1.1 00-11-22-33-44-55",
-            "ipconfig /release",
-            "netsh advfirewall set allprofiles state off",
-            "netsh interface ip set address",
-        ):
-            with self.subTest(command=command):
-                with self.assertRaises(ValueError):
-                    _validate_terminal_command(command, set())
-
-    def test_network_commands_require_user_named_target(self):
-        with self.assertRaisesRegex(ValueError, "terminal_target_not_explicitly_named_by_user"):
-            _validate_terminal_command("tracert -d 185.238.114.6", set())
+    def test_terminal_builds_native_cmd_and_powershell_argv(self):
         self.assertEqual(
-            _validate_terminal_command(
-                "tracert -d -h 12 -w 700 185.238.114.6", {"185.238.114.6"}
-            ),
-            "tracert -d -h 12 -w 700 185.238.114.6",
+            _terminal_argv("cmd", "cmd.exe", "dir C:\\ && whoami"),
+            ["cmd.exe", "/d", "/s", "/c", "dir C:\\ && whoami"],
         )
         self.assertEqual(
-            _validate_terminal_command(
-                "ping -n 5 1.1.1.1", {"1.1.1.1"}
-            ),
-            "ping -n 5 1.1.1.1",
+            _terminal_argv("powershell", "powershell.exe", "Get-Process | Select-Object Name"),
+            ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+             "-Command", "Get-Process | Select-Object Name"],
         )
         self.assertEqual(
-            _validate_terminal_command(
-                "nslookup edge.example.net", {"edge.example.net"}
-            ),
-            "nslookup edge.example.net",
+            _terminal_argv("pwsh", "pwsh.exe", "Get-ChildItem"),
+            ["pwsh.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+             "-Command", "Get-ChildItem"],
         )
 
-    def test_https_probe_is_bounded_to_head_request(self):
-        self.assertEqual(
-            _validate_terminal_command(
-                "curl.exe -I --connect-timeout 5 --max-time 10 https://edge.example.net/",
-                {"edge.example.net"},
-            ),
-            "curl.exe -I --connect-timeout 5 --max-time 10 https://edge.example.net/",
-        )
-        for command in (
-            "curl.exe -X POST https://edge.example.net/",
-            "curl.exe -I -L https://edge.example.net/",
-            "curl.exe -I --connect-timeout 50 --max-time 10 https://edge.example.net/",
+    def test_terminal_validation_limits_size_timeout_and_shell_not_command_vocabulary(self):
+        cwd = str(Path.home())
+        for values in (
+            ("", "cmd", cwd, 30, 20000),
+            ("whoami", "bash", cwd, 30, 20000),
+            ("whoami", "cmd", cwd, 301, 20000),
+            ("whoami", "cmd", cwd, 30, 999),
+            ("x" * 20001, "cmd", cwd, 30, 20000),
         ):
-            with self.subTest(command=command):
+            with self.subTest(values=values[:2]):
                 with self.assertRaises(ValueError):
-                    _validate_terminal_command(command, {"edge.example.net"})
+                    _validate_terminal_request(*values)
 
-    def test_dns_tools_cannot_choose_unscoped_resolvers(self):
-        with self.assertRaisesRegex(ValueError, "terminal_nslookup_custom_server_or_options_forbidden"):
-            _validate_terminal_command(
-                "nslookup edge.example.net 8.8.8.8",
-                {"edge.example.net", "8.8.8.8"},
-            )
-
-    def test_shell_chaining_scripts_and_writes_are_rejected(self):
-        for command in (
-            "Get-NetAdapter; Remove-Item C:\\temp",
-            "Get-NetAdapter | Out-File result.txt",
-            "Invoke-Expression 'Get-Process'",
-            "Remove-Item C:\\temp",
-            "Get-ChildItem C:\\",
-            "python -c print(1)",
-            "git diff --stat --output=leak.txt",
-            "git log --output=leak.txt",
-        ):
-            with self.subTest(command=command):
-                with self.assertRaises(ValueError):
-                    _validate_terminal_command(command, set())
-
-    def test_ping_count_is_bounded_and_infinite_ping_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "terminal_ping_options_not_allowlisted"):
-            _validate_terminal_command("ping -t 185.238.114.6", {"185.238.114.6"})
-        with self.assertRaisesRegex(ValueError, "terminal_ping_count_out_of_range"):
-            _validate_terminal_command("ping -n 99 185.238.114.6", {"185.238.114.6"})
-
-    def test_terminal_executes_through_local_cmd_exe(self):
+    def test_terminal_executes_multiline_powershell_without_command_allowlist(self):
         from types import SimpleNamespace
-        cmd_path = r"C:\Windows\System32\cmd.exe"
+        cwd = str(Path.home())
+        command = "$p = Get-Process\n$p | Sort-Object CPU -Descending | Select-Object -First 3"
+        fake_process = SimpleNamespace(
+            pid=321, returncode=0,
+            communicate=lambda timeout=None: (b"PowerShell OK", b""),
+        )
         with patch("console.gpt_tool_runtime.platform.system", return_value="Windows"), \
-             patch("console.gpt_tool_runtime.shutil.which", return_value=cmd_path), \
-             patch("console.gpt_tool_runtime.Path.is_file", return_value=True), \
-             patch("console.gpt_tool_runtime.subprocess.run",
-                   return_value=SimpleNamespace(returncode=0, stdout=b"CMD OK", stderr=b"")) as run:
-            result = _run_terminal("ipconfig /all", set())
+             patch("console.gpt_tool_runtime._shell_executable", return_value=r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"), \
+             patch("console.gpt_tool_runtime.subprocess.Popen", return_value=fake_process) as popen:
+            result = _run_terminal(command, "powershell", cwd, 60, 20000)
         self.assertTrue(result["ok"])
-        self.assertEqual(result["shell"], "Windows CMD")
+        self.assertEqual(result["shell_id"], "powershell")
+        self.assertEqual(result["output"], "PowerShell OK")
         self.assertEqual(result["execution_host"], "local_windows")
-        args = run.call_args.args[0]
-        self.assertEqual(args, [cmd_path, "/d", "/s", "/c", "ipconfig /all"])
-        self.assertFalse(run.call_args.kwargs["shell"])
+        args = popen.call_args.args[0]
+        self.assertIn("-Command", args)
+        self.assertEqual(args[-1], command)
+        self.assertFalse(popen.call_args.kwargs["shell"])
+        self.assertEqual(popen.call_args.kwargs["cwd"], str(Path(cwd).resolve()))
 
-    def test_terminal_status_reports_cmd_as_the_execution_shell(self):
+    def test_terminal_status_reports_cmd_powershell_and_pwsh(self):
         runtime = GPTToolRuntime()
-        cmd_path = r"C:\Windows\System32\cmd.exe"
+        paths = {
+            "cmd": r"C:\Windows\System32\cmd.exe",
+            "powershell": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "pwsh": r"C:\Program Files\PowerShell\7\pwsh.exe",
+        }
         with patch("console.gpt_tool_runtime.platform.system", return_value="Windows"), \
-             patch("console.gpt_tool_runtime.shutil.which", return_value=cmd_path), \
-             patch("console.gpt_tool_runtime.Path.is_file", return_value=True):
+             patch("console.gpt_tool_runtime._shell_executable",
+                   side_effect=lambda shell: paths[shell]):
             result, is_error = runtime.call("terminal_status", {})
         self.assertFalse(is_error)
         self.assertTrue(result["cmd_exe"])
-        self.assertEqual(result["terminal"], "Windows CMD")
+        self.assertEqual(result["shells"], paths)
+        self.assertTrue(result["powershell_5_1"])
+        self.assertTrue(result["powershell_7"])
         self.assertEqual(result["execution_host"], "local_windows")
-        self.assertIn("computer_tool_dependencies", result)
-        self.assertTrue({
-            "psutil", "pyautogui", "pywinauto", "win32com", "playwright",
-        }.issubset(result["computer_tool_dependencies"]))
-        self.assertIsInstance(result["computer_tool_dependencies_ready"], bool)
-        self.assertNotIn("powershell_7", result)
+
+    def test_terminal_run_requires_full_explicit_schema(self):
+        runtime = GPTToolRuntime()
+        result, failed = runtime.call("terminal_run", {"command": "whoami"})
+        self.assertTrue(failed)
+        self.assertEqual(result["error"], "terminal_arguments_invalid")
 
     def test_runtime_does_not_execute_terminal_on_non_windows_host(self):
         runtime = GPTToolRuntime()
         with patch("console.gpt_tool_runtime.platform.system", return_value="Linux"):
             result, is_error = runtime.call(
-                "terminal_run", {"command": "ipconfig /all"}
+                "terminal_run", {
+                    "command": "ipconfig /all", "shell": "cmd", "cwd": "",
+                    "timeout_seconds": 30, "max_output_chars": 20000,
+                }
             )
         self.assertTrue(is_error)
         self.assertEqual(result["error"], "local_windows_terminal_unavailable")
