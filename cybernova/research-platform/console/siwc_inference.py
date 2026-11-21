@@ -119,6 +119,23 @@ def review(model: str, prompt: str, *, user_context: str = "") -> dict:
 
 
 
+def _normalized_usage(raw: object) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    input_tokens = raw.get("input_tokens")
+    output_tokens = raw.get("output_tokens")
+    total_tokens = raw.get("total_tokens")
+    input_tokens = input_tokens if type(input_tokens) is int and input_tokens >= 0 else None
+    output_tokens = output_tokens if type(output_tokens) is int and output_tokens >= 0 else None
+    total_tokens = total_tokens if type(total_tokens) is int and total_tokens >= 0 else (
+        input_tokens + output_tokens
+        if input_tokens is not None and output_tokens is not None else None
+    )
+    return {
+        "input_tokens": input_tokens, "output_tokens": output_tokens,
+        "total_tokens": total_tokens, "provider": "OpenAI Responses",
+    }
+
+
 def _response_once(model: str, instructions: str, input_items: list[dict],
                    token: str, tools: list[dict] | None = None) -> dict:
     request_input = list(input_items)
@@ -210,13 +227,16 @@ def _response_once(model: str, instructions: str, input_items: list[dict],
     answer = "\n".join(x for x in answer_parts if x).strip()
     if not answer:
         answer = "".join(text_chunks).strip()
-    return {"output": output_items, "answer": answer, "response": completed_response}
+    return {
+        "output": output_items, "answer": answer, "response": completed_response,
+        "usage": _normalized_usage(completed_response.get("usage")),
+    }
 
 
 def chat(model: str, messages: list[dict], *, user_context: str = "",
          profile_instructions: str = "", tool_runtime=None,
          authorized_targets: set[str] | None = None,
-         on_tool_event=None) -> dict:
+         on_tool_event=None, enabled_tool_groups: list[str] | None = None) -> dict:
     """Stateless Responses API loop with Account GPT-only local tools.
 
     The complete input history and function-call/output items are sent on every
@@ -288,16 +308,52 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
         {"role": item["role"], "content": item["content"]}
         for item in messages
     ]
-    tools = list(tool_runtime.tools) if tool_runtime is not None else None
+    tools = (
+        tool_runtime.tools_for_groups(enabled_tool_groups)
+        if tool_runtime is not None and hasattr(tool_runtime, "tools_for_groups")
+        else list(tool_runtime.tools) if tool_runtime is not None else None
+    )
     token = connection.access()
     tool_events = []
     total_calls = 0
+    usage_totals = {"input_tokens": 0, "output_tokens": 0,
+                    "requests": 0, "measured_requests": 0}
+
+    def record_usage(response):
+        usage_totals["requests"] += 1
+        raw = response.get("usage") if isinstance(response, dict) else None
+        if not isinstance(raw, dict):
+            return
+        measured = False
+        for key in ("input_tokens", "output_tokens"):
+            value = raw.get(key)
+            if type(value) is int and value >= 0:
+                usage_totals[key] += value
+                measured = True
+        if measured:
+            usage_totals["measured_requests"] += 1
+
+    def usage_report():
+        measured = usage_totals["measured_requests"] > 0
+        return {
+            "available": measured,
+            "input_tokens": usage_totals["input_tokens"] if measured else None,
+            "output_tokens": usage_totals["output_tokens"] if measured else None,
+            "total_tokens": (usage_totals["input_tokens"] + usage_totals["output_tokens"])
+                if measured else None,
+            "requests": usage_totals["requests"],
+            "measured_requests": usage_totals["measured_requests"],
+            "complete": measured and usage_totals["measured_requests"] == usage_totals["requests"],
+            "provider": "OpenAI Responses",
+        }
+
     max_rounds = 16 if tools else 1
 
     for round_index in range(max_rounds):
         response = _response_once(
             model, instructions, input_items, token, tools=tools,
         )
+        record_usage(response)
         output = response["output"]
         calls = [
             item for item in output
@@ -312,6 +368,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                 "source": "chatgpt_plan_responses",
                 "tool_events": tool_events,
                 "tool_calls": total_calls,
+                "usage": usage_report(),
             }
 
         for call in calls:
@@ -322,6 +379,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                               "можно продолжить исследование следующим сообщением.",
                     "model": model, "source": "chatgpt_plan_responses",
                     "tool_events": tool_events, "tool_calls": total_calls,
+                    "usage": usage_report(),
                 }
             call_id = call.get("call_id")
             name = call.get("name")
@@ -343,6 +401,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                 result, is_error = tool_runtime.call(
                     name, arguments, authorized_targets=authorized_targets,
                     user_messages=messages,
+                    enabled_groups=enabled_tool_groups,
                 )
             total_calls += 1
             audit_arguments = dict(arguments)
@@ -393,4 +452,5 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                   "Промежуточные результаты приведены в журнале вызовов.",
         "model": model, "source": "chatgpt_plan_responses",
         "tool_events": tool_events, "tool_calls": total_calls,
+        "usage": usage_report(),
     }
