@@ -26,7 +26,7 @@ const TOOL_GROUP_GLYPHS={
   security:"⛨",traffic:"≋",developer:"⌘",mcp:"⧉"
 };
 const TOOL_GROUP_FALLBACK=[
-  {id:"browser",label:"Chrome",icon:"globe",description:"Сайты, DOM, ссылки, вкладки, история и DevTools Network."},
+  {id:"browser",label:"Chrome",icon:"globe",description:"Изолированный Chromium: сайты, DOM, ссылки, вкладки, история и DevTools Network. Личный профиль Chrome не используется."},
   {id:"computer",label:"Компьютер",icon:"monitor",description:"Windows, процессы, службы, файлы, окна и Defender."},
   {id:"terminal",label:"Терминал",icon:"terminal",description:"Ограниченные read-only команды CMD."},
   {id:"web",label:"Интернет-поиск",icon:"search",description:"Поиск в интернете, страницы выдачи и открытие первоисточников."},
