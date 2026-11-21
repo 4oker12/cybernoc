@@ -87,8 +87,19 @@ class GPTToolRuntimeTests(unittest.TestCase):
         for command in (
             "hostname",
             "whoami",
+            "whoami /groups",
+            "whoami /priv",
             "ver",
+            "systeminfo",
             "ipconfig /all",
+            "ipconfig /displaydns",
+            "tasklist /fo csv",
+            "tasklist /fo table",
+            "driverquery /fo csv",
+            "sc query",
+            "sc query WinDefend",
+            "powercfg /getactivescheme",
+            "where.exe winget",
             "route print -4",
             "route print -6",
             "netstat -ano",
@@ -98,6 +109,7 @@ class GPTToolRuntimeTests(unittest.TestCase):
             "netsh interface show interface",
             "netsh interface ipv4 show config",
             "netsh advfirewall show allprofiles",
+            "netsh wlan show interfaces",
             "git status --short",
             "python --version",
         ):
@@ -116,6 +128,19 @@ class GPTToolRuntimeTests(unittest.TestCase):
             with self.subTest(command=command):
                 with self.assertRaises(ValueError):
                     _validate_terminal_command(command, {"edge.example.net"})
+
+    def test_cmd_diagnostic_allowlist_rejects_mutating_process_and_service_commands(self):
+        for command in (
+            "taskkill /im chrome.exe /f",
+            "sc config WinDefend start= disabled",
+            "sc stop WinDefend",
+            "powercfg /setactive SCHEME_MAX",
+            "where.exe powershell",
+            "driverquery /v /fo list",
+        ):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    _validate_terminal_command(command, set())
 
     def test_cmd_backend_rejects_mutating_network_commands(self):
         for command in (
