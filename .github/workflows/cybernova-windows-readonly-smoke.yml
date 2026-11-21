@@ -1,0 +1,38 @@
+name: Cybernova Windows Readonly Integration Smoke
+on:
+  push:
+    branches:
+      - feature/account-gpt-local-tools
+    paths:
+      - cybernova/research-platform/**
+      - .github/workflows/cybernova-windows-readonly-smoke.yml
+  pull_request:
+    paths:
+      - cybernova/research-platform/**
+      - .github/workflows/cybernova-windows-readonly-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  windows-real-tool-smoke:
+    name: Shared GPT/DeepSeek tools on ephemeral Windows runner
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Cybernova Windows dependencies
+        shell: pwsh
+        run: python -m pip install -r cybernova/research-platform/console/requirements.txt
+      - name: Install isolated Playwright Chromium
+        shell: pwsh
+        run: python -m playwright install chromium
+      - name: Execute READ-ONLY shared-tool smoke
+        shell: pwsh
+        env:
+          CYBERNOVA_GPT_BROWSER_EPHEMERAL: "1"
+          CYBERNOVA_GPT_BROWSER_HEADLESS: "1"
+        run: python cybernova/research-platform/tests/windows_readonly_smoke.py
