@@ -178,6 +178,19 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertEqual(args, [cmd_path, "/d", "/s", "/c", "ipconfig /all"])
         self.assertFalse(run.call_args.kwargs["shell"])
 
+    def test_terminal_status_reports_cmd_as_the_execution_shell(self):
+        runtime = GPTToolRuntime()
+        cmd_path = r"C:\Windows\System32\cmd.exe"
+        with patch("console.gpt_tool_runtime.platform.system", return_value="Windows"), \
+             patch("console.gpt_tool_runtime.shutil.which", return_value=cmd_path), \
+             patch("console.gpt_tool_runtime.Path.is_file", return_value=True):
+            result, is_error = runtime.call("terminal_status", {})
+        self.assertFalse(is_error)
+        self.assertTrue(result["cmd_exe"])
+        self.assertEqual(result["terminal"], "Windows CMD")
+        self.assertEqual(result["execution_host"], "local_windows")
+        self.assertNotIn("powershell_7", result)
+
     def test_runtime_does_not_execute_terminal_on_non_windows_host(self):
         runtime = GPTToolRuntime()
         with patch("console.gpt_tool_runtime.platform.system", return_value="Linux"):
