@@ -222,7 +222,7 @@ def run():
                     "heading_sample": result.get("headings", [])[:8],
                     "link_sample": links[:8],
                     "excerpt_sample": str(result.get("text_excerpt") or "")[:180],
-                }, ensure_ascii=False))
+                }, ensure_ascii=True))
             except Exception as exc:
                 print(json.dumps({
                     "test": "public_search_provider_probe",
