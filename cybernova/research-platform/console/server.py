@@ -90,7 +90,60 @@ SESSION_TTL_SECONDS = 7200
 MAX_HISTORY = 16
 sessions: OrderedDict[str, dict] = OrderedDict()
 sessions_lock = RLock()
+run_usage_progress: OrderedDict[str, dict] = OrderedDict()
+run_usage_lock = RLock()
 agent = Agent(local_tool_runtime=gpt_tool_runtime)
+
+
+def _begin_usage_progress(run_id: str) -> None:
+    if (not isinstance(run_id, str) or len(run_id) != 32 or
+            any(char not in "0123456789abcdef" for char in run_id)):
+        raise HTTPException(status_code=422, detail="invalid_run_id")
+    with run_usage_lock:
+        while len(run_usage_progress) >= 128:
+            run_usage_progress.popitem(last=False)
+        run_usage_progress[run_id] = {
+            "status": "running",
+            "usage": {
+                "available": False, "input_tokens": None, "output_tokens": None,
+                "total_tokens": None, "requests": 0, "measured_requests": 0,
+                "complete": False, "provider": None,
+            },
+            "updated_at": time.time(),
+        }
+
+
+def _update_usage_progress(run_id: str, usage: dict) -> None:
+    if not isinstance(usage, dict):
+        return
+    with run_usage_lock:
+        item = run_usage_progress.get(run_id)
+        if item is None or item["status"] != "running":
+            return
+        item["usage"] = dict(usage)
+        item["updated_at"] = time.time()
+        run_usage_progress.move_to_end(run_id)
+
+
+def _finish_usage_progress(run_id: str, status: str, usage: dict | None = None) -> None:
+    with run_usage_lock:
+        item = run_usage_progress.get(run_id)
+        if item is None:
+            return
+        if isinstance(usage, dict):
+            item["usage"] = dict(usage)
+        item["status"] = status
+        item["updated_at"] = time.time()
+        run_usage_progress.move_to_end(run_id)
+
+
+def _read_usage_progress(run_id: str) -> dict | None:
+    with run_usage_lock:
+        item = run_usage_progress.get(run_id)
+        if item is None:
+            return None
+        return {"status": item["status"], "usage": dict(item["usage"]),
+                "updated_at": item["updated_at"]}
 
 
 @lru_cache(maxsize=1)
@@ -173,6 +226,8 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
     message: str = Field(min_length=1, max_length=10000)
     tool_groups: list[str] = Field(default_factory=list, max_length=9)
+    run_id: str = Field(default_factory=lambda: secrets.token_hex(16),
+                        min_length=32, max_length=32, pattern="^[0-9a-f]{32}$")
 
 
 class ResearchScopeRequest(BaseModel):
@@ -268,6 +323,8 @@ class ChatGPTMessageRequest(BaseModel):
     model: str = Field(min_length=1, max_length=160)
     message: str = Field(min_length=1, max_length=10000)
     tool_groups: list[str] = Field(default_factory=list, max_length=9)
+    run_id: str = Field(default_factory=lambda: secrets.token_hex(16),
+                        min_length=32, max_length=32, pattern="^[0-9a-f]{32}$")
 
 
 class ProfileSettingsRequest(BaseModel):
@@ -494,6 +551,9 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
     conversation. Tool receipts are committed as soon as each local action ends;
     the final assistant message is stored after inference completes.
     """
+    _begin_usage_progress(payload.run_id)
+    run_status = "failed"
+    outcome = None
     with gpt_turn_lock:
         store = gpt_chat_store()
         thread_id = payload.thread_id
@@ -527,7 +587,9 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 authorized_targets=extract_user_targets(outgoing),
                 on_tool_event=persist_tool_event,
                 enabled_tool_groups=selected_tool_groups,
+                on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
             )
+            run_status = "completed"
             if user_message_seq is None:
                 thread_id = store.save_exchange(
                     payload.thread_id, payload.model, payload.message, outcome["answer"]
@@ -554,10 +616,25 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 "tool_events": persisted_tool_events,
                 "tool_calls": len(persisted_tool_events),
             }
-    return {"thread_id": thread_id, "model": payload.model,
+            run_status = "partial"
+        finally:
+            _finish_usage_progress(payload.run_id, run_status,
+                                   outcome.get("usage") if isinstance(outcome, dict) else None)
+    return {"thread_id": thread_id, "model": payload.model, "run_id": payload.run_id,
             "answer": outcome["answer"], "source": outcome["source"],
             "tool_events": outcome.get("tool_events", []),
             "usage": outcome.get("usage")}
+
+
+@app.get("/api/usage-progress")
+def usage_progress(run_id: str):
+    if (len(run_id) != 32 or
+            any(char not in "0123456789abcdef" for char in run_id)):
+        raise HTTPException(status_code=422, detail="invalid_run_id")
+    progress = _read_usage_progress(run_id)
+    if progress is None:
+        raise HTTPException(status_code=404, detail="run_not_found")
+    return {"run_id": run_id, **progress}
 
 
 @app.get("/api/siwc/status")
@@ -800,10 +877,13 @@ def chat(payload: ChatRequest):
         store.append(task_id, "human", "instruction", payload.message,
                      status="running")
         try:
-            try:
-                selected_tool_groups = normalize_tool_groups(payload.tool_groups)
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from None
+            selected_tool_groups = normalize_tool_groups(payload.tool_groups)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        _begin_usage_progress(payload.run_id)
+        outcome = None
+        run_status = "failed"
+        try:
             current_agent = Agent(
                 ollama=agent.ollama,
                 mcp_factory=lambda: CommunicationToolClient(
@@ -821,12 +901,17 @@ def chat(payload: ChatRequest):
                 user_context=user_context_for(profile, "researcher"),
                 profile_instructions=mode_instructions_for(profile, "researcher"),
                 tool_groups=selected_tool_groups,
+                on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
             )
+            run_status = "completed"
         except Exception as exc:
             store.append(task_id, "controller", "system",
                          "Agent failed: " + type(exc).__name__, status="blocked")
             raise HTTPException(status_code=502, detail="agent_failed: " +
                                 type(exc).__name__) from exc
+        finally:
+            _finish_usage_progress(payload.run_id, run_status,
+                                   outcome.get("usage") if isinstance(outcome, dict) else None)
         # Raw arguments are never exposed in the chat response.
         requests = outcome.pop("approval_requests", [])
         EvidenceJournal(store).record_tool_events(
@@ -847,7 +932,7 @@ def chat(payload: ChatRequest):
         event = store.append(task_id, "qwen", "result",
                              outcome["answer"][:12000], status=final_status)
     return {"session_id": sid, "task_id": task_id, "event_seq": event["seq"],
-            "turn": state["turns"], **outcome}
+            "turn": state["turns"], "run_id": payload.run_id, **outcome}
 
 
 @app.post("/api/approve")
