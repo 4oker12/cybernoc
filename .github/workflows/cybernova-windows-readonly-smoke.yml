@@ -6,10 +6,10 @@ on:
     paths:
       - cybernova/research-platform/**
       - .github/workflows/cybernova-windows-readonly-smoke.yml
-  pull_request:
-    paths:
-      - cybernova/research-platform/**
-      - .github/workflows/cybernova-windows-readonly-smoke.yml
+
+concurrency:
+  group: cybernova-windows-smoke-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
