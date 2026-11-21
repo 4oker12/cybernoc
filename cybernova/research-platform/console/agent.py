@@ -256,7 +256,8 @@ class Agent:
             context.append({"role": "system", "content":
                 "Владелец выбрал объект(ы) этой задачи: " +
                 ", ".join(scope_hosts[:20]) +
-                ". Это применимо к пассивному browser_open/browser_network. " +
+                ". Это применимо к пассивной навигации browser_navigate, browser_snapshot, " +
+                "browser_follow_link и browser_network. " +
                 "Если пользователь упомянул сайт без URL, можно читать " +
                 "https://" + scope_hosts[0] + "/. " +
                 "Уровень доказательств Network: " +
