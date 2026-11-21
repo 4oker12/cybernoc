@@ -16,6 +16,10 @@ try:
     from .local_tools_profile import LOCAL_TOOLS_PROFILE
 except ImportError:
     from local_tools_profile import LOCAL_TOOLS_PROFILE
+try:
+    from .operational_contract import OPERATIONAL_CONTRACT
+except ImportError:
+    from operational_contract import OPERATIONAL_CONTRACT
 
 
 IDENTITY_AND_PROJECT = """
@@ -200,6 +204,7 @@ RESPONSE_STYLE = """
 
 AGENT_PROFILE = "\n\n".join((
     IDENTITY_AND_PROJECT,
+    OPERATIONAL_CONTRACT,
     PROJECT_BACKGROUND,
     LOCAL_TOOLS_PROFILE,
     RESEARCH_MISSION,
