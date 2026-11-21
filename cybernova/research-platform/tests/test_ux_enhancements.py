@@ -86,7 +86,7 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn('navigator.clipboard.readText()', app)
         self.assertIn('Вывод из терминала:', app)
         self.assertIn('проверь и нажми Enter', app)
-        self.assertIn('ничего не отправляется автоматически', html)
+        self.assertIn('ничего не отправляется автоматически', html.lower())
 
     def test_selection_ask_and_nonblocking_composer_are_present(self):
         ux = (ROOT / "console/static/ux.js").read_text(encoding="utf-8")
