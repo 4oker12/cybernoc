@@ -57,6 +57,7 @@ class ComputerControlTests(unittest.TestCase):
         for label in (
             "Delete", "Uninstall", "Quick scan", "Full scan", "Apply",
             "Disable protection", "Quarantine", "Save", "Restart",
+            "OK", "Yes", "Next", "Continue",
         ):
             with self.subTest(label=label):
                 self.assertRegex(label, HIGH_IMPACT_UI)
