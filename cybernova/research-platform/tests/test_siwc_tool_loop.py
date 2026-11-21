@@ -97,10 +97,11 @@ class AccountGPTToolLoopTests(unittest.TestCase):
         opener = FakeOpener()
         runtime = FakeRuntime()
         receipts = []
-        with patch.object(siwc_inference, "models", return_value=[
-                 {"slug": "gpt-6.2-sol", "display_name": "GPT"},
-             ]), \
-             patch.object(siwc_inference.connection, "access", return_value="test-token"), \
+        with (patch.object(siwc_inference, "models", return_value=[
+                  {"slug": "gpt-6.2-sol", "display_name": "GPT"},
+              ]),
+              patch.object(siwc_inference.connection, "access", return_value="test-token"),
+              patch.object(siwc_inference.request, "build_opener", return_value=opener)):
              patch.object(siwc_inference.request, "build_opener", return_value=opener):
             result = siwc_inference.chat(
                 "gpt-6.2-sol",
