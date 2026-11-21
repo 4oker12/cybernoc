@@ -94,7 +94,8 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn('navigator.clipboard.readText()', script)
         self.assertIn('sendButton.click()', script)
         self.assertIn('composerText(editor).trim()', script)
-        self.assertNotRegex(script, r"fetch\\s*\\(|XMLHttpRequest|WebSocket|chrome\\.storage")
+        for forbidden in ("fetch(", "XMLHttpRequest", "WebSocket", "chrome.storage"):
+            self.assertNotIn(forbidden, script)
 
     def test_terminal_output_clipboard_control_is_available_in_both_chat_modes(self):
         html = (ROOT / "console/static/index.html").read_text(encoding="utf-8")
