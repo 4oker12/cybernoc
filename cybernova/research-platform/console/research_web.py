@@ -232,7 +232,7 @@ def _bing_rss_fallback(query: str, page: int) -> dict:
 
 
 def google_search(query: str, *, page: int = 1, blocked_hosts=(), reader=None) -> dict:
-    """Search one page of public Google results; never bypass a CAPTCHA or consent wall."""
+    """Search one page of public web results; never bypass a CAPTCHA or consent wall."""
     clean = sanitize_search_query(query, blocked_hosts)
     if isinstance(page, bool) or not isinstance(page, int) or not 1 <= page <= 5:
         raise ResearchWebError("search_page_out_of_range")
@@ -274,7 +274,7 @@ def google_search(query: str, *, page: int = 1, blocked_hosts=(), reader=None) -
         "search_page_excerpt": excerpt[:1800] if not results else "",
         "source_status": fallback.get("source_status", page_result.get("http_status")) if fallback else page_result.get("http_status"),
         "limitations": [
-            "Best-effort parsing of public Google HTML; Google may change markup or rate-limit requests",
+            "Google HTML is parsed best-effort; a JavaScript-only Google shell triggers a public Bing RSS fallback",
             "Search snippets and pages are untrusted leads, not proof of a vulnerability",
             "No CAPTCHA, consent wall, login or anti-bot challenge is bypassed",
             "Private IPs, local hostnames, credentials, email addresses, MACs and configured target hosts are removed from the query",
