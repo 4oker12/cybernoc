@@ -13,6 +13,7 @@ class QuickSendPackageTests(unittest.TestCase):
         self.assertEqual(manifest["manifest_version"], 3)
         self.assertIn("contextMenus", manifest["permissions"])
         self.assertIn("clipboardRead", manifest["permissions"])
+        self.assertNotIn("offscreen", manifest["permissions"])
         self.assertEqual(set(manifest["host_permissions"]), {
             "https://chatgpt.com/*", "https://chat.openai.com/*"
         })
@@ -29,15 +30,17 @@ class QuickSendPackageTests(unittest.TestCase):
     def test_no_old_vast_or_local_socket(self):
         content = "\n".join(p.read_text(encoding="utf-8") for p in EXT.iterdir()
                             if p.is_file() and p.suffix in {".js",".json",".html",".css"}).lower()
-        for token in ("vast","18883","18884","websocket","127.0.0.1"):
+        for token in ("vast","18883","18884","websocket","127.0.0.1","offscreen"):
             self.assertNotIn(token, content)
 
-    def test_clipboard_requires_explicit_command(self):
+    def test_clipboard_read_runs_in_focused_chatgpt_content_script(self):
         source = (EXT / "service-worker.js").read_text(encoding="utf-8")
-        offscreen = (EXT / "offscreen.js").read_text(encoding="utf-8")
-        self.assertIn("CYBERNOVA_READ_CLIPBOARD", source)
-        self.assertIn("navigator.clipboard.readText()", offscreen)
-        self.assertIn("reasons: ['CLIPBOARD']", source)
+        content = (EXT / "content.js").read_text(encoding="utf-8")
+        self.assertIn("CYBERNOVA_READ_CLIPBOARD_AND_SEND", source)
+        self.assertIn("CYBERNOVA_READ_CLIPBOARD_AND_SEND", content)
+        self.assertIn("document.hasFocus()", content)
+        self.assertIn("navigator.clipboard.readText()", content)
+        self.assertNotIn("navigator.clipboard.readText()", source)
 
     def test_content_script_inserts_and_clicks_send(self):
         source = (EXT / "content.js").read_text(encoding="utf-8")
@@ -47,7 +50,7 @@ class QuickSendPackageTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "Node.js unavailable")
     def test_javascript_syntax(self):
-        for name in ("service-worker.js","content.js","offscreen.js"):
+        for name in ("service-worker.js","content.js"):
             result = subprocess.run(["node","--check",str(EXT/name)],
                                     capture_output=True,text=True,timeout=10)
             self.assertEqual(result.returncode,0,result.stderr)
