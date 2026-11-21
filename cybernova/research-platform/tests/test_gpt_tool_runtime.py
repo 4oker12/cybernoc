@@ -38,7 +38,28 @@ class GPTToolRuntimeTests(unittest.TestCase):
             "computer_ui_windows", "computer_ui_controls", "computer_ui_click",
             "computer_defender_status", "computer_defender_events",
             "computer_defender_scan", "computer_defender_scan_status",
+            "computer_installed_programs", "computer_power_overview",
+            "computer_file_hash", "computer_package_search",
+            "computer_package_details", "computer_package_install",
+            "computer_archive_inspect", "computer_archive_extract",
+            "computer_plan_file_organization", "computer_apply_file_organization",
         }.issubset(names))
+
+    def test_mcp_adapter_exports_the_identical_local_tool_names_and_schemas(self):
+        runtime = GPTToolRuntime()
+        rows = runtime.mcp_tools()
+        self.assertEqual(
+            {row["name"] for row in rows},
+            {tool["name"] for tool in runtime.tools},
+        )
+        for row in rows:
+            with self.subTest(tool=row["name"]):
+                self.assertEqual(row["inputSchema"]["type"], "object")
+                self.assertFalse(row["inputSchema"]["additionalProperties"])
+                self.assertEqual(
+                    set(row["inputSchema"].get("properties", {})),
+                    set(row["inputSchema"].get("required", [])),
+                )
 
     def test_all_account_gpt_function_schemas_are_strict_and_closed(self):
         for tool in build_tool_catalog():
