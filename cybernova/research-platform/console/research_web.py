@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from collections import deque
 from html import unescape
+import hashlib
+import xml.etree.ElementTree as ET
 import ipaddress
 import re
 import threading
@@ -15,9 +17,9 @@ import time
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 try:
-    from .browser_tools import _read_page
+    from .browser_tools import _read_page, _PinnedTLS, _public_ip
 except ImportError:
-    from browser_tools import _read_page
+    from browser_tools import _read_page, _PinnedTLS, _public_ip
 
 
 GOOGLE_HOST = "www.google.com"
@@ -161,6 +163,74 @@ def _extract_results(page: dict) -> list[dict]:
     return results
 
 
+def _parse_bing_rss(blob: bytes) -> list[dict]:
+    """Parse a bounded public RSS response without executing HTML or XML entities."""
+    if not isinstance(blob, bytes) or len(blob) > 300_000:
+        raise ResearchWebError("bing_rss_size_limit_exceeded")
+    lowered = blob.lower()
+    if b"<!doctype" in lowered or b"<!entity" in lowered:
+        raise ResearchWebError("bing_rss_xml_entities_forbidden")
+    try:
+        root = ET.fromstring(blob)
+    except ET.ParseError as exc:
+        raise ResearchWebError("bing_rss_invalid_xml") from exc
+    if root.tag != "rss" or root.find("channel") is None:
+        raise ResearchWebError("bing_rss_unrecognized_document")
+    results, seen = [], set()
+    for item in root.findall("./channel/item")[:MAX_RESULTS]:
+        title = " ".join((item.findtext("title") or "").split())[:220]
+        candidate = (item.findtext("link") or "").strip()
+        url = _unwrap_result_url(candidate)
+        if not url or not title or url in seen:
+            continue
+        seen.add(url)
+        snippet = " ".join((item.findtext("description") or "").split())[:420]
+        # RSS content can contain markup; treat it as text and collapse tags.
+        snippet = re.sub(r"<[^>]*>", " ", unescape(snippet))
+        snippet = " ".join(snippet.split())[:420]
+        results.append({
+            "title": title,
+            "url": url[:1000],
+            "domain": (urlsplit(url).hostname or "")[:180],
+            "snippet": snippet,
+        })
+    return results
+
+
+def _bing_rss_fallback(query: str, page: int) -> dict:
+    """Use public no-key Bing RSS if Google serves a JS-only page, never a CAPTCHA."""
+    host = "www.bing.com"
+    url = "https://" + host + "/search?" + urlencode({
+        "q": query, "format": "rss",
+        "first": str((page - 1) * MAX_RESULTS + 1),
+    })
+    conn = _PinnedTLS(host, _public_ip(host))
+    try:
+        conn.request("GET", urlsplit(url).path + "?" + urlsplit(url).query,
+                     headers={"Host": host, "User-Agent": "CybernovaReadOnlyResearch/1.0",
+                              "Accept": "application/rss+xml, application/xml, text/xml",
+                              "Accept-Encoding": "identity", "Connection": "close"})
+        resp = conn.getresponse()
+        if resp.status != 200:
+            raise ResearchWebError("bing_rss_http_" + str(resp.status))
+        ctype = (resp.getheader("Content-Type") or "").lower()
+        if not any(part in ctype for part in ("xml", "rss")):
+            raise ResearchWebError("bing_rss_content_type_invalid")
+        data = resp.read(300_001)
+        results = _parse_bing_rss(data)
+        if not results:
+            raise ResearchWebError("bing_rss_no_results")
+        return {
+            "provider": "Bing Search RSS fallback",
+            "results": results, "result_count": len(results),
+            "source_status": int(resp.status),
+            "source_sha256": hashlib.sha256(data).hexdigest(),
+            "pagination_verified": False,
+        }
+    finally:
+        conn.close()
+
+
 def google_search(query: str, *, page: int = 1, blocked_hosts=(), reader=None) -> dict:
     """Search one page of public Google results; never bypass a CAPTCHA or consent wall."""
     clean = sanitize_search_query(query, blocked_hosts)
@@ -182,16 +252,27 @@ def google_search(query: str, *, page: int = 1, blocked_hosts=(), reader=None) -
     if blocked:
         raise ResearchWebError("google_search_challenge_or_consent_required")
     results = _extract_results(page_result)
+    fallback = None
+    google_js_shell = "if you're having trouble accessing google search" in excerpt.lower()
+    if not results and google_js_shell and reader is None:
+        try:
+            fallback = _bing_rss_fallback(clean, page)
+            results = fallback["results"]
+        except (OSError, ValueError, ET.ParseError) as exc:
+            fallback = {"error": str(exc)[:180]}
     return {
         "ok": bool(results),
-        "provider": "Google Search HTML",
+        "provider": fallback.get("provider", "Google Search HTML") if fallback else "Google Search HTML",
+        "fallback_reason": "google_javascript_shell" if google_js_shell else None,
+        "fallback_error": fallback.get("error") if fallback else None,
+        "pagination_verified": fallback.get("pagination_verified", True) if fallback else True,
         "query": clean,
         "page": page,
         "start_index": (page - 1) * MAX_RESULTS,
         "result_count": len(results),
         "results": results,
         "search_page_excerpt": excerpt[:1800] if not results else "",
-        "source_status": page_result.get("http_status"),
+        "source_status": fallback.get("source_status", page_result.get("http_status")) if fallback else page_result.get("http_status"),
         "limitations": [
             "Best-effort parsing of public Google HTML; Google may change markup or rate-limit requests",
             "Search snippets and pages are untrusted leads, not proof of a vulnerability",
