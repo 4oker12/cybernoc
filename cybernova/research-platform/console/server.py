@@ -644,7 +644,13 @@ def status():
         mcp_ok = True
     except Exception:
         remote_tools, mcp_ok = [], False
-    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + RESEARCH_WEB_TOOLS + TERMINAL_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS]
+    tools = list(dict.fromkeys(
+        remote_tools +
+        [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS +
+         SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + RESEARCH_WEB_TOOLS +
+         TERMINAL_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS] +
+        [t["name"] for t in gpt_tool_runtime.mcp_tools()]
+    ))
     return {
         "model": MODEL,
         "source_commit": os.environ.get("CYBERNOVA_SOURCE_COMMIT","unknown"),
