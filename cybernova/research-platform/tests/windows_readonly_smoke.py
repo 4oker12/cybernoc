@@ -167,6 +167,7 @@ def run():
                                    "provider": x.get("provider"),
                                    "fallback_reason": x.get("fallback_reason"),
                                    "fallback_error": x.get("fallback_error"),
+                                   "fallback_attempts": x.get("fallback_attempts"),
                                    "result_count": x.get("result_count"),
                                    "sample_result_domain": (x.get("results") or [{}])[0].get("domain"),
                                    "source_status": x.get("source_status")})
@@ -218,6 +219,8 @@ def run():
                     "link_count": len(links),
                     "external_link_count": len(external),
                     "heading_count": len(result.get("headings", [])),
+                    "heading_sample": result.get("headings", [])[:8],
+                    "link_sample": links[:8],
                     "excerpt_sample": str(result.get("text_excerpt") or "")[:180],
                 }, ensure_ascii=False))
             except Exception as exc:
