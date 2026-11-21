@@ -55,7 +55,7 @@ HIGH_IMPACT_UI = re.compile(
     r"pay|confirm|apply|save|scan|quarantine|clean|allow|block|enable|"
     r"install|update|оплат|удал|сброс|восстанов|отключ|выключ|перезапуск|"
     r"останов|подтверд|примен|сохран|скан|карантин|очист|разреш|установ|обнов|"
-    r"\\b(ok|yes|next|continue|finish|accept|agree|да|ок|далее|продолжить|готово)\\b)"
+    r"\b(ok|yes|next|continue|finish|accept|agree|да|ок|далее|продолжить|готово)\b)"
 )
 SAFE_UI_CONTROL_TYPES = {
     "Button", "TabItem", "TreeItem", "ListItem", "MenuItem", "Hyperlink",
