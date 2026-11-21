@@ -45,6 +45,34 @@ class FakeOllama:
         if not self.messages:raise AssertionError("Unexpected LLM call")
         return self.messages.pop(0)
 
+class FakeLocalToolRuntime:
+    def __init__(self, *, image=False):
+        self.calls = []
+        self.image = image
+        schema = {
+            "type": "object", "properties": {}, "required": [],
+            "additionalProperties": False,
+        }
+        self.tools = [{
+            "type": "function", "name": "computer_system_overview",
+            "description": "Inspect local Windows system.",
+            "parameters": schema,
+        }]
+        self.tool_map = {item["name"]: item for item in self.tools}
+
+    def mcp_tools(self):
+        return [{
+            "name": item["name"], "description": item["description"],
+            "inputSchema": item["parameters"],
+        } for item in self.tools]
+
+    def call(self, name, args, *, authorized_targets=None, user_messages=None):
+        self.calls.append((name, args, set(authorized_targets or ()), user_messages))
+        if self.image:
+            return {"ok": True, "image_data_url": "data:image/png;base64,AAAA"}, False
+        return {"ok": True, "os": "Windows", "cpu_count": 8}, False
+
+
 class AgentTests(unittest.TestCase):
     def test_shared_profile_is_provider_neutral_and_contains_project_background(self):
         self.assertIn("единственной активной моделью", BASE_SYSTEM)
@@ -88,6 +116,54 @@ class AgentTests(unittest.TestCase):
                                  "arbitrary_shell"])
         self.assertIn("Requires user approval",
                       _tool_schema(TOOLS)[-1]["function"]["description"])
+
+    def test_deepseek_agent_receives_the_same_local_computer_tool_catalog(self):
+        mcp = FakeMCP()
+        local = FakeLocalToolRuntime()
+        lm = FakeOllama([
+            calls(("computer_system_overview", {})),
+            {"role": "assistant", "content": "Windows: 8 logical CPUs."},
+        ])
+        out = Agent(lm, lambda: mcp, local_tool_runtime=local).run(
+            [], "Проверь локальный компьютер и example.com", force_tools=False,
+            scope={"hosts": ["scope.example"]},
+        )
+        self.assertEqual(out["tool_calls"], 1)
+        self.assertEqual(local.calls[0][0], "computer_system_overview")
+        self.assertIn("example.com", local.calls[0][2])
+        self.assertIn("scope.example", local.calls[0][2])
+        self.assertEqual(
+            local.calls[0][3],
+            [{"role": "user", "content": "Проверь локальный компьютер и example.com"}],
+        )
+        self.assertEqual(mcp.calls, [])
+        advertised = [tool["function"]["name"] for tool in lm.prompts[0][1]]
+        self.assertIn("computer_system_overview", advertised)
+
+    def test_shared_local_tools_remain_available_when_remote_mcp_is_down(self):
+        local = FakeLocalToolRuntime()
+        lm = FakeOllama([
+            calls(("computer_system_overview", {})),
+            {"role": "assistant", "content": "Windows доступна."},
+        ])
+        def broken_mcp():
+            raise BackendError("mcp_offline")
+        out = Agent(lm, broken_mcp, local_tool_runtime=local).run(
+            [], "Проверь компьютер", force_tools=False,
+        )
+        self.assertEqual(out["tool_calls"], 1)
+        self.assertEqual(local.calls[0][0], "computer_system_overview")
+        self.assertIn("mcp_error", [event["type"] for event in out["events"]])
+
+    def test_text_only_deepseek_adapter_does_not_receive_base64_screenshots(self):
+        local = FakeLocalToolRuntime(image=True)
+        agent = Agent(FakeOllama([]), lambda: FakeMCP(), local_tool_runtime=local)
+        result, failed = agent._call_registered_tool(
+            "computer_system_overview", {}, mcp=None,
+        )
+        self.assertFalse(failed)
+        self.assertNotIn("image_data_url", result)
+        self.assertFalse(result["visual_input"]["forwarded_to_model"])
 
     def test_one_native_tool_call_then_reasoned_answer(self):
         mcp=FakeMCP();lm=FakeOllama([calls(("ip_network_summary",{"cidr":"192.0.2.7/24"})),
