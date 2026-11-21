@@ -65,8 +65,8 @@ class GPTConversationTests(unittest.TestCase):
         self.assertEqual(first["usage"]["total_tokens"],15)
 
     def test_unknown_tool_group_is_rejected_before_chatgpt_inference(self):
-        with patch.object(server,"gpt_chat_store",return_value=self.store), \\
-             patch.object(server,"chatgpt_chat") as inference:
+        with (patch.object(server, "gpt_chat_store", return_value=self.store),
+              patch.object(server, "chatgpt_chat") as inference):
             with self.assertRaises(HTTPException) as caught:
                 server.siwc_chat_message(server.ChatGPTMessageRequest(
                     model="gpt-6.2-sol",message="test",tool_groups=["not-a-tool"]))
