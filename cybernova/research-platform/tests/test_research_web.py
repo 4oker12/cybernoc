@@ -74,6 +74,24 @@ class ResearchWebTests(unittest.TestCase):
         self.assertEqual(calls[0][1], {"www.google.com"})
         self.assertTrue(result["untrusted_web_content"])
 
+    def test_google_search_supports_bounded_result_pages(self):
+        page = {
+            "http_status": 200, "headings": [], "text_excerpt": "", "links": [],
+        }
+        calls = []
+        def reader(url, hosts):
+            calls.append(url)
+            return page
+        with patch.object(research_web, "_rate_limit"):
+            result = google_search("vendor advisory CVE-2026-12345", page=2, reader=reader)
+        query = parse_qs(urlsplit(calls[0]).query)
+        self.assertEqual(query["start"], ["10"])
+        self.assertEqual(query["num"], ["10"])
+        self.assertEqual(result["page"], 2)
+        self.assertEqual(result["start_index"], 10)
+        with self.assertRaisesRegex(ResearchWebError, "page_out_of_range"):
+            google_search("vendor advisory", page=6, reader=reader)
+
     def test_google_challenge_is_not_bypassed(self):
         page = {
             "http_status": 200, "headings": [],
