@@ -227,7 +227,17 @@ def _bing_html_fallback(query: str, page: int, *, reader=None) -> dict:
     page_result = read(url, {host})
     results = _extract_results(page_result)
     if not results:
-        raise ResearchWebError("bing_html_no_results")
+        headings = [str(x)[:90] for x in page_result.get("headings", [])[:8]]
+        links = [
+            {"title": str(x.get("title") or "")[:90],
+             "url": str(x.get("url") or "")[:180]}
+            for x in page_result.get("links", [])[:8] if isinstance(x, dict)
+        ]
+        excerpt = str(page_result.get("text_excerpt") or "")[:180]
+        raise ResearchWebError(
+            "bing_html_no_results; headings=" + repr(headings) +
+            "; links=" + repr(links) + "; excerpt=" + repr(excerpt)
+        )
     return {
         "provider": "Bing Search HTML fallback",
         "results": results, "result_count": len(results),
@@ -303,6 +313,7 @@ def google_search(query: str, *, page: int = 1, blocked_hosts=(), reader=None) -
             errors.append("bing_html: " + str(exc)[:120])
             try:
                 fallback = _bing_rss_fallback(clean, page)
+                fallback["fallback_attempts"] = errors
                 results = fallback["results"]
             except (OSError, ValueError, ET.ParseError) as rss_exc:
                 errors.append("bing_rss: " + str(rss_exc)[:120])
@@ -312,6 +323,7 @@ def google_search(query: str, *, page: int = 1, blocked_hosts=(), reader=None) -
         "provider": fallback.get("provider", "Google Search HTML") if fallback else "Google Search HTML",
         "fallback_reason": "google_javascript_shell" if google_js_shell else None,
         "fallback_error": fallback.get("error") if fallback else None,
+        "fallback_attempts": fallback.get("fallback_attempts", []) if fallback else [],
         "pagination_verified": fallback.get("pagination_verified", True) if fallback else True,
         "query": clean,
         "page": page,
