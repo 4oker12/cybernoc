@@ -174,6 +174,7 @@ def _roots() -> list[Path]:
         Path(os.environ.get("ProgramFiles", r"C:\Program Files")),
         Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")),
         Path(os.environ.get("ProgramData", r"C:\ProgramData")),
+        Path(os.environ.get("SystemDrive", "C:") + "\\"),
     ]
     roots = []
     for item in candidates:
@@ -596,9 +597,25 @@ def _defender_status() -> dict:
                     continue
     except OSError:
         signatures = {"registry_read": "unavailable"}
+    antivirus_products = {"available": False, "products": []}
+    try:
+        from win32com.client import GetObject
+        security_center = GetObject(r"winmgmts:\\.\root\SecurityCenter2")
+        products = []
+        for product in security_center.ExecQuery(
+            "SELECT displayName, productState FROM AntiVirusProduct"
+        ):
+            products.append({
+                "name": _redact(str(getattr(product, "displayName", "")))[:160],
+                "product_state_raw": int(getattr(product, "productState", 0)),
+            })
+        antivirus_products = {"available": True, "products": products}
+    except Exception as exc:
+        antivirus_products = {"available": False, "reason": type(exc).__name__, "products": []}
     exe = _find_mpcmdrun()
     return {
         "ok": True, "services": services,
+        "security_center_antivirus_products": antivirus_products,
         "signature_metadata": signatures,
         "mpcmdrun_present": bool(exe),
         "mpcmdrun_path": str(exe) if exe else None,
@@ -878,7 +895,8 @@ def computer_control_call(name: str, args: dict, *, user_messages=None) -> tuple
                 raise ValueError("computer_open_app_arguments_invalid")
             return _open_app(args["app"]), False
         if name == "computer_screenshot":
-            return _screenshot(), not bool(platform.system() == "Windows")
+            result = _screenshot()
+            return result, not bool(result.get("ok"))
         if name == "computer_ui_windows":
             return _ui_windows(), False
         if name == "computer_ui_controls":
