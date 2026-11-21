@@ -155,7 +155,7 @@ def _snippet(excerpt: str, title: str, headings: list[str]) -> str:
     return value[:420]
 
 
-def _extract_results(page: dict) -> list[dict]:
+def _extract_results(page: dict, *, require_heading: bool = True) -> list[dict]:
     headings = [x.strip() for x in page.get("headings", []) if isinstance(x, str) and x.strip()]
     excerpt = str(page.get("text_excerpt") or "")
     results = []
@@ -164,7 +164,7 @@ def _extract_results(page: dict) -> list[dict]:
         if not isinstance(link, dict):
             continue
         title = " ".join(str(link.get("title") or "").split()).strip()
-        if not title or title not in headings:
+        if not title or (require_heading and title not in headings):
             continue
         url = _unwrap_result_url(str(link.get("url") or ""))
         if not url or url in seen:
@@ -225,7 +225,10 @@ def _bing_html_fallback(query: str, page: int, *, reader=None) -> dict:
     })
     read = reader or _read_page
     page_result = read(url, {host})
-    results = _extract_results(page_result)
+    # Bing often decorates H2 titles with publisher labels that its heading
+    # extractor splits into multiple nodes. Only decoded /ck/a result links
+    # are accepted here, so exact heading equality is not required.
+    results = _extract_results(page_result, require_heading=False)
     if not results:
         headings = [str(x)[:90] for x in page_result.get("headings", [])[:8]]
         links = [
