@@ -72,7 +72,9 @@ SAFE_UI_CONTROL_TYPES = {
 }
 TEXT_EXTENSIONS = {
     ".txt", ".log", ".md", ".json", ".csv", ".xml", ".ini", ".conf",
-    ".yaml", ".yml", ".toml", ".out",
+    ".yaml", ".yml", ".toml", ".out", ".py", ".ps1", ".psm1", ".psd1",
+    ".bat", ".cmd", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx",
+    ".html", ".htm", ".css", ".scss", ".sql", ".sh", ".reg", ".properties",
 }
 
 APP_COMMANDS = {
@@ -211,6 +213,7 @@ _SEARCH_JOBS: dict[str, dict] = {}
 _SEARCH_JOBS_LOCK = RLock()
 _SEARCH_BLOCKED_COMPONENTS = {
     ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker",
+    "$recycle.bin", "system volume information", "ntuser.dat",
     "cookies", "login data", "web data", "local state", "session storage",
     "local storage", "indexeddb", "webstorage", "credentials", "credential",
     "vault", "wallet", "wallets", "secrets", "secret", "tokens", "token",
@@ -585,15 +588,18 @@ def _close_search_job(job: dict) -> None:
     job["iterator"] = None
 
 
-def _cleanup_search_jobs(now: float) -> None:
+def _cleanup_search_jobs(now: float, keep: str = "") -> None:
     expired = [
         key for key, value in _SEARCH_JOBS.items()
         if now - value.get("updated_at", now) > SEARCH_JOB_TTL_SECONDS
     ]
     for key in expired:
         _close_search_job(_SEARCH_JOBS.pop(key, {}))
-    while len(_SEARCH_JOBS) >= MAX_SEARCH_JOBS:
-        oldest = min(_SEARCH_JOBS, key=lambda key: _SEARCH_JOBS[key].get("updated_at", 0))
+    while len(_SEARCH_JOBS) >= MAX_SEARCH_JOBS and len(_SEARCH_JOBS) > (1 if keep else 0):
+        candidates = [key for key in _SEARCH_JOBS if key != keep]
+        if not candidates:
+            break
+        oldest = min(candidates, key=lambda key: _SEARCH_JOBS[key].get("updated_at", 0))
         _close_search_job(_SEARCH_JOBS.pop(oldest, {}))
 
 
@@ -629,7 +635,7 @@ def _search_everywhere(query: str, match: str, cursor: str, limit: int,
 
     with _SEARCH_JOBS_LOCK:
         now = time.monotonic()
-        _cleanup_search_jobs(now)
+        _cleanup_search_jobs(now, keep=cursor)
         if cursor:
             job = _SEARCH_JOBS.get(cursor)
             if job is None:
