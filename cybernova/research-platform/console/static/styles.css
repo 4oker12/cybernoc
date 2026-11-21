@@ -525,6 +525,7 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
 
 /* Compact plus-menu for selecting which tool bundles enter the model context. */
 .composer-area{position:relative}
+.composer-left{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
 .tool-picker-toggle{display:inline-flex;align-items:center;gap:7px;border:1px solid #505b55;
   background:#29332e;color:#dcebe2;border-radius:18px;padding:6px 10px;font-size:11px;
   cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s}
