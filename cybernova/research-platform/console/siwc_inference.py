@@ -315,6 +315,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
             else:
                 result, is_error = tool_runtime.call(
                     name, arguments, authorized_targets=authorized_targets,
+                    user_messages=messages,
                 )
             total_calls += 1
             audit_arguments = dict(arguments)
