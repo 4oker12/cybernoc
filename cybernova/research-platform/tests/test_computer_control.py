@@ -61,7 +61,7 @@ class ComputerControlTests(unittest.TestCase):
             "computer_process_list", "computer_disk_overview",
             "computer_service_overview", "computer_startup_items",
             "computer_list_directory", "computer_search_files",
-            "computer_read_text_file", "computer_open_folder",
+            "computer_search_everywhere", "computer_read_text_file", "computer_open_folder",
             "computer_open_app", "computer_screenshot",
             "computer_ui_windows", "computer_ui_controls", "computer_ui_click",
             "computer_defender_status", "computer_defender_events",
