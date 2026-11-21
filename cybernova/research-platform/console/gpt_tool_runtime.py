@@ -56,7 +56,7 @@ _TOOL_NAMES = frozenset(
 TOOL_GROUPS = (
     {
         "id": "browser", "label": "Chrome", "icon": "globe",
-        "description": "Открывать сайты, читать DOM, переходить по ссылкам, управлять вкладками, историей и DevTools Network.",
+        "description": "Изолированный Chromium: открывать сайты, читать DOM, переходить по ссылкам, управлять вкладками, историей и DevTools Network. Личный профиль Chrome не используется.",
     },
     {
         "id": "computer", "label": "Компьютер", "icon": "monitor",
