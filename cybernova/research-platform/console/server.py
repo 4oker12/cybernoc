@@ -36,7 +36,10 @@ try:
     from .safe_terminal import TERMINAL_TOOLS, safe_terminal
     from .research_web import research_web_call
     from .collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
-    from .gpt_tool_runtime import runtime as gpt_tool_runtime, extract_user_targets
+    from .gpt_tool_runtime import (
+        runtime as gpt_tool_runtime, extract_user_targets,
+        normalize_tool_groups, tool_group_summary,
+    )
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -64,7 +67,10 @@ except ImportError:
     from safe_terminal import TERMINAL_TOOLS, safe_terminal
     from research_web import research_web_call
     from collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
-    from gpt_tool_runtime import runtime as gpt_tool_runtime, extract_user_targets
+    from gpt_tool_runtime import (
+        runtime as gpt_tool_runtime, extract_user_targets,
+        normalize_tool_groups, tool_group_summary,
+    )
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -166,6 +172,7 @@ async def localhost_only(request: Request, call_next):
 class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
     message: str = Field(min_length=1, max_length=10000)
+    tool_groups: list[str] = Field(default_factory=list, max_length=9)
 
 
 class ResearchScopeRequest(BaseModel):
@@ -260,6 +267,7 @@ class ChatGPTMessageRequest(BaseModel):
     thread_id: str | None = Field(default=None, min_length=20, max_length=100)
     model: str = Field(min_length=1, max_length=160)
     message: str = Field(min_length=1, max_length=10000)
+    tool_groups: list[str] = Field(default_factory=list, max_length=9)
 
 
 class ProfileSettingsRequest(BaseModel):
@@ -507,6 +515,10 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
             history = store.context(payload.thread_id) if payload.thread_id else []
             outgoing = history + [{"role": "user", "content": payload.message.strip()}]
             profile = profile_settings_store().load()
+            try:
+                selected_tool_groups = normalize_tool_groups(payload.tool_groups)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
             outcome = chatgpt_chat(
                 payload.model, outgoing,
                 user_context=user_context_for(profile, "chatgpt"),
@@ -514,6 +526,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 tool_runtime=gpt_tool_runtime,
                 authorized_targets=extract_user_targets(outgoing),
                 on_tool_event=persist_tool_event,
+                enabled_tool_groups=selected_tool_groups,
             )
             if user_message_seq is None:
                 thread_id = store.save_exchange(
@@ -543,7 +556,8 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
             }
     return {"thread_id": thread_id, "model": payload.model,
             "answer": outcome["answer"], "source": outcome["source"],
-            "tool_events": outcome.get("tool_events", [])}
+            "tool_events": outcome.get("tool_events", []),
+            "usage": outcome.get("usage")}
 
 
 @app.get("/api/siwc/status")
@@ -639,6 +653,7 @@ def status():
         "model_remote_configured": os.environ.get("CYBERNOVA_LLM_PROVIDER") == "openai_compatible",
         "mcp_ready": mcp_ok,
         "tools": tools,
+        "tool_groups": tool_group_summary(tools),
         "auto_executable": sorted(set(tools) & REVIEWED_TOOLS),
         "others_require_approval": sorted(set(tools) - REVIEWED_TOOLS),
         "tools_selection": "automatic_model",
@@ -649,7 +664,7 @@ def status():
         "traffic_intelligence": "offline_multi_domain_analysis",
         "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
         "browser_network": "isolated_chromium_readonly_metadata",
-        "web_research": {"provider": "Google Search HTML", "tools": ["google_search", "research_source_open"], "mode": "public_read_only", "requires_api_key": False},
+        "web_research": {"provider": "Google HTML with Bing RSS fallback", "tools": ["google_search", "research_source_open"], "mode": "public_read_only", "requires_api_key": False},
         "research_scope": {"type": "owner_selected_per_task", "active_actions": "propose_and_confirm"},
         "browser": {"mode": "readonly_https_html", "configured_hosts": [x.strip() for x in os.environ.get("CYBERNOVA_BROWSER_HOSTS", "").split(",") if x.strip()], "live_javascript": False},
         "lab_scanners": inventory(),
@@ -779,6 +794,10 @@ def chat(payload: ChatRequest):
         store.append(task_id, "human", "instruction", payload.message,
                      status="running")
         try:
+            try:
+                selected_tool_groups = normalize_tool_groups(payload.tool_groups)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
             current_agent = Agent(
                 ollama=agent.ollama,
                 mcp_factory=lambda: CommunicationToolClient(
@@ -795,6 +814,7 @@ def chat(payload: ChatRequest):
                 scope=state["scope"],
                 user_context=user_context_for(profile, "researcher"),
                 profile_instructions=mode_instructions_for(profile, "researcher"),
+                tool_groups=selected_tool_groups,
             )
         except Exception as exc:
             store.append(task_id, "controller", "system",
