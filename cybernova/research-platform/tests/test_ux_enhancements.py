@@ -79,6 +79,15 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn(".tool-batch", css)
         self.assertIn("followup-questions", css)
 
+    def test_terminal_output_clipboard_control_is_available_in_both_chat_modes(self):
+        html = (ROOT / "console/static/index.html").read_text(encoding="utf-8")
+        app = (ROOT / "console/static/app.js").read_text(encoding="utf-8")
+        self.assertIn('id="pasteOutputButton"', html)
+        self.assertIn('navigator.clipboard.readText()', app)
+        self.assertIn('Вывод из терминала:', app)
+        self.assertIn('проверь и нажми Enter', app)
+        self.assertIn('ничего не отправляется автоматически', html)
+
     def test_selection_ask_and_nonblocking_composer_are_present(self):
         ux = (ROOT / "console/static/ux.js").read_text(encoding="utf-8")
         app = (ROOT / "console/static/app.js").read_text(encoding="utf-8")
