@@ -26,10 +26,10 @@ const TOOL_GROUP_GLYPHS={
   security:"⛨",traffic:"≋",developer:"⌘",mcp:"⧉"
 };
 const TOOL_GROUP_FALLBACK=[
-  {id:"browser",label:"Chrome",icon:"globe",description:"Изолированный Chromium: сайты, DOM, ссылки, вкладки, история и DevTools Network. Личный профиль Chrome не используется."},
-  {id:"computer",label:"Компьютер",icon:"monitor",description:"Windows, процессы, службы, файлы, окна и Defender."},
-  {id:"terminal",label:"Терминал",icon:"terminal",description:"Ограниченные read-only команды CMD."},
-  {id:"web",label:"Интернет-поиск",icon:"search",description:"Поиск в интернете, страницы выдачи и открытие первоисточников."},
+  {id:"browser",label:"Chrome / браузер",icon:"globe",description:"Открывать сайты, читать DOM, переходить по ссылкам, создавать вкладки, переключаться между ними, назад/вперёд, обновлять страницы, смотреть Console и DevTools Network."},
+  {id:"computer",label:"Компьютер Windows",icon:"monitor",description:"Состояние ПК: CPU/RAM/диски, процессы и службы, автозагрузка, установленные программы, окна, Defender и локальные файлы."},
+  {id:"terminal",label:"Терминал Windows",icon:"terminal",description:"CMD и PowerShell для ограниченной системной диагностики; команды и операции контролируются политикой безопасности."},
+  {id:"web",label:"Интернет / Research",icon:"search",description:"Искать в интернете, получать выдачу с пагинацией, открывать найденные страницы, читать первоисточники и сопоставлять источники."},
   {id:"network",label:"Сеть / NOC",icon:"network",description:"DNS, TLS, IP, HTTP и сетевые проверки."},
   {id:"security",label:"Security",icon:"shield",description:"Проверки безопасности и лабораторные сканеры."},
   {id:"traffic",label:"Traffic / HAR",icon:"activity",description:"HAR, JavaScript, сессии и сетевые гипотезы."},
@@ -421,13 +421,47 @@ function renderToolPicker(groups){
     icon.setAttribute("aria-hidden","true");
     const copy=node("span","tool-group-copy");
     const title=node("span","tool-group-name",group.label||group.id);
-    title.append(node("span","tool-group-count",count===null?"":String(count)+" функций"));
-    copy.append(title,node("span","tool-group-description",group.description||"Инструменты этой группы."));
+    title.append(node("span","tool-group-count",count===null?"":String(count)+" инструментов"));
+    const scope=node("span","tool-group-description",group.description||"Инструменты этой группы.");
+    const hint=node("span","tool-group-hint",group.id==="browser"?"ВКЛАДКИ · НАВИГАЦИЯ · NETWORK":
+      group.id==="computer"?"WINDOWS · ПРОЦЕССЫ · DEFENDER":
+      group.id==="web"?"ПОИСК · СТРАНИЦЫ · ИСТОЧНИКИ":
+      group.id==="terminal"?"CMD · POWERSHELL · ДИАГНОСТИКА":
+      group.id==="network"?"DNS · TLS · IP · HTTP":"ГРУППА ИНСТРУМЕНТОВ");
+    copy.append(title,scope,hint);
     label.append(icon,copy,input);
     if(!available)label.title="В этой конфигурации группа сейчас не обнаружена";
     container.append(label);
   }
   updateToolPickerSummary();
+}
+function newRunId(){
+  if(window.crypto?.randomUUID)return window.crypto.randomUUID().replace(/-/g,"");
+  return Array.from({length:32},()=>Math.floor(Math.random()*16).toString(16)).join("");
+}
+async function watchUsageProgress(runId){
+  const started=Date.now();
+  while(state.running&&Date.now()-started<180000){
+    await new Promise(resolve=>setTimeout(resolve,650));
+    if(!state.running)break;
+    try{
+      const response=await fetch("/api/usage-progress?run_id="+encodeURIComponent(runId),
+        {cache:"no-store",headers:{"Accept":"application/json"}});
+      if(!response.ok)continue;
+      const progress=await response.json(),usage=progress.usage||{};
+      if(usage.available===true){
+        $("tokenUsageStatus").textContent=
+          (progress.status==="running"?"Сейчас: ":"Последний ход: ")+
+          "вход "+formatTokens(usage.input_tokens)+" · выход "+
+          formatTokens(usage.output_tokens)+" · всего "+formatTokens(usage.total_tokens);
+        $("tokenUsageStatus").title="Промежуточный usage от провайдера "+
+          (usage.provider||"")+". "+(usage.complete===false?"Учёт частичный.":"");
+      }else if(progress.status==="running"){
+        $("tokenUsageStatus").textContent="Модель работает · ждём usage провайдера";
+      }
+      if(progress.status!=="running")break;
+    }catch(_){}
+  }
 }
 async function requestJson(path,data){
   const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -445,10 +479,12 @@ async function send(){
   renderMessage("user",text);
   $("messageInput").value="";
   const pending=renderMessage("assistant",(state.qwenModel||"Модель")+" формирует ответ…",true);
+  const runId=newRunId();
   busy(true);
+  const usageWatch=watchUsageProgress(runId);
   try{
     const result=await requestJson("/api/chat",{
-      session_id:state.sessionId,message:text,tool_groups:state.toolGroups,
+      session_id:state.sessionId,message:text,tool_groups:state.toolGroups,run_id:runId,
     });
     state.sessionId=result.session_id;
     state.taskId=result.task_id||state.taskId;
@@ -480,7 +516,7 @@ async function send(){
     pending.body.textContent="Ошибка: "+String(exc.message||exc);
     $("sendStatus").textContent="Ошибка подключения";
   }finally{
-    busy(false);$("messageInput").focus();toBottom();
+    busy(false);await usageWatch;$("messageInput").focus();toBottom();
   }
 }
 function gptWelcome(){
@@ -587,10 +623,12 @@ async function sendGPT(){
   const userMessage=renderMessage("user",message,false,"gptMessages");
   $("messageInput").value="";
   const pending=renderMessage("chatgpt","ChatGPT формирует ответ…",true,"gptMessages");
+  const runId=newRunId();
   busy(true);
+  const usageWatch=watchUsageProgress(runId);
   try{
     const result=await requestJson("/api/siwc/chat",{
-      thread_id:state.gptThreadId,model,message,tool_groups:state.toolGroups
+      thread_id:state.gptThreadId,model,message,tool_groups:state.toolGroups,run_id:runId
     });
     state.gptThreadId=result.thread_id;
     pending.wrap.classList.remove("working");
@@ -618,7 +656,7 @@ async function sendGPT(){
     pending.wrap.classList.remove("working");
     pending.body.textContent="Ошибка: "+String(err.message||err);
     $("sendStatus").textContent="Ошибка GPT";
-  }finally{busy(false);$("messageInput").focus();toBottom();}
+  }finally{busy(false);await usageWatch;$("messageInput").focus();toBottom();}
 }
 
 function showResearchScope(profile){
