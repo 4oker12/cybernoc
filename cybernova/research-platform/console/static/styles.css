@@ -555,6 +555,14 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
 .tool-group-name{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:650;color:#e7efe9}
 .tool-group-count{font-size:9px;color:#9fb9a7;font-weight:400}
 .tool-group-description{display:block;margin-top:4px;font-size:9px;line-height:1.45;color:#a8b6ad}
+.tool-group-hint{display:inline-flex;margin-top:6px;padding:3px 6px;border:1px solid #40534a;
+  border-radius:5px;background:#202b25;color:#9cc7aa;font-size:8px;letter-spacing:.055em;
+  line-height:1.2;font-weight:650}
+.tool-group-option.selected .tool-group-hint{border-color:#547d63;background:#263b2d;color:#bce3c8}
+.tool-picker-toggle .tool-picker-plus{display:inline-grid;place-items:center;width:17px;height:17px;
+  border:1px solid currentColor;border-radius:5px;font-size:15px;line-height:1;font-weight:500}
+#tokenUsageStatus{font-variant-numeric:tabular-nums;transition:color .15s ease}
+#tokenUsageStatus[title*="Промежуточный"]{color:#9bd3ac}
 .tool-picker-footer{border-top:1px solid #3d4942;padding-top:10px}
 .tool-picker-footer span{font-size:10px;line-height:1.4;color:#aab8af;flex:1}
 .tool-picker-footer .tool-picker-done{font-size:10px}
@@ -584,6 +592,9 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
 :root[data-theme="light"] .tool-group-option.selected{background:#eaf4ed;border-color:#91bba0}
 :root[data-theme="light"] .tool-group-name{color:#2b4034}
 :root[data-theme="light"] .tool-group-description{color:#687a6f}
+:root[data-theme="light"] .tool-group-hint{background:#edf5ef;border-color:#d2e2d7;color:#397354}
+:root[data-theme="light"] .tool-group-option.selected .tool-group-hint{background:#e0f0e5;border-color:#9fc7ab;color:#276144}
+:root[data-theme="light"] #tokenUsageStatus[title*="Промежуточный"]{color:#276144}
 :root[data-theme="light"] .tool-group-icon{background:#e4f0e8;color:#24714e}
 :root[data-theme="light"] .tool-picker-toggle{background:#edf5ef;color:#315b45;border-color:#cbded0}
 :root[data-theme="light"] .tool-selection-badge{background:#dcebe1;color:#276144}
