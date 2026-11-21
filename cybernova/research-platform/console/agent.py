@@ -258,7 +258,8 @@ class Agent:
 
     def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True,
             scope: dict | None = None, user_context: str = "",
-            profile_instructions: str = "", tool_groups: list[str] | None = None) -> dict:
+            profile_instructions: str = "", tool_groups: list[str] | None = None,
+            on_usage=None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
         selected_groups = normalize_tool_groups(tool_groups or [])
@@ -284,6 +285,13 @@ class Agent:
                     measured = True
             if measured:
                 usage_totals["measured_requests"] += 1
+
+        def publish_usage():
+            if callable(on_usage):
+                try:
+                    on_usage(usage_report())
+                except Exception:
+                    pass
 
         def usage_report():
             measured = usage_totals["measured_requests"] > 0
@@ -374,6 +382,7 @@ class Agent:
             for round_no in range(MAX_ROUNDS):
                 result = self.ollama.chat(context, tools if tools and round_no < MAX_ROUNDS - 1 else [])
                 record_usage(result)
+                publish_usage()
                 calls = result.get("tool_calls") or []
                 if (not calls and round_no == 0 and force_tools and tools):
                     # Some derivative models ignore native tool_calls. The
@@ -394,6 +403,7 @@ class Agent:
                           for item in context[-6:] if item["role"] in ("user", "assistant", "tool")],
                     ], json_mode=True)
                     record_usage(candidate)
+                    publish_usage()
                     try:
                         suggested = json.loads(candidate.get("content", "{}")).get("calls", [])
                         if isinstance(suggested, list):
@@ -635,6 +645,7 @@ class Agent:
                                     "content": "Лимит инструментов достигнут. Сформируй итог только из наблюдений."})
                     final = self.ollama.chat(context, [])
                     record_usage(final)
+                    publish_usage()
                     answer = str(final.get("content") or "")
                     if pending_requests:
                         answer += "\n\nДля продолжения нужны отдельные разрешения. "
