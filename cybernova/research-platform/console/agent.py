@@ -128,6 +128,7 @@ class OllamaClient:
     def __init__(self, endpoint: str = OLLAMA_URL, model: str = MODEL, transport=None):
         self.endpoint = endpoint
         self.model = model
+        self.provider = "Ollama"
         self.transport = transport or post_json
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None, *, json_mode=False) -> dict:
@@ -685,11 +686,29 @@ class Agent:
              "Результат: " + json.dumps(result, ensure_ascii=False)[:MAX_RESULT]},
         ]
         message = self.ollama.chat(prompt, [])
+        raw_usage = message.get("_usage") or {}
+        input_tokens = raw_usage.get("input_tokens")
+        output_tokens = raw_usage.get("output_tokens")
+        measured = (type(input_tokens) is int and input_tokens >= 0) or (
+            type(output_tokens) is int and output_tokens >= 0
+        )
+        usage = {
+            "available": measured,
+            "input_tokens": input_tokens if type(input_tokens) is int and input_tokens >= 0 else None,
+            "output_tokens": output_tokens if type(output_tokens) is int and output_tokens >= 0 else None,
+            "total_tokens": (
+                (input_tokens if type(input_tokens) is int and input_tokens >= 0 else 0) +
+                (output_tokens if type(output_tokens) is int and output_tokens >= 0 else 0)
+            ) if measured else None,
+            "requests": 1, "measured_requests": 1 if measured else 0,
+            "complete": measured, "provider": getattr(self.ollama, "provider", "Configured LLM"),
+        }
         return {
             "answer": str(message.get("content") or "Результат получен, пояснение отсутствует."),
             "tool_calls": 1,
             "selected_by": "user_approved",
             "model": self.ollama.model,
+            "usage": usage,
             "events": [{
                 "type": "approved_tool_result", "name": name,
                 "arguments": safe_preview(args),
