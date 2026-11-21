@@ -55,20 +55,20 @@ _TOOL_NAMES = frozenset(
 # catalog; an explicit selection exposes only the chosen groups to the model.
 TOOL_GROUPS = (
     {
-        "id": "browser", "label": "Chrome", "icon": "globe",
-        "description": "Изолированный Chromium: открывать сайты, читать DOM, переходить по ссылкам, управлять вкладками, историей и DevTools Network. Личный профиль Chrome не используется.",
+        "id": "browser", "label": "Chrome / браузер", "icon": "globe",
+        "description": "Изолированный Chromium: открывать сайты, читать DOM, переходить по ссылкам, создавать и переключать вкладки, назад/вперёд, обновлять страницы, читать Console и DevTools Network. Личный профиль Chrome не используется.",
     },
     {
-        "id": "computer", "label": "Компьютер", "icon": "monitor",
-        "description": "Windows: процессы, службы, диски, файлы, окна, автозагрузка и Microsoft Defender.",
+        "id": "computer", "label": "Компьютер Windows", "icon": "monitor",
+        "description": "Состояние ПК: CPU/RAM/диски, процессы и службы, автозагрузка, установленные программы, окна, Microsoft Defender и локальные файлы.",
     },
     {
-        "id": "terminal", "label": "Терминал", "icon": "terminal",
-        "description": "Ограниченные read-only команды CMD и системная диагностика.",
+        "id": "terminal", "label": "Терминал Windows", "icon": "terminal",
+        "description": "CMD и PowerShell для системной диагностики; команды и операции ограничиваются политикой безопасности.",
     },
     {
-        "id": "web", "label": "Интернет-поиск", "icon": "search",
-        "description": "Искать в интернете, листать выдачу и открывать найденные первоисточники.",
+        "id": "web", "label": "Интернет / Research", "icon": "search",
+        "description": "Искать в интернете, получать выдачу с пагинацией, открывать найденные страницы, читать первоисточники и сопоставлять источники.",
     },
     {
         "id": "network", "label": "Сеть / NOC", "icon": "network",
