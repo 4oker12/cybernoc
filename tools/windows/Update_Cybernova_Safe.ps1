@@ -41,7 +41,7 @@ function PortOwners {
             PythonModule = $moduleName
         }
     }
-    return @($owners)
+    return $owners
 }
 
 try {
@@ -59,8 +59,8 @@ try {
     if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { throw 'GIT_EXE_NOT_FOUND' }
 
     $top = GitValue @('rev-parse', '--show-toplevel')
-    $expected = [System.IO.Path]::GetFullPath($repo).TrimEnd('\','/')
-    $actual = [System.IO.Path]::GetFullPath($top).TrimEnd('\','/')
+    $expected = [System.IO.Path]::GetFullPath($repo).TrimEnd([char[]]@('\','/'))
+    $actual = [System.IO.Path]::GetFullPath($top).TrimEnd([char[]]@('\','/'))
     if ($expected -ine $actual) { throw ("WRONG_REPOSITORY: {0}" -f $actual) }
 
     $branch = GitValue @('branch', '--show-current')
