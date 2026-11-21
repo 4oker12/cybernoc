@@ -252,7 +252,8 @@ def _response_once(model: str, instructions: str, input_items: list[dict],
 def chat(model: str, messages: list[dict], *, user_context: str = "",
          profile_instructions: str = "", tool_runtime=None,
          authorized_targets: set[str] | None = None,
-         on_tool_event=None, enabled_tool_groups: list[str] | None = None) -> dict:
+         on_tool_event=None, enabled_tool_groups: list[str] | None = None,
+         on_usage=None) -> dict:
     """Stateless Responses API loop with Account GPT-only local tools.
 
     The complete input history and function-call/output items are sent on every
@@ -349,6 +350,13 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
         if measured:
             usage_totals["measured_requests"] += 1
 
+    def publish_usage():
+        if callable(on_usage):
+            try:
+                on_usage(usage_report())
+            except Exception:
+                pass
+
     def usage_report():
         measured = usage_totals["measured_requests"] > 0
         return {
@@ -370,6 +378,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
             model, instructions, input_items, token, tools=tools,
         )
         record_usage(response)
+        publish_usage()
         output = response["output"]
         calls = [
             item for item in output
