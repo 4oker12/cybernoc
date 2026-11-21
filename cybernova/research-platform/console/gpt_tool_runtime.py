@@ -51,6 +51,105 @@ _TOOL_NAMES = frozenset(
     "terminal_run", "terminal_status",
 } | COMPUTER_TOOL_NAMES
 
+# Composer tool bundles. Empty selection means automatic access to the full
+# catalog; an explicit selection exposes only the chosen groups to the model.
+TOOL_GROUPS = (
+    {
+        "id": "browser", "label": "Chrome", "icon": "globe",
+        "description": "Открывать сайты, читать DOM, переходить по ссылкам, управлять вкладками, историей и DevTools Network.",
+    },
+    {
+        "id": "computer", "label": "Компьютер", "icon": "monitor",
+        "description": "Windows: процессы, службы, диски, файлы, окна, автозагрузка и Microsoft Defender.",
+    },
+    {
+        "id": "terminal", "label": "Терминал", "icon": "terminal",
+        "description": "Ограниченные read-only команды CMD и системная диагностика.",
+    },
+    {
+        "id": "web", "label": "Интернет-поиск", "icon": "search",
+        "description": "Искать в интернете, листать выдачу и открывать найденные первоисточники.",
+    },
+    {
+        "id": "network", "label": "Сеть / NOC", "icon": "network",
+        "description": "DNS, TLS, IP, HTTP, шлюзы и сетевые проверки в заданном scope.",
+    },
+    {
+        "id": "security", "label": "Security", "icon": "shield",
+        "description": "Проверки безопасности и доступные лабораторные сканеры.",
+    },
+    {
+        "id": "traffic", "label": "Traffic / HAR", "icon": "activity",
+        "description": "Анализ HAR, JavaScript, сессий, графов и сетевых гипотез.",
+    },
+    {
+        "id": "developer", "label": "Разработка", "icon": "code",
+        "description": "Работа с workspace, Git, файлами проекта, тестами и изменениями кода.",
+    },
+    {
+        "id": "mcp", "label": "MCP / прочее", "icon": "plug",
+        "description": "Подключённые MCP-сервисы и инструменты координации Cybernova.",
+    },
+)
+TOOL_GROUP_IDS = frozenset(item["id"] for item in TOOL_GROUPS)
+
+
+def normalize_tool_groups(groups=None) -> list[str]:
+    if groups is None:
+        return []
+    if not isinstance(groups, (list, tuple)) or len(groups) > len(TOOL_GROUPS):
+        raise ValueError("tool_groups_invalid")
+    normalized = []
+    for group in groups:
+        if not isinstance(group, str) or group not in TOOL_GROUP_IDS:
+            raise ValueError("tool_group_unknown")
+        if group not in normalized:
+            normalized.append(group)
+    return normalized
+
+
+def tool_group_for_name(name: str) -> str:
+    if name.startswith("browser_"):
+        return "browser"
+    if name.startswith("computer_"):
+        return "computer"
+    if name.startswith("terminal_") or name == "safe_terminal":
+        return "terminal"
+    if name in {"google_search", "research_source_open"}:
+        return "web"
+    if name.startswith(("scoped_", "domain_", "network_")) or name in {
+        "http_get", "http_header_review", "ip_network_summary",
+        "gateway_status", "local_webui_health",
+    }:
+        return "network"
+    if name.startswith("scanner_") or name == "python_static_review":
+        return "security"
+    if name.startswith("traffic_"):
+        return "traffic"
+    if name.startswith("dev_"):
+        return "developer"
+    return "mcp"
+
+
+def filter_tool_rows(rows, groups=None) -> list[dict]:
+    selected = set(normalize_tool_groups(groups))
+    safe_rows = [row for row in rows if isinstance(row, dict)
+                 and isinstance(row.get("name"), str)]
+    if not selected:
+        return safe_rows
+    return [row for row in safe_rows if tool_group_for_name(row["name"]) in selected]
+
+
+def tool_group_summary(tool_names) -> list[dict]:
+    names = {name for name in tool_names if isinstance(name, str)}
+    counts = {group["id"]: 0 for group in TOOL_GROUPS}
+    for name in names:
+        counts[tool_group_for_name(name)] += 1
+    return [
+        {**group, "count": counts[group["id"]], "available": counts[group["id"]] > 0}
+        for group in TOOL_GROUPS
+    ]
+
 
 def extract_user_targets(messages: list[dict]) -> set[str]:
     """Only allow active host checks against targets explicitly named by the user."""
@@ -375,18 +474,26 @@ class GPTToolRuntime:
         self.tools = build_tool_catalog()
         self.tool_map = {item["name"]: item for item in self.tools}
 
-    def mcp_tools(self) -> list[dict]:
-        """Expose the exact same local tool catalog to MCP/Ollama-style agents."""
+    def tools_for_groups(self, groups=None) -> list[dict]:
+        """Return the full catalog or only explicitly selected tool bundles."""
+        return filter_tool_rows(self.tools, groups)
+
+    def mcp_tools(self, groups=None) -> list[dict]:
+        """Expose the same selected local tool catalog to MCP/Ollama-style agents."""
         return [
             {
                 "name": item["name"],
                 "description": item["description"],
                 "inputSchema": item["parameters"],
             }
-            for item in self.tools
+            for item in self.tools_for_groups(groups)
         ]
 
-    def call(self, name: str, args: dict, *, authorized_targets=None, user_messages=None) -> tuple[dict, bool]:
+    def call(self, name: str, args: dict, *, authorized_targets=None,
+             user_messages=None, enabled_groups=None) -> tuple[dict, bool]:
+        selected = set(normalize_tool_groups(enabled_groups))
+        if selected and tool_group_for_name(name) not in selected:
+            return {"ok": False, "error": "tool_group_not_enabled"}, True
         if name not in _TOOL_NAMES or name not in self.tool_map:
             return {"ok": False, "error": "gpt_tool_not_registered"}, True
         if not isinstance(args, dict):
