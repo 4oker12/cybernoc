@@ -14,6 +14,7 @@ import io
 import os
 import platform
 import re
+import secrets
 import shutil
 import subprocess
 import time
@@ -21,6 +22,7 @@ import tarfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from threading import RLock
 
 try:
     import psutil
@@ -30,6 +32,11 @@ except ImportError:  # surfaced as a clear runtime capability error
 MAX_ENTRIES = 100
 MAX_SEARCH_HITS = 60
 MAX_SEARCH_VISITS = 5000
+MAX_SEARCH_PAGE_VISITS = 12000
+MAX_SEARCH_PAGE_RESULTS = 100
+MAX_SEARCH_JOBS = 12
+SEARCH_JOB_TTL_SECONDS = 1800
+SEARCH_CONTENT_BYTES = 1_000_000
 MAX_FILE_BYTES = 250_000
 MAX_TEXT_CHARS = 12_000
 
@@ -124,6 +131,14 @@ COMPUTER_TOOLS = [
           "Search filenames (not file contents) beneath one approved local directory. Hidden, sensitive and symlinked folders are skipped; traversal is bounded.",
           {"root": STRING, "pattern": STRING,
            "limit": {**INTEGER, "description": "Maximum matches, 1 to 60"}}, ["root", "pattern", "limit"]),
+    _tool("computer_search_everywhere",
+          "Search all mounted local drives recursively for file and folder names, paths, or text inside supported text files. Uses a continuation cursor: keep calling with the returned cursor until complete=true. Skips credential stores, browser authentication databases, private keys, secret-like filenames, symlinks and junctions; does not execute files.",
+          {"query": {**STRING, "description": "Case-insensitive text or filename fragment to find, 1 to 200 characters"},
+           "match": {"type": "string", "enum": ["name", "path", "content"]},
+           "cursor": {**STRING, "description": "Empty string to start; pass the returned cursor unchanged to continue"},
+           "limit": {**INTEGER, "description": "Maximum matches returned per page, 1 to 100"},
+           "include_hidden": {"type": "boolean", "description": "Set true for exhaustive searches that include hidden files and folders"}},
+          ["query", "match", "cursor", "limit", "include_hidden"]),
     _tool("computer_read_text_file",
           "Read a small text/log/config file from an approved local directory. Sensitive paths and secret-like filenames are blocked; common secrets and email addresses are redacted.",
           {"path": STRING,
@@ -192,6 +207,16 @@ COMPUTER_TOOLS = [
 COMPUTER_TOOL_NAMES = frozenset(item["name"] for item in COMPUTER_TOOLS)
 
 _SCAN_JOBS: dict[int, dict] = {}
+_SEARCH_JOBS: dict[str, dict] = {}
+_SEARCH_JOBS_LOCK = RLock()
+_SEARCH_BLOCKED_COMPONENTS = {
+    ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker",
+    "cookies", "login data", "web data", "local state", "session storage",
+    "local storage", "indexeddb", "webstorage", "credentials", "credential",
+    "vault", "wallet", "wallets", "secrets", "secret", "tokens", "token",
+    "sam", "security", "system", "crypto", "cryptography", "protect",
+    "gpt-chromium-profile", "model_api_key",
+} {}
 
 
 def _redact(value: str) -> str:
@@ -511,6 +536,220 @@ def _search_files(root_raw: str, pattern: str, limit: int) -> dict:
                         "hits": hits, "truncated": True, "visited": visited}
     return {"ok": True, "root": str(root), "pattern": pattern,
             "hits": hits, "truncated": False, "visited": visited}
+
+
+
+def _search_roots() -> list[Path]:
+    """Return mounted local drive roots, not network shares."""
+    _windows_only()
+    roots: list[Path] = []
+    if psutil is not None:
+        try:
+            for part in psutil.disk_partitions(all=False):
+                mount = str(part.mountpoint or "")
+                if not re.fullmatch(r"(?i)[a-z]:\\?", mount):
+                    continue
+                candidate = Path(mount)
+                try:
+                    resolved = candidate.resolve(strict=True)
+                    if resolved.is_dir() and resolved not in roots:
+                        roots.append(resolved)
+                except OSError:
+                    continue
+        except Exception:
+            pass
+    if not roots:
+        roots = _roots()
+    return roots
+
+
+def _search_hidden(entry, stat) -> bool:
+    if entry.name.startswith("."):
+        return True
+    attributes = getattr(stat, "st_file_attributes", 0)
+    return bool(attributes & 0x2)
+
+
+def _search_component_blocked(name: str) -> bool:
+    lowered = name.casefold()
+    return lowered in _SEARCH_BLOCKED_COMPONENTS or bool(SENSITIVE_NAME.search(name))
+
+
+def _close_search_job(job: dict) -> None:
+    iterator = job.get("iterator")
+    if iterator is not None:
+        try:
+            iterator.close()
+        except Exception:
+            pass
+    job["iterator"] = None
+
+
+def _cleanup_search_jobs(now: float) -> None:
+    expired = [
+        key for key, value in _SEARCH_JOBS.items()
+        if now - value.get("updated_at", now) > SEARCH_JOB_TTL_SECONDS
+    ]
+    for key in expired:
+        _close_search_job(_SEARCH_JOBS.pop(key, {}))
+    while len(_SEARCH_JOBS) >= MAX_SEARCH_JOBS:
+        oldest = min(_SEARCH_JOBS, key=lambda key: _SEARCH_JOBS[key].get("updated_at", 0))
+        _close_search_job(_SEARCH_JOBS.pop(oldest, {}))
+
+
+def _search_content_match(path: Path, query: str, size_bytes: int) -> str | None:
+    if path.suffix.casefold() not in TEXT_EXTENSIONS or size_bytes > SEARCH_CONTENT_BYTES:
+        return None
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, UnicodeError):
+        return None
+    index = content.casefold().find(query.casefold())
+    if index < 0:
+        return None
+    start = max(0, index - 100)
+    end = min(len(content), index + len(query) + 180)
+    snippet = _redact(content[start:end]).replace("\r", " ").replace("\n", " ")
+    return snippet[:320]
+
+
+def _search_everywhere(query: str, match: str, cursor: str, limit: int,
+                       include_hidden: bool) -> dict:
+    _windows_only()
+    if not isinstance(query, str) or not 1 <= len(query.strip()) <= 200:
+        raise ValueError("computer_global_search_query_invalid")
+    query = query.strip()
+    if match not in {"name", "path", "content"}:
+        raise ValueError("computer_global_search_match_invalid")
+    if not isinstance(cursor, str) or len(cursor) > 120:
+        raise ValueError("computer_global_search_cursor_invalid")
+    if type(include_hidden) is not bool:
+        raise ValueError("computer_global_search_hidden_flag_invalid")
+    limit = max(1, min(int(limit), MAX_SEARCH_PAGE_RESULTS))
+
+    with _SEARCH_JOBS_LOCK:
+        now = time.monotonic()
+        _cleanup_search_jobs(now)
+        if cursor:
+            job = _SEARCH_JOBS.get(cursor)
+            if job is None:
+                raise ValueError("computer_global_search_cursor_expired_or_unknown")
+            if job["query"] != query or job["match"] != match or job["include_hidden"] != include_hidden:
+                raise ValueError("computer_global_search_cursor_parameters_changed")
+        else:
+            roots = _search_roots()
+            if not roots:
+                raise ValueError("computer_global_search_no_local_drives")
+            job_id = secrets.token_urlsafe(18)
+            job = {
+                "query": query, "match": match, "include_hidden": include_hidden,
+                "roots": [str(item) for item in roots],
+                "queue": [str(item) for item in reversed(roots)],
+                "iterator": None, "current_dir": None,
+                "visited_entries": 0, "visited_directories": 0,
+                "skipped_errors": 0, "created_at": now, "updated_at": now,
+            }
+            _SEARCH_JOBS[job_id] = job
+            cursor = job_id
+
+        hits = []
+        page_visits = 0
+        complete = False
+        while page_visits < MAX_SEARCH_PAGE_VISITS and len(hits) < limit:
+            iterator = job.get("iterator")
+            if iterator is None:
+                if not job["queue"]:
+                    complete = True
+                    break
+                current_dir = job["queue"].pop()
+                try:
+                    iterator = os.scandir(current_dir)
+                    job["iterator"] = iterator
+                    job["current_dir"] = current_dir
+                    job["visited_directories"] += 1
+                except OSError:
+                    job["skipped_errors"] += 1
+                    continue
+            try:
+                entry = next(iterator)
+            except StopIteration:
+                _close_search_job(job)
+                continue
+            except OSError:
+                job["skipped_errors"] += 1
+                _close_search_job(job)
+                continue
+
+            page_visits += 1
+            job["visited_entries"] += 1
+            try:
+                if entry.is_symlink():
+                    continue
+                stat = entry.stat(follow_symlinks=False)
+                is_dir = entry.is_dir(follow_symlinks=False)
+                if _search_hidden(entry, stat) and not include_hidden:
+                    continue
+                if _search_component_blocked(entry.name):
+                    continue
+                item_path = Path(entry.path)
+                if is_dir:
+                    if getattr(item_path, "is_junction", lambda: False)():
+                        continue
+                    job["queue"].append(str(item_path))
+                    matched = (
+                        query.casefold() in entry.name.casefold()
+                        if match == "name"
+                        else query.casefold() in str(item_path).casefold()
+                        if match == "path" else False
+                    )
+                elif match == "name":
+                    matched = query.casefold() in entry.name.casefold()
+                elif match == "path":
+                    matched = query.casefold() in str(item_path).casefold()
+                else:
+                    matched = False
+                snippet = None
+                if not is_dir and match == "content":
+                    snippet = _search_content_match(item_path, query, stat.st_size)
+                    matched = snippet is not None
+                if matched:
+                    row = {
+                        "path": str(item_path),
+                        "name": entry.name[:200],
+                        "type": "directory" if is_dir else "file",
+                        "size_bytes": None if is_dir else stat.st_size,
+                        "modified_local": datetime.fromtimestamp(
+                            stat.st_mtime, timezone.utc
+                        ).astimezone().isoformat(timespec="seconds"),
+                    }
+                    if snippet is not None:
+                        row["snippet"] = snippet
+                    hits.append(row)
+            except (OSError, PermissionError, ValueError):
+                job["skipped_errors"] += 1
+                continue
+
+        if not job["queue"] and job.get("iterator") is None:
+            complete = True
+        job["updated_at"] = time.monotonic()
+        total = {
+            "visited_entries": job["visited_entries"],
+            "visited_directories": job["visited_directories"],
+            "skipped_errors": job["skipped_errors"],
+        }
+        roots = job["roots"]
+        if complete:
+            _close_search_job(job)
+            _SEARCH_JOBS.pop(cursor, None)
+            next_cursor = ""
+        else:
+            next_cursor = cursor
+        return {
+            "ok": True, "query": query, "match": match, "roots": roots,
+            "matches": hits, "cursor": next_cursor, "complete": complete,
+            "page_entries_scanned": page_visits, **total,
+            "continuation_required": not complete,
+        }
 
 
 def _read_text_file(path_raw: str, max_chars: int) -> dict:
@@ -1454,6 +1693,13 @@ def computer_control_call(name: str, args: dict, *, user_messages=None) -> tuple
             if set(args) != {"root", "pattern", "limit"}:
                 raise ValueError("computer_search_files_arguments_invalid")
             return _search_files(args["root"], args["pattern"], args["limit"]), False
+        if name == "computer_search_everywhere":
+            if set(args) != {"query", "match", "cursor", "limit", "include_hidden"}:
+                raise ValueError("computer_search_everywhere_arguments_invalid")
+            return _search_everywhere(
+                args["query"], args["match"], args["cursor"],
+                args["limit"], args["include_hidden"],
+            ), False
         if name == "computer_read_text_file":
             if set(args) != {"path", "max_chars"}:
                 raise ValueError("computer_read_text_file_arguments_invalid")
