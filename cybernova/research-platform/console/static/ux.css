@@ -243,3 +243,35 @@ html.model-running #sendStatus::before {
   .model-config-grid { grid-template-columns: 1fr; }
   .tool-batch > summary { align-items: flex-start; }
 }
+
+ 
+/* One-click clipboard intake for terminal output. Paste only; sending remains explicit. */
+.paste-output-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #48685a;
+  border-radius: 18px;
+  padding: 6px 10px;
+  background: #25362f;
+  color: #d9eee3;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.paste-output-button:hover {
+  background: #30483d;
+  border-color: #80ad96;
+}
+.paste-output-button:focus-visible {
+  outline: 2px solid #80ad96;
+  outline-offset: 2px;
+}
+.paste-output-button:disabled {
+  opacity: .5;
+  cursor: wait;
+}
+@media(max-width:680px) {
+  .paste-output-button { padding: 6px 8px; font-size: 10px; }
+}
