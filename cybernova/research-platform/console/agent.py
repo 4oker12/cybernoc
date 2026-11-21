@@ -291,7 +291,9 @@ class Agent:
         local_names = {row["name"] for row in local_rows}
         combined_rows = local_rows + [
             row for row in remote_rows
-            if isinstance(row, dict) and row.get("name") not in local_names
+            if isinstance(row, dict)
+            and row.get("name") not in local_names
+            and not (self.local_tool_runtime is not None and row.get("name") == "browser_open")
         ]
         try:
             registered = discovered_tools(combined_rows)
