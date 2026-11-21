@@ -59,7 +59,7 @@ BROWSER_CONTROL_TOOLS = [
           "Find a literal phrase in visible page content. Returns bounded matching snippets, their nearest heading context and scan coverage. This reads the current page only; it does not navigate, click or submit.",
           {"query": {**STRING, "description": "Literal phrase to find in visible page text; 2 to 180 characters"},
            "max_matches": {"type": "integer", "minimum": 1, "maximum": 10,
-                           "description": "Maximum matching snippets to return; defaults to 8"}}, ["query"]),
+                           "description": "Maximum matching snippets to return, from 1 to 10"}}, ["query", "max_matches"]),
     _tool("browser_follow_link",
           "Follow one visible link by its exact accessible name in the current page. This is navigation only; it does not submit forms.",
           {"name": {**STRING, "description": "Exact visible/accessibility name of one link"}}, ["name"]),
