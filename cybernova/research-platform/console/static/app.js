@@ -152,6 +152,7 @@ async function decideAction(requestId,decision,card){
     if(decision==="approve"){
       state.turns=reply.turn||state.turns+1;
       const result=renderMessage("assistant",reply.answer||"Вызов завершён.");
+      recordUsage(reply.usage,"qwen",result);
       showEvents(reply.events,reply.tool_calls,reply.selected_by,result);
       void loadFollowups(state.sessionId,state.turns,result);
     }else{
@@ -318,6 +319,11 @@ function busy(on){
   $("modeChatGPT").disabled=on;
   $("modeCollab").disabled=on;
   $("gptTopModel").disabled=on||!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
+}
+function resetUsage(mode){
+  state.usageTotals[mode]={input:0,output:0,total:0,measuredTurns:0};
+  state.lastUsage[mode]=null;
+  if(state.mode===mode)$("tokenUsageStatus").textContent="Токены: —";
 }
 function formatTokens(value){
   return Number.isSafeInteger(value)&&value>=0?new Intl.NumberFormat("ru-RU").format(value):"—";
@@ -513,6 +519,7 @@ function setMode(mode){
   $("sidebar").classList.remove("open");
   if(gpt)void refreshGPTThreads();
   if(collab)void refreshCollabRuns();
+  if(!collab)updateTokenUsageStatus(mode);
   toBottom();
 }
 async function refreshGPTThreads(){
@@ -542,6 +549,7 @@ async function openGPTThread(threadId){
     const data=await response.json();
     if(!response.ok)throw Error(data.detail||"Не удалось загрузить диалог");
     state.gptThreadId=threadId;
+    resetUsage("gpt");
     $("gptMessages").replaceChildren();
     const savedToolEvents=data.tool_events||[];
     for(const m of data.messages||[]){
@@ -564,6 +572,7 @@ async function openGPTThread(threadId){
 async function sendGPT(){
   const message=$("messageInput").value.trim();
   if(!message||state.running)return;
+  if(!state.gptThreadId)resetUsage("gpt");
   if(!state.gptConnected||!state.gptPlanUsage){
     $("sendStatus").textContent="Открой «Аккаунт GPT» и подключи ChatGPT.";
     return;
@@ -1040,6 +1049,7 @@ async function reset(){
   }
   if(state.mode==="gpt"){
     state.gptThreadId=null;
+    resetUsage("gpt");
     gptWelcome();
     $("messageInput").value="";
     $("sendStatus").textContent="Новый чат GPT";
@@ -1054,6 +1064,7 @@ async function reset(){
   }
   state.sessionId=null;
   state.taskId=null;
+  resetUsage("qwen");
   showResearchScope({hosts:[],capture_detail:"evidence"});
   lastGptReview=null;
   $("chatgptReview").disabled=true;
