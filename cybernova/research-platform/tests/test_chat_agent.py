@@ -11,6 +11,7 @@ from console.agent import (
     Agent, _arguments, _allowed_http, _safe_args, _tool_schema,
     BackendError, MCPClient, OllamaClient, BASE_SYSTEM,
 )
+from console.model_providers import OpenAICompatibleClient
 
 TOOLS = [
     {"name": "gateway_status", "description": "Status", "inputSchema": {"type": "object", "properties": {}}},
@@ -171,6 +172,21 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["_usage"]["output_tokens"], 9)
         self.assertEqual(result["_usage"]["total_tokens"], 50)
         self.assertEqual(result["_usage"]["provider"], "Ollama")
+
+    def test_openai_compatible_client_captures_usage_fields(self):
+        client = OpenAICompatibleClient(
+            base_url="http://127.0.0.1:12345/v1/chat/completions",
+            model="test-model", api_key="",
+            transport=lambda *_: {
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 77, "completion_tokens": 13, "total_tokens": 90},
+            },
+        )
+        result = client.chat([{"role": "user", "content": "test"}])
+        self.assertEqual(result["_usage"]["input_tokens"], 77)
+        self.assertEqual(result["_usage"]["output_tokens"], 13)
+        self.assertEqual(result["_usage"]["total_tokens"], 90)
+        self.assertEqual(result["_usage"]["provider"], "OpenAI-compatible")
 
     def test_agent_reports_actual_token_usage_across_model_rounds(self):
         first = calls(("ip_network_summary", {"cidr": "192.0.2.7/24"}))
