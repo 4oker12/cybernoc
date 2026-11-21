@@ -12,10 +12,10 @@ from pathlib import Path
 
 try:
     from .agent import OLLAMA_URL, OllamaClient
-    from .model_providers import OpenAICompatibleClient
+    from .model_providers import ModelConfigError, OpenAICompatibleClient
 except ImportError:
     from agent import OLLAMA_URL, OllamaClient
-    from model_providers import OpenAICompatibleClient
+    from model_providers import ModelConfigError, OpenAICompatibleClient
 
 _VALID_MODEL = re.compile(r"^[A-Za-z0-9_.:/+-]{1,160}$")
 _ALLOWED_ENV = frozenset({
@@ -174,9 +174,12 @@ def apply_model_settings(payload: dict):
             raise ModelSettingsError("llm_base_url_required")
         # Constructor validates HTTPS, URL shape, model and remote key without
         # making a network request or disclosing the supplied credential.
-        client = OpenAICompatibleClient(
-            base_url=base_url.strip(), model=model, api_key=next_key,
-        )
+        try:
+            client = OpenAICompatibleClient(
+                base_url=base_url.strip(), model=model, api_key=next_key,
+            )
+        except ModelConfigError as exc:
+            raise ModelSettingsError(str(exc)) from None
         base_url = base_url.strip()
     else:
         if base_url.strip():
@@ -198,7 +201,10 @@ def apply_model_settings(payload: dict):
         raise ModelSettingsError("runtime_configuration_too_large")
 
     previous_key = old_key
-    key_changed = clear_api_key or bool(api_key)
+    inline_key = os.environ.get("CYBERNOVA_LLM_API_KEY", "").strip()
+    key_changed = clear_api_key or bool(api_key) or (
+        provider == "openai_compatible" and not old_key and bool(inline_key)
+    )
     try:
         if key_changed:
             if next_key:
