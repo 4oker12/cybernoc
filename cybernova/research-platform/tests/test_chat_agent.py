@@ -161,6 +161,17 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(out["tool_calls"], 1)
         self.assertEqual(local.calls[0][0], "computer_system_overview")
 
+    def test_ollama_client_captures_provider_token_counters(self):
+        client = OllamaClient(transport=lambda *_: {
+            "message": {"role": "assistant", "content": "ok"},
+            "prompt_eval_count": 41, "eval_count": 9,
+        })
+        result = client.chat([{"role": "user", "content": "test"}])
+        self.assertEqual(result["_usage"]["input_tokens"], 41)
+        self.assertEqual(result["_usage"]["output_tokens"], 9)
+        self.assertEqual(result["_usage"]["total_tokens"], 50)
+        self.assertEqual(result["_usage"]["provider"], "Ollama")
+
     def test_agent_reports_actual_token_usage_across_model_rounds(self):
         first = calls(("ip_network_summary", {"cidr": "192.0.2.7/24"}))
         first["_usage"] = {"input_tokens": 120, "output_tokens": 15}
