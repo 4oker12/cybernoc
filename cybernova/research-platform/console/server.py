@@ -853,6 +853,7 @@ def approve(payload: ApprovalRequest):
                 mcp_factory=lambda: CommunicationToolClient(
                     TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
                     communication_store(), state["task_id"]),
+                local_tool_runtime=gpt_tool_runtime,
             )
             result = current_agent.execute_approved(item, state["history"])
         except Exception as exc:
