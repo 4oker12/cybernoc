@@ -35,7 +35,7 @@ MCP_URL = os.environ.get("CYBERNOVA_MCP_URL", "http://127.0.0.1:18792/mcp")
 MODEL = os.environ.get("CYBERNOVA_MODEL", "cybernova-security:30b")
 MAX_ROUNDS = 16
 MAX_CALLS = 32
-MAX_HTTP_GETS = 12
+MAX_HTTP_GETS = 3
 MAX_PROMPT = 10000
 MAX_RESULT = 12000
 APPROVAL_TTL_SECONDS = 3600
@@ -389,16 +389,18 @@ class Agent:
                         r"(?i)(?:открой|исследуй|изучи|проверь|проанализируй|собери|network|devtools|браузер|сайт)",
                         text))
                     if selected_url and browser_intent and round_no == 0:
-                        # First navigate to the requested page. The model can
-                        # then call browser_snapshot/browser_network with their
-                        # exact no-argument schemas in the next tool round.
-                        chosen = (
-                            "browser_navigate" if "browser_navigate" in descriptors
-                            else "browser_open"
-                        )
+                        # Prefer the shared Playwright navigator when present.
+                        # Legacy MCP-only agents retain their browser_network/open
+                        # fallback and its existing URL argument contract.
+                        if self.local_tool_runtime is not None and "browser_navigate" in descriptors:
+                            chosen, chosen_args = "browser_navigate", {"url": selected_url}
+                        elif "browser_network" in descriptors:
+                            chosen, chosen_args = "browser_network", {"url": selected_url}
+                        else:
+                            chosen, chosen_args = "browser_open", {"url": selected_url}
                         if chosen in descriptors:
                             observed, error_flag = self._call_registered_tool(
-                                chosen, {"url": selected_url}, mcp=mcp,
+                                chosen, chosen_args, mcp=mcp,
                                 authorized_targets=authorized_targets,
                                 user_messages=task_messages,
                             )
