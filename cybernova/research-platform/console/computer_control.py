@@ -671,9 +671,13 @@ def extract_user_computer_approvals(messages) -> set[str]:
     context = latest + " " + previous_assistant
     if not re.search(r"(defender|антивирус|вирус|защит[аы]|malware)", context):
         return set()
-    if re.search(r"(полную|полный|full)\s*(провер|скан|scan)", latest):
+    affirmative_only = bool(re.fullmatch(
+        r"\s*(да|yes|подтверждаю|разрешаю)[!. ]*\s*", latest
+    ))
+    scan_context = latest + (" " + previous_assistant if affirmative_only else "")
+    if re.search(r"(полную|полный|full)\s*(провер|скан|scan)", scan_context):
         return {"defender_full_scan"}
-    if re.search(r"(быструю|быстрый|quick)\s*(провер|скан|scan)", latest):
+    if re.search(r"(быструю|быстрый|quick)\s*(провер|скан|scan)", scan_context):
         return {"defender_quick_scan"}
     if re.search(r"(провер|скан|scan)", latest):
         return {"defender_quick_scan"}
