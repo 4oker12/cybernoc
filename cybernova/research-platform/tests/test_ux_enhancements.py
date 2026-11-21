@@ -79,6 +79,23 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn(".tool-batch", css)
         self.assertIn("followup-questions", css)
 
+    def test_chatgpt_terminal_paste_extension_is_scoped_and_clipboard_only(self):
+        import json
+        extension = ROOT.parents[1] / "tools" / "chatgpt-terminal-paste"
+        manifest = json.loads((extension / "manifest.json").read_text(encoding="utf-8"))
+        script = (extension / "content.js").read_text(encoding="utf-8")
+        self.assertEqual(manifest["manifest_version"], 3)
+        self.assertEqual(manifest["permissions"], ["clipboardRead"])
+        self.assertEqual(
+            manifest["content_scripts"][0]["matches"],
+            ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+        )
+        self.assertIn('addEventListener("contextmenu"', script)
+        self.assertIn('navigator.clipboard.readText()', script)
+        self.assertIn('sendButton.click()', script)
+        self.assertIn('composerText(editor).trim()', script)
+        self.assertNotRegex(script, r"fetch\\s*\\(|XMLHttpRequest|WebSocket|chrome\\.storage")
+
     def test_terminal_output_clipboard_control_is_available_in_both_chat_modes(self):
         html = (ROOT / "console/static/index.html").read_text(encoding="utf-8")
         app = (ROOT / "console/static/app.js").read_text(encoding="utf-8")
@@ -98,13 +115,17 @@ class UXEnhancementTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "Node runtime unavailable")
     def test_new_frontend_scripts_have_valid_syntax(self):
-        for name in ("ux.js", "model-settings.js"):
-            path = ROOT / "console/static" / name
+        paths = [
+            ROOT / "console/static" / "ux.js",
+            ROOT / "console/static" / "model-settings.js",
+            ROOT.parents[1] / "tools" / "chatgpt-terminal-paste" / "content.js",
+        ]
+        for path in paths:
             result = subprocess.run(
                 [shutil.which("node"), "--check", str(path)],
                 capture_output=True, text=True, timeout=15,
             )
-            self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+            self.assertEqual(result.returncode, 0, str(path) + "\\n" + result.stderr[-2000:])
 
 
 if __name__ == "__main__":
