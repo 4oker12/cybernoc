@@ -84,7 +84,7 @@ SESSION_TTL_SECONDS = 7200
 MAX_HISTORY = 16
 sessions: OrderedDict[str, dict] = OrderedDict()
 sessions_lock = RLock()
-agent = Agent()
+agent = Agent(local_tool_runtime=gpt_tool_runtime)
 
 
 @lru_cache(maxsize=1)
@@ -392,6 +392,7 @@ def collaboration_step(payload: CollaborationActionRequest):
                         TrafficToolClient(MCPClient(), {}, scope=scope),
                         communication_store(), payload.task_id,
                     ),
+                    local_tool_runtime=gpt_tool_runtime,
                 )
                 outcome = engine.run(
                     history, prompt, scope=scope, public_get=True, force_tools=True,
@@ -784,6 +785,7 @@ def chat(payload: ChatRequest):
                     TrafficToolClient(MCPClient(), state["traffic_artifacts"], scope=state["scope"]),
                     store, task_id,
                 ),
+                local_tool_runtime=gpt_tool_runtime,
             )
             profile = profile_settings_store().load()
             outcome = current_agent.run(
