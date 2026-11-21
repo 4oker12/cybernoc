@@ -138,6 +138,18 @@ class ComputerControlTests(unittest.TestCase):
             ]),
             {"defender_quick_scan"},
         )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Не запускай быструю проверку Microsoft Defender."},
+            ]),
+            set(),
+        )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Не разрешаю полную проверку Microsoft Defender."},
+            ]),
+            set(),
+        )
 
     def test_package_install_requires_exact_package_approval(self):
         package_id = "VideoLAN.VLC"
@@ -163,6 +175,14 @@ class ComputerControlTests(unittest.TestCase):
             ],
             r"(установ|install)", ["Other.Publisher.App"],
         ))
+        self.assertFalse(_explicit_action_approved(
+            [{"role": "user", "content": "Не разрешаю установить пакет VideoLAN.VLC."}],
+            r"(установ|install)", [package_id],
+        ))
+        self.assertFalse(_explicit_action_approved(
+            [{"role": "user", "content": "Да, но не устанавливай пакет VideoLAN.VLC."}],
+            r"(установ|install)", [package_id],
+        ))
 
     def test_archive_and_file_move_approvals_bind_exact_paths(self):
         source = r"C:\Users\Andrei\Downloads\sample.zip"
@@ -174,6 +194,10 @@ class ComputerControlTests(unittest.TestCase):
         self.assertFalse(_explicit_action_approved(
             [{"role": "user", "content": f"Разрешаю распаковать {source} в {destination}."}],
             r"(распак|extract)", [source, r"C:\Users\Andrei\Desktop\Other"],
+        ))
+        self.assertFalse(_explicit_action_approved(
+            [{"role": "user", "content": f"Не разрешаю распаковать {source} в {destination}."}],
+            r"(распак|extract)", [source, destination],
         ))
         self.assertTrue(_explicit_action_approved(
             [{"role": "user", "content":
@@ -200,6 +224,32 @@ class ComputerControlTests(unittest.TestCase):
             ]),
             {"defender_full_scan"},
         )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Разрешаю сделать снимок экрана и передать его ChatGPT для анализа."},
+            ]),
+            {"computer_screenshot"},
+        )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Сделай снимок экрана."},
+            ]),
+            set(),
+        )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Не разрешаю сделать снимок экрана и передать его ChatGPT для анализа."},
+            ]),
+            set(),
+        )
+        with patch("console.computer_control._screenshot") as screenshot:
+            result, failed = computer_control_call(
+                "computer_screenshot", {},
+                user_messages=[{"role": "user", "content": "Сделай снимок экрана."}],
+            )
+        self.assertTrue(failed)
+        self.assertTrue(result["approval_required"])
+        screenshot.assert_not_called()
         self.assertEqual(
             extract_user_computer_approvals([
                 {"role": "assistant", "content": "Разрешить полную проверку Microsoft Defender?"},
