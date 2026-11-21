@@ -40,14 +40,19 @@ class GPTConversationTests(unittest.TestCase):
 
     def test_gpt_api_uses_only_its_own_context_without_mcp(self):
         conversations=[]
+        options=[]
         def answer(model,history,**kwargs):
             conversations.append(history)
-            return {"answer":"GPT answer","model":model,"source":"chatgpt_plan_responses"}
+            options.append(kwargs)
+            return {"answer":"GPT answer","model":model,"source":"chatgpt_plan_responses",
+                    "usage":{"available":True,"input_tokens":10,"output_tokens":5,
+                             "total_tokens":15,"requests":1,"measured_requests":1,
+                             "complete":True,"provider":"test"}}
         with patch.object(server,"gpt_chat_store",return_value=self.store),\
              patch.object(server,"chatgpt_chat",side_effect=answer),\
              patch.object(server,"agent") as agent:
             first=server.siwc_chat_message(server.ChatGPTMessageRequest(
-                model="gpt-6.2-sol",message="Первый вопрос"))
+                model="gpt-6.2-sol",message="Первый вопрос",tool_groups=["browser"]))
             second=server.siwc_chat_message(server.ChatGPTMessageRequest(
                 thread_id=first["thread_id"],model="gpt-6.2-sol",
                 message="Продолжение"))
@@ -56,6 +61,17 @@ class GPTConversationTests(unittest.TestCase):
                          ["user","assistant","user"])
         self.assertEqual(conversations[1][-1]["content"],"Продолжение")
         self.assertEqual(first["thread_id"],second["thread_id"])
+        self.assertEqual(options[0]["enabled_tool_groups"],["browser"])
+        self.assertEqual(first["usage"]["total_tokens"],15)
+
+    def test_unknown_tool_group_is_rejected_before_chatgpt_inference(self):
+        with patch.object(server,"gpt_chat_store",return_value=self.store), \\
+             patch.object(server,"chatgpt_chat") as inference:
+            with self.assertRaises(HTTPException) as caught:
+                server.siwc_chat_message(server.ChatGPTMessageRequest(
+                    model="gpt-6.2-sol",message="test",tool_groups=["not-a-tool"]))
+        self.assertEqual(caught.exception.status_code,422)
+        inference.assert_not_called()
 
     def test_failed_chat_is_not_persisted(self):
         with patch.object(server,"gpt_chat_store",return_value=self.store),\
@@ -85,6 +101,11 @@ class GPTConversationTests(unittest.TestCase):
         self.assertIn("CybernovaMarkdown.render",app)
         self.assertIn('id="modeChatGPT"',html)
         self.assertIn('id="gptThreadList"',html)
+        self.assertIn('id="toolPickerToggle"',html)
+        self.assertIn('id="toolPicker"',html)
+        self.assertIn('id="tokenUsageStatus"',html)
+        self.assertIn("tool_groups:state.toolGroups",app)
+        self.assertIn("recordUsage(result.usage",app)
 
 
 @unittest.skipUnless(shutil.which("node"),"Node runtime unavailable")
