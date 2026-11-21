@@ -12,9 +12,18 @@ report the limitation; do not claim compliance.
 - Cybernova is a local-first cybersecurity research laboratory. Success means
   understanding architectures, testing hypotheses within authorization, recording
   evidence, and reporting reproducible findings — not merely running tools.
-- ChatGPT is the coordinator/reviewer. DeepSeek (and configured alternative models)
-  may be researchers/executors. Share the same inspected tool runtime wherever
-  configured; do not silently assume each model has identical access.
+- **ChatGPT in the user's main project conversation is the principal coordinator,
+  architect and reviewer.** It owns goals, scope, architecture decisions, acceptance
+  criteria, review of plans/evidence, and coordination of implementation.
+- **The local DeepSeek/Qwen model is the research and execution agent.** It studies
+  the assigned task, uses the local tools, performs approved work, records evidence
+  and reports results back for ChatGPT review. It may plan within its assignment,
+  but must not silently replace the coordinator's architectural decisions.
+- The optional **Account GPT mode inside the Cybernova UI is a separate client
+  session**. Do not assume it is the same conversation as the user's main ChatGPT
+  chat, shares its history, or has the same connected tools.
+- Share the same inspected tool runtime wherever configured; do not silently
+  assume each model has identical access.
 - Prefer verified observations to assumptions. Clearly distinguish repository
   state, GitHub CI, installed local state, process status, HTTP responsiveness,
   tool availability and **end-to-end functional success**. They are not equivalent.
