@@ -521,3 +521,70 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
     min-width:0;
   }
 }
+
+
+/* Compact plus-menu for selecting which tool bundles enter the model context. */
+.composer-area{position:relative}
+.tool-picker-toggle{display:inline-flex;align-items:center;gap:7px;border:1px solid #505b55;
+  background:#29332e;color:#dcebe2;border-radius:18px;padding:6px 10px;font-size:11px;
+  cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s}
+.tool-picker-toggle:hover,.tool-picker-toggle[aria-expanded="true"]{background:#35443c;border-color:#80ad96}
+.tool-picker-toggle:disabled{opacity:.45;cursor:not-allowed}
+.tool-picker-plus{font-size:17px;line-height:12px;color:#a8e1c3;font-weight:500}
+.tool-selection-badge{border-radius:10px;background:#3c4b43;color:#bfe6ce;padding:2px 6px;font-size:9px}
+.tool-picker{position:absolute;z-index:35;left:24px;bottom:76px;width:min(650px,calc(100vw - 48px));
+  max-height:min(72vh,620px);overflow:auto;border:1px solid #4a5b51;border-radius:15px;
+  background:#202824;color:#e8eee9;box-shadow:0 18px 50px #0008;padding:14px}
+.tool-picker[hidden]{display:none!important}
+.tool-picker-heading,.tool-picker-footer{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.tool-picker-heading strong{font-size:13px;font-weight:650}
+.tool-picker-heading p{font-size:10px;line-height:1.5;color:#aab8af;margin:4px 0 0}
+.tool-picker-reset,.tool-picker-done{border:1px solid #52675a;background:#2b3931;color:#dcece2;
+  border-radius:9px;padding:6px 11px;font-size:10px;cursor:pointer}
+.tool-picker-reset:hover,.tool-picker-done:hover{background:#35483c}
+.tool-picker-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:13px 0}
+.tool-group-option{display:grid;grid-template-columns:28px minmax(0,1fr) 16px;align-items:start;gap:9px;
+  min-width:0;border:1px solid #3e4b43;border-radius:11px;padding:10px;background:#252e29;cursor:pointer}
+.tool-group-option:hover{border-color:#688a76;background:#2a3730}
+.tool-group-option.selected{border-color:#76a88b;background:#2b3b31;box-shadow:inset 0 0 0 1px #76a88b22}
+.tool-group-option input{grid-column:3;grid-row:1;accent-color:#83c59e;margin:3px 0 0}
+.tool-group-icon{grid-column:1;grid-row:1;display:grid;place-items:center;width:27px;height:27px;
+  border-radius:8px;background:#35443b;color:#b7e4c8;font-size:15px;font-weight:650}
+.tool-group-copy{grid-column:2;grid-row:1;min-width:0}
+.tool-group-name{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:650;color:#e7efe9}
+.tool-group-count{font-size:9px;color:#9fb9a7;font-weight:400}
+.tool-group-description{display:block;margin-top:4px;font-size:9px;line-height:1.45;color:#a8b6ad}
+.tool-picker-footer{border-top:1px solid #3d4942;padding-top:10px}
+.tool-picker-footer span{font-size:10px;line-height:1.4;color:#aab8af;flex:1}
+.tool-picker-footer .tool-picker-done{font-size:10px}
+.token-usage-receipt{margin:7px 0 2px 35px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  color:#a9cdb7;font-size:10px;line-height:1.5}
+.token-usage-receipt strong{font-weight:650;color:#c9ead5}
+.token-usage-receipt span{color:#99a89e}
+#tokenUsageStatus{white-space:nowrap;font-variant-numeric:tabular-nums}
+@media(max-width:680px){
+  .tool-picker{left:11px;bottom:76px;width:calc(100vw - 22px);padding:11px}
+  .tool-picker-groups{grid-template-columns:1fr;gap:6px}
+  .tool-group-option{padding:9px}
+  .tool-picker-heading p{max-width:250px}
+  .composer-left{gap:8px;flex-wrap:wrap}
+  .tool-picker-toggle{padding:6px 8px;font-size:10px}
+  .token-usage-receipt{margin-left:0}
+  .composer-meta{flex-wrap:wrap}
+  #tokenUsageStatus{order:2}
+}
+:root[data-theme="light"] .tool-picker{background:#fff;color:#233246;border-color:#d6e2da;box-shadow:0 16px 42px #243c321c}
+:root[data-theme="light"] .tool-picker-heading p,
+:root[data-theme="light"] .tool-picker-footer span{color:#65786c}
+:root[data-theme="light"] .tool-picker-reset,
+:root[data-theme="light"] .tool-picker-done{background:#edf5ef;color:#315b45;border-color:#cbded0}
+:root[data-theme="light"] .tool-group-option{background:#f7faf8;border-color:#e0e9e3}
+:root[data-theme="light"] .tool-group-option:hover,
+:root[data-theme="light"] .tool-group-option.selected{background:#eaf4ed;border-color:#91bba0}
+:root[data-theme="light"] .tool-group-name{color:#2b4034}
+:root[data-theme="light"] .tool-group-description{color:#687a6f}
+:root[data-theme="light"] .tool-group-icon{background:#e4f0e8;color:#24714e}
+:root[data-theme="light"] .tool-picker-toggle{background:#edf5ef;color:#315b45;border-color:#cbded0}
+:root[data-theme="light"] .tool-selection-badge{background:#dcebe1;color:#276144}
+:root[data-theme="light"] .token-usage-receipt{color:#39745a}
+:root[data-theme="light"] .token-usage-receipt strong{color:#205b41}
