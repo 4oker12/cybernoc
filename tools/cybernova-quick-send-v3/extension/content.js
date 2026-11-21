@@ -1,8 +1,19 @@
 'use strict';
 
 (() => {
+  const currentUrl = new URL(location.href);
+  const isChatGPTContext = currentUrl.protocol === 'https:' &&
+    (currentUrl.hostname === 'chatgpt.com' || currentUrl.hostname === 'chat.openai.com');
+  const localPort = Number(currentUrl.port);
+  const isAllowedLocalContext = currentUrl.protocol === 'http:' &&
+    currentUrl.hostname === '127.0.0.1' &&
+    Number.isInteger(localPort) && localPort >= 18785 && localPort <= 18805;
+
+  // Defense in depth: even if Chrome injects this file elsewhere, it stays inert.
+  if (!isChatGPTContext && !isAllowedLocalContext) return;
   if (globalThis.__CYBERNOVA_QUICK_SEND_V3__) return;
   globalThis.__CYBERNOVA_QUICK_SEND_V3__ = true;
+
   const MAX_TEXT_CHARS = 500000;
   const COMPOSER_SELECTORS = [
     '#prompt-textarea',
@@ -132,15 +143,15 @@
     appendText(composer,prefix+text);
     const sendButton = await waitForSendButton();
     sendButton.click();
-    showToast('Cybernova: сообщение отправлено в ChatGPT',true);
+    showToast('Cybernova: сообщение отправлено',true);
     return {ok:true,sent:true};
   }
   async function readClipboardAndSend() {
     if (!document.hasFocus()) {
-      throw new Error('chatgpt_page_not_focused: click the ChatGPT tab and retry');
+      throw new Error('page_not_focused: click the target tab and retry');
     }
     if (!navigator.clipboard || typeof navigator.clipboard.readText !== 'function') {
-      throw new Error('clipboard_api_unavailable_in_chatgpt_page');
+      throw new Error('clipboard_api_unavailable_in_this_page');
     }
     let text;
     try {
@@ -148,9 +159,9 @@
     } catch (error) {
       const name = String(error?.name || 'unknown');
       throw new Error('clipboard_read_denied: '+name+
-        '. Check Chrome extension permission "Read data you copy and paste" and ensure ChatGPT tab is focused.');
+        '. Check Chrome extension permission "Read data you copy and paste" and ensure the page is focused.');
     }
-    if (!String(text || '').trim()) throw new Error('clipboard_empty: copy terminal output first');
+    if (!String(text || '').trim()) throw new Error('clipboard_empty: copy text first');
     if (text.length > MAX_TEXT_CHARS) throw new Error('text_too_large');
     return sendText({text,sourceKind:'clipboard'});
   }
