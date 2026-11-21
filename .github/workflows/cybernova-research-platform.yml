@@ -19,6 +19,10 @@ on:
       - tools/chatgpt-terminal-paste/**
       - tools/windows/**
       - .github/workflows/cybernova-research-platform.yml
+concurrency:
+  group: cybernova-research-platform-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 jobs:
