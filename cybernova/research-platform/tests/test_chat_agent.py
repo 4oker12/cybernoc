@@ -70,7 +70,7 @@ class FakeLocalToolRuntime:
 
     def call(self, name, args, *, authorized_targets=None, user_messages=None,
              enabled_groups=None):
-        self.calls.append((name, args, set(authorized_targets or ()), user_messages))
+        self.calls.append((name, args, set(authorized_targets or ()), user_messages, set(enabled_groups or ())))
         if self.image:
             return {"ok": True, "image_data_url": "data:image/png;base64,AAAA"}, False
         return {"ok": True, "os": "Windows", "cpu_count": 8}, False
@@ -138,6 +138,7 @@ class AgentTests(unittest.TestCase):
         )
         self.assertEqual(out["tool_calls"], 1)
         self.assertEqual(local.calls[0][0], "computer_system_overview")
+        self.assertEqual(local.calls[0][4], {"computer"})
         self.assertIn("example.com", local.calls[0][2])
         self.assertIn("scope.example", local.calls[0][2])
         self.assertEqual(
