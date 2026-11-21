@@ -219,10 +219,13 @@ def _parse_bing_rss(blob: bytes) -> list[dict]:
 def _bing_html_fallback(query: str, page: int, *, reader=None) -> dict:
     """Read public Bing HTML and unwrap its outbound result links without JS."""
     host = BING_HOST
-    url = "https://" + host + "/search?" + urlencode({
-        "q": query, "count": str(MAX_RESULTS),
-        "first": str((page - 1) * MAX_RESULTS + 1),
-    })
+    params = {"q": query, "pq": query}
+    # Bing HTML paging requires both first and FORM. The first page omits
+    # first; page 2 uses PERE, page 3 PERE1, and so on.
+    if page > 1:
+        params["first"] = str((page - 1) * MAX_RESULTS + 1)
+        params["FORM"] = "PERE" if page == 2 else "PERE" + str(page - 2)
+    url = "https://" + host + "/search?" + urlencode(params)
     read = reader or _read_page
     page_result = read(url, {host})
     # Bing often decorates H2 titles with publisher labels that its heading
