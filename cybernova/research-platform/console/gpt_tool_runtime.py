@@ -6,6 +6,7 @@ register tools with or modify the DeepSeek research agent.
 from __future__ import annotations
 
 import ipaddress
+import importlib.util
 import os
 from pathlib import Path
 import platform
@@ -395,16 +396,29 @@ class GPTToolRuntime:
                 if name == "terminal_status":
                     if args:
                         raise ValueError("terminal_status_takes_no_arguments")
+                    windows = platform.system() == "Windows"
+                    cmd_exe = bool(
+                        shutil.which("cmd.exe") or Path(
+                            os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows",
+                            "System32", "cmd.exe",
+                        ).is_file()
+                    ) if windows else False
+                    modules = {}
+                    for module in ("psutil", "pyautogui", "pywinauto", "win32com", "playwright"):
+                        try:
+                            modules[module] = importlib.util.find_spec(module) is not None
+                        except (ImportError, ModuleNotFoundError, ValueError):
+                            modules[module] = False
                     return {
                         "ok": True, "os": platform.system(),
-                        "cmd_exe": bool(
-                            shutil.which("cmd.exe") or Path(
-                                os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows",
-                                "System32", "cmd.exe",
-                            ).is_file()
-                        ),
-                        "terminal": "Windows CMD" if platform.system() == "Windows" else None,
-                        "execution_host": "local_windows" if platform.system() == "Windows" else "remote_or_non_windows",
+                        "cmd_exe": cmd_exe,
+                        "terminal": "Windows CMD" if windows and cmd_exe else None,
+                        "execution_host": "local_windows" if windows else "remote_or_non_windows",
+                        "computer_tool_dependencies": modules,
+                        "computer_tool_dependencies_ready": all(
+                            modules.get(item, False)
+                            for item in ("psutil", "pyautogui", "pywinauto", "win32com")
+                        ) if windows else False,
                     }, False
                 if name == "terminal_run":
                     if set(args) != {"command"}:
