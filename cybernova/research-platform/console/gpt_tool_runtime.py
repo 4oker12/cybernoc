@@ -31,7 +31,7 @@ MAX_TOOL_OUTPUT_CHARS = 12000
 
 # Only one simple command is accepted per call. No shell operators, variables,
 # command substitution, script blocks, redirection or chained commands.
-_FORBIDDEN_SCRIPT = re.compile(r"[;\|&<>$(){}" + chr(96) + r"]")
+_FORBIDDEN_SCRIPT = re.compile(r"[;\|&<>$(){}" + chr(96) + r"%!^\\"'"]")
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 _DOMAIN = re.compile(r"(?i)(?<![a-z0-9.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?![a-z0-9.-])")
 _SECRET = re.compile(
@@ -42,15 +42,13 @@ _SECRET = re.compile(
 _EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 
 _LOCAL_COMMANDS = {
-    "get-netadapter", "get-netipconfiguration", "get-netroute",
-    "get-nettcpconnection", "get-netudpendpoint", "get-dnsclientserveraddress",
-    "get-netipinterface", "get-netneighbor", "get-netadapterstatistics",
-    "get-netfirewallprofile", "get-process", "get-service",
-    "get-date", "ipconfig", "route", "netstat", "arp",
+    "hostname", "whoami", "ver", "ipconfig", "ipconfig.exe",
+    "route", "route.exe", "netstat", "netstat.exe", "arp", "arp.exe",
+    "getmac", "getmac.exe", "netsh", "netsh.exe",
 }
 _TARGET_COMMANDS = {
     "ping", "ping.exe", "tracert", "tracert.exe", "pathping", "pathping.exe",
-    "nslookup", "nslookup.exe", "resolve-dnsname", "test-netconnection",
+    "nslookup", "nslookup.exe", "curl", "curl.exe",
 }
 _TOOL_NAMES = frozenset(
     item["name"] for item in BROWSER_CONTROL_TOOLS
@@ -112,16 +110,15 @@ def build_tool_catalog() -> list[dict]:
             "command": {
                 "type": "string",
                 "description": (
-                    "One read-only PowerShell 7 command. Supported diagnostics: "
-                    "Get-NetAdapter, Get-NetIPConfiguration, Get-NetRoute, "
-                    "Get-NetTCPConnection, Get-NetUDPEndpoint, Get-DnsClientServerAddress, "
-                    "Get-NetIPInterface, Get-NetNeighbor, Get-NetAdapterStatistics, "
-                    "Get-NetFirewallProfile, Get-Process, Get-Service, "
-                    "ipconfig /all, route print -4, netstat -ano, arp -a, "
-                    "ping, tracert, pathping, nslookup, Resolve-DnsName, "
-                    "Test-NetConnection -ComputerName <host> [-Port <port>], "
-                    "git status, git log, git diff --stat, python --version, pwsh --version. "
-                    "Exactly one command; no pipes, semicolons, scripts or writes. "
+                    "One read-only Windows CMD command. Supported diagnostics: "
+                    "hostname, whoami, ver, ipconfig /all, route print -4, "
+                    "netstat -ano, netstat -e, arp -a, getmac /v, "
+                    "netsh interface show interface, netsh interface ipv4 show config, "
+                    "netsh advfirewall show allprofiles, ping -n <count> <host>, "
+                    "tracert -d -h <hops> -w <ms> <host>, pathping, nslookup <host>, "
+                    "curl.exe -I --connect-timeout <seconds> --max-time <seconds> https://<host>/, "
+                    "git status, git log, git diff --stat, python --version. "
+                    "Exactly one command; no shell operators, scripts or writes. "
                     "Network targets must have been named by the user in this task."
                 ),
             },
@@ -136,7 +133,7 @@ def build_tool_catalog() -> list[dict]:
     rows = [
         _function_tool(
             "terminal_run",
-            "Run one bounded, read-only diagnostic command in the local Windows PowerShell 7 process hosting Cybernova. This is the user's laptop only when the Cybernova backend is running locally. Never use it for writes, installs, privilege escalation or arbitrary scripts.",
+            "Run one bounded, read-only diagnostic command in the local Windows Command Prompt (cmd.exe) process hosting Cybernova. This is the user's laptop only when the Cybernova backend is running locally. Never use it for writes, installs, privilege escalation or arbitrary scripts.",
             terminal_schema,
         ),
         _function_tool(
@@ -162,18 +159,16 @@ def _redact_output(value: str) -> str:
 
 def _target_from_command(command: str, name: str) -> str | None:
     patterns = {
-        "test-netconnection": r"(?i)(?:^|\s)-ComputerName\s+([^\s]+)",
-        "resolve-dnsname": r"(?i)^\s*Resolve-DnsName\s+([^\s]+)",
         "nslookup": r"(?i)^\s*nslookup(?:\.exe)?\s+([^\s]+)",
+        "curl": r"(?i)https://([a-z0-9.-]+)(?:/|\s|$)",
     }
     pattern = patterns.get(name)
     if pattern:
         match = re.search(pattern, command)
-        return match.group(1).strip("\"'") if match else None
+        return match.group(1).lower().rstrip(".") if match else None
     tokens = command.split()
     candidates = [
-        token.strip("\"'")
-        for token in tokens[1:]
+        token for token in tokens[1:]
         if token and not token.startswith("-") and not token.startswith("/")
     ]
     return candidates[-1] if candidates else None
@@ -186,57 +181,109 @@ def _validate_terminal_command(command: object, authorized_targets: set[str]) ->
     if "\n" in command or "\r" in command or _FORBIDDEN_SCRIPT.search(command):
         raise ValueError("terminal_single_readonly_command_required")
 
-    first = command.split(None, 1)[0].lower()
-    if first == "git":
+    first_token = command.split(None, 1)[0].lower()
+    first = first_token.rsplit("\\", 1)[-1]
+    base = first[:-4] if first.endswith(".exe") else first
+
+    if base == "git":
         if not re.fullmatch(
             r"(?i)git\s+(?:status(?:\s+--short)?|log(?:\s+--oneline)?|diff\s+--stat|diff\s+--name-only)",
             command,
         ):
             raise ValueError("terminal_git_subcommand_not_allowlisted")
         return command
-    if first in {"python", "python.exe", "py", "py.exe"}:
+    if base in {"python", "py"}:
         if not re.fullmatch(r"(?i)(?:python(?:\.exe)?|py(?:\.exe)?)\s+--version", command):
             raise ValueError("terminal_python_command_not_allowlisted")
         return command
-    if first in {"pwsh", "pwsh.exe"}:
-        if not re.fullmatch(r"(?i)pwsh(?:\.exe)?\s+--version", command):
-            raise ValueError("terminal_pwsh_command_not_allowlisted")
-        return command
-    if first in _LOCAL_COMMANDS and first not in {"ipconfig", "route", "netstat", "arp"}:
-        # These cmdlets are deliberately local-only. Do not allow -CimSession,
-        # -ComputerName or other arguments that could redirect them remotely.
+
+    if base in {"hostname", "whoami", "ver"}:
         if len(command.split()) != 1:
             raise ValueError("terminal_local_command_arguments_forbidden")
         return command
-    if first == "ipconfig" and not re.fullmatch(r"(?i)ipconfig(?:\.exe)?\s+/(?:all|displaydns)", command):
-        raise ValueError("terminal_ipconfig_argument_not_allowlisted")
-    if first == "route" and not re.fullmatch(r"(?i)route(?:\.exe)?\s+print(?:\s+-(?:4|6))?", command):
-        raise ValueError("terminal_route_argument_not_allowlisted")
-    if first == "netstat" and not re.fullmatch(r"(?i)netstat(?:\.exe)?\s+-an(?:o)?", command):
-        raise ValueError("terminal_netstat_argument_not_allowlisted")
-    if first == "arp" and not re.fullmatch(r"(?i)arp(?:\.exe)?\s+-a", command):
-        raise ValueError("terminal_arp_argument_not_allowlisted")
-    if first in {"ipconfig", "route", "netstat", "arp"}:
+    if base == "ipconfig":
+        if not re.fullmatch(r"(?i)ipconfig(?:\.exe)?\s+/(?:all|displaydns)", command):
+            raise ValueError("terminal_ipconfig_argument_not_allowlisted")
         return command
-    if first not in _TARGET_COMMANDS:
+    if base == "route":
+        if not re.fullmatch(r"(?i)route(?:\.exe)?\s+print(?:\s+-(?:4|6))?", command):
+            raise ValueError("terminal_route_argument_not_allowlisted")
+        return command
+    if base == "netstat":
+        if not re.fullmatch(r"(?i)netstat(?:\.exe)?\s+(?:-an|-ano|-e|-s)", command):
+            raise ValueError("terminal_netstat_argument_not_allowlisted")
+        return command
+    if base == "arp":
+        if not re.fullmatch(r"(?i)arp(?:\.exe)?\s+-a", command):
+            raise ValueError("terminal_arp_argument_not_allowlisted")
+        return command
+    if base == "getmac":
+        if not re.fullmatch(r"(?i)getmac(?:\.exe)?\s+/v", command):
+            raise ValueError("terminal_getmac_argument_not_allowlisted")
+        return command
+    if base == "netsh":
+        if not re.fullmatch(
+            r"(?i)netsh(?:\.exe)?\s+(?:interface\s+show\s+interface|"
+            r"interface\s+ipv4\s+show\s+config|advfirewall\s+show\s+allprofiles|"
+            r"wlan\s+show\s+interfaces)",
+            command,
+        ):
+            raise ValueError("terminal_netsh_readonly_command_not_allowlisted")
+        return command
+
+    if base not in {"ping", "tracert", "pathping", "nslookup", "curl"}:
         raise ValueError("terminal_command_not_allowlisted")
 
-    if first in {"nslookup", "nslookup.exe"} and len(command.split()) != 2:
-        raise ValueError("terminal_nslookup_custom_server_or_options_forbidden")
-    if first == "resolve-dnsname" and not re.fullmatch(
-            r"(?i)Resolve-DnsName\s+[A-Za-z0-9._:-]+(?:\s+-Type\s+(?:A|AAAA|CNAME|MX|TXT|SRV|NS))?",
-            command):
-        raise ValueError("terminal_resolve_dnsname_options_not_allowlisted")
-    if first == "test-netconnection":
-        if not re.fullmatch(
-                r"(?i)Test-NetConnection\s+-ComputerName\s+[A-Za-z0-9._:-]+(?:\s+-Port\s+\d{1,5})?",
-                command):
-            raise ValueError("terminal_test_connection_options_not_allowlisted")
-        port_match = re.search(r"(?i)\s+-Port\s+(\d+)", command)
-        if port_match and not 1 <= int(port_match.group(1)) <= 65535:
-            raise ValueError("terminal_test_connection_port_out_of_range")
+    if base == "nslookup":
+        if not re.fullmatch(r"(?i)nslookup(?:\.exe)?\s+[A-Za-z0-9._:-]+", command):
+            raise ValueError("terminal_nslookup_custom_server_or_options_forbidden")
+    elif base == "ping":
+        match = re.fullmatch(
+            r"(?i)ping(?:\.exe)?\s+-n\s+(\d{1,2})(?:\s+-w\s+(\d{1,5}))?\s+([A-Za-z0-9._:-]+)",
+            command,
+        )
+        if not match:
+            raise ValueError("terminal_ping_options_not_allowlisted")
+        if not 1 <= int(match.group(1)) <= 20:
+            raise ValueError("terminal_ping_count_out_of_range")
+        if match.group(2) and not 100 <= int(match.group(2)) <= 5000:
+            raise ValueError("terminal_ping_timeout_out_of_range")
+    elif base == "tracert":
+        match = re.fullmatch(
+            r"(?i)tracert(?:\.exe)?(?:\s+-d)?(?:\s+-h\s+(\d{1,2}))?"
+            r"(?:\s+-w\s+(\d{1,5}))?\s+([A-Za-z0-9._:-]+)",
+            command,
+        )
+        if not match:
+            raise ValueError("terminal_tracert_options_not_allowlisted")
+        if match.group(1) and not 1 <= int(match.group(1)) <= 30:
+            raise ValueError("terminal_traceroute_hops_out_of_range")
+        if match.group(2) and not 100 <= int(match.group(2)) <= 2000:
+            raise ValueError("terminal_traceroute_timeout_out_of_range")
+    elif base == "pathping":
+        match = re.fullmatch(
+            r"(?i)pathping(?:\.exe)?(?:\s+-n)?\s+-q\s+(\d{1,2})"
+            r"(?:\s+-w\s+(\d{1,5}))?\s+([A-Za-z0-9._:-]+)",
+            command,
+        )
+        if not match:
+            raise ValueError("terminal_pathping_options_not_allowlisted")
+        if not 1 <= int(match.group(1)) <= 10:
+            raise ValueError("terminal_pathping_queries_out_of_range")
+        if match.group(2) and not 100 <= int(match.group(2)) <= 2000:
+            raise ValueError("terminal_pathping_timeout_out_of_range")
+    elif base == "curl":
+        match = re.fullmatch(
+            r"(?i)curl(?:\.exe)?\s+-I\s+--connect-timeout\s+(\d{1,2})"
+            r"\s+--max-time\s+(\d{1,2})\s+https://([a-z0-9.-]+)/?",
+            command,
+        )
+        if not match:
+            raise ValueError("terminal_curl_head_only_options_not_allowlisted")
+        if not 1 <= int(match.group(1)) <= 10 or not 1 <= int(match.group(2)) <= 30:
+            raise ValueError("terminal_curl_timeout_out_of_range")
 
-    target = _target_from_command(command, first)
+    target = _target_from_command(command, base)
     if not target:
         raise ValueError("terminal_network_target_missing")
     normalized = target.lower().rstrip(".")
@@ -246,32 +293,6 @@ def _validate_terminal_command(command: object, authorized_targets: set[str]) ->
         pass
     if normalized not in authorized_targets:
         raise ValueError("terminal_target_not_explicitly_named_by_user")
-    def option_int(flag):
-        match = re.search(r"(?i)(?:^|\s)" + re.escape(flag) + r"\s+(\d+)(?:\s|$)", command)
-        return int(match.group(1)) if match else None
-
-    if first.startswith("ping"):
-        if re.search(r"(?i)(?:^|\s)-t(?:\s|$)", command):
-            raise ValueError("terminal_infinite_ping_forbidden")
-        count = option_int("-n")
-        if count is not None and not 1 <= count <= 20:
-            raise ValueError("terminal_ping_count_out_of_range")
-    if first.startswith("tracert"):
-        if re.search(r"(?i)(?:^|\s)-(?:j|r|s)(?:\s|$)", command):
-            raise ValueError("terminal_source_route_forbidden")
-        hops = option_int("-h")
-        wait = option_int("-w")
-        if hops is not None and not 1 <= hops <= 30:
-            raise ValueError("terminal_traceroute_hops_out_of_range")
-        if wait is not None and not 100 <= wait <= 2000:
-            raise ValueError("terminal_traceroute_timeout_out_of_range")
-    if first.startswith("pathping"):
-        queries = option_int("-q")
-        if queries is None or not 1 <= queries <= 10:
-            raise ValueError("terminal_pathping_requires_q_1_to_10")
-        wait = option_int("-w")
-        if wait is not None and not 100 <= wait <= 2000:
-            raise ValueError("terminal_pathping_timeout_out_of_range")
     return command
 
 
@@ -281,37 +302,39 @@ def _run_terminal(command: str, authorized_targets: set[str]) -> dict:
             "ok": False, "error": "local_windows_terminal_unavailable",
             "execution_host": platform.system().lower(),
         }
-    pwsh = shutil.which("pwsh") or shutil.which("pwsh.exe")
-    if not pwsh:
-        return {"ok": False, "error": "powershell_7_not_found"}
     command = _validate_terminal_command(command, authorized_targets)
+    system_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
+    cmd = shutil.which("cmd.exe") or str(Path(system_root) / "System32" / "cmd.exe")
+    if not Path(cmd).is_file():
+        return {"ok": False, "error": "windows_cmd_not_found"}
     timeout = 45 if command.lower().startswith(("pathping", "pathping.exe")) else 20
     env_names = (
         "PATH", "SystemRoot", "WINDIR", "USERPROFILE", "LOCALAPPDATA",
         "APPDATA", "TEMP", "TMP", "ProgramFiles", "ProgramFiles(x86)",
-        "HOMEDRIVE", "HOMEPATH",
+        "HOMEDRIVE", "HOMEPATH", "ComSpec",
     )
     env = {key: os.environ[key] for key in env_names if key in os.environ}
     try:
         result = subprocess.run(
-            [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
-            cwd=str(SOURCE), shell=False, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout,
-            stdin=subprocess.DEVNULL, env=env,
+            [cmd, "/d", "/s", "/c", command],
+            cwd=str(SOURCE), shell=False, capture_output=True, text=False,
+            timeout=timeout, stdin=subprocess.DEVNULL, env=env,
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "command": command, "error": "terminal_timeout",
                 "timeout_seconds": timeout}
     except OSError as exc:
         return {"ok": False, "command": command, "error": type(exc).__name__}
-    output = _redact_output(((result.stdout or "") + "\n" + (result.stderr or "")).strip())
+    stdout = (result.stdout or b"").decode("oem", errors="replace")
+    stderr = (result.stderr or b"").decode("oem", errors="replace")
+    output = _redact_output((stdout + "\n" + stderr).strip())
     return {
         "ok": result.returncode == 0,
         "command": command,
         "exit_code": result.returncode,
         "output": output,
         "execution_host": "local_windows",
-        "shell": "PowerShell 7",
+        "shell": "Windows CMD",
     }
 
 
@@ -335,7 +358,13 @@ class GPTToolRuntime:
                         raise ValueError("terminal_status_takes_no_arguments")
                     return {
                         "ok": True, "os": platform.system(),
-                        "powershell_7": bool(shutil.which("pwsh") or shutil.which("pwsh.exe")),
+                        "cmd_exe": bool(
+                            shutil.which("cmd.exe") or Path(
+                                os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows",
+                                "System32", "cmd.exe",
+                            ).is_file()
+                        ),
+                        "terminal": "Windows CMD" if platform.system() == "Windows" else None,
                         "execution_host": "local_windows" if platform.system() == "Windows" else "remote_or_non_windows",
                     }, False
                 if name == "terminal_run":
