@@ -119,7 +119,21 @@ class ResearchWebTests(unittest.TestCase):
                 "links": [{"title": "Fast and reliable end-to-end testing for modern web apps | Playwright", "url": redirect}],
             }
         result = _bing_html_fallback("Playwright Python docs", 2, reader=reader)
-        self.assertEqual(parse_qs(urlsplit(requested[0][0]).query)["first"], ["11"])
+        page2 = parse_qs(urlsplit(requested[0][0]).query)
+        self.assertEqual(page2["first"], ["11"])
+        self.assertEqual(page2["FORM"], ["PERE"])
+        self.assertEqual(page2["pq"], ["Playwright Python docs"])
+        page1_url = []
+        _bing_html_fallback("Playwright Python docs", 1, reader=lambda url, hosts: (
+            page1_url.append(url) or {
+                "http_status": 200, "source_sha256": "b" * 64,
+                "headings": [], "text_excerpt": "",
+                "links": [{"title": "Result", "url": redirect}],
+            }
+        ))
+        page1 = parse_qs(urlsplit(page1_url[0]).query)
+        self.assertNotIn("first", page1)
+        self.assertNotIn("FORM", page1)
         self.assertEqual(result["provider"], "Bing Search HTML fallback")
         self.assertEqual(result["results"][0]["url"], target)
         self.assertEqual(result["results"][0]["domain"], "playwright.dev")
