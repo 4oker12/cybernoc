@@ -6,6 +6,12 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
   uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Активная модель",
   gptThreadId:null,gptConnected:false,gptPlanUsage:false,
   researchScope:{hosts:[],capture_detail:"evidence"},profileSettings:null,
+  toolGroups:[],toolGroupCatalog:[],
+  usageTotals:{
+    qwen:{input:0,output:0,total:0,measuredTurns:0},
+    gpt:{input:0,output:0,total:0,measuredTurns:0}
+  },
+  lastUsage:{qwen:null,gpt:null},
   collabRun:null,collabLooping:false,collabStopRequested:false};
 const descriptions={
   gateway_status:"Шлюз MCP",
@@ -15,6 +21,21 @@ const descriptions={
   ip_network_summary:"Расчёт подсети",
   python_static_review:"Анализ Python",
 };
+const TOOL_GROUP_GLYPHS={
+  browser:"◎",computer:"▣",terminal:">_",web:"⌕",network:"⇄",
+  security:"⛨",traffic:"≋",developer:"⌘",mcp:"⧉"
+};
+const TOOL_GROUP_FALLBACK=[
+  {id:"browser",label:"Chrome",icon:"globe",description:"Сайты, DOM, ссылки, вкладки, история и DevTools Network."},
+  {id:"computer",label:"Компьютер",icon:"monitor",description:"Windows, процессы, службы, файлы, окна и Defender."},
+  {id:"terminal",label:"Терминал",icon:"terminal",description:"Ограниченные read-only команды CMD."},
+  {id:"web",label:"Интернет-поиск",icon:"search",description:"Поиск в интернете, страницы выдачи и открытие первоисточников."},
+  {id:"network",label:"Сеть / NOC",icon:"network",description:"DNS, TLS, IP, HTTP и сетевые проверки."},
+  {id:"security",label:"Security",icon:"shield",description:"Проверки безопасности и лабораторные сканеры."},
+  {id:"traffic",label:"Traffic / HAR",icon:"activity",description:"HAR, JavaScript, сессии и сетевые гипотезы."},
+  {id:"developer",label:"Разработка",icon:"code",description:"Workspace, Git, файлы проекта и тесты."},
+  {id:"mcp",label:"MCP / прочее",icon:"plug",description:"Подключённые MCP-сервисы и координация."}
+];
 function displayModelName(modelId){
   const names={
     "deepseek-flash":"DeepSeek Flash",
@@ -287,11 +308,120 @@ function busy(on){
   $("messageInput").disabled=on;
   $("newSession").disabled=on;
   $("artifactFile").disabled=on;
-  $("sendStatus").textContent=on?(state.mode==="gpt"?"ChatGPT отвечает…":"Модель выполняет запрос…"):"Готов";
+  $("toolPickerToggle").disabled=on;
+  $("toolPickerGroups").querySelectorAll("input").forEach(input=>{
+    input.disabled=on||input.dataset.available==="false";
+  });
+  $("sendStatus").textContent=on?
+    "Модель работает · фактический расход появится после ответа провайдера":"Готов";
   $("modeQwen").disabled=on;
   $("modeChatGPT").disabled=on;
   $("modeCollab").disabled=on;
   $("gptTopModel").disabled=on||!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
+}
+function formatTokens(value){
+  return Number.isSafeInteger(value)&&value>=0?new Intl.NumberFormat("ru-RU").format(value):"—";
+}
+function recordUsage(usage,mode,reply){
+  const available=!!usage&&usage.available===true;
+  const receipt=node("div","token-usage-receipt");
+  if(!available){
+    receipt.append(node("strong","","Учёт токенов недоступен"),
+      node("span","",usage?.provider?("· "+usage.provider):"· провайдер не передал usage"));
+    if(usage?.requests)receipt.append(node("span","", "· запросов модели: "+usage.requests));
+    reply?.wrap?.append(receipt);
+    state.lastUsage[mode]={available:false};
+    updateTokenUsageStatus(mode);
+    return;
+  }
+  const input=Number.isSafeInteger(usage.input_tokens)?usage.input_tokens:null;
+  const output=Number.isSafeInteger(usage.output_tokens)?usage.output_tokens:null;
+  const total=Number.isSafeInteger(usage.total_tokens)?usage.total_tokens:
+    (input!==null&&output!==null?input+output:null);
+  receipt.append(
+    node("strong","","Токены"),
+    node("span","","Вход: "+formatTokens(input)),
+    node("span","","Выход: "+formatTokens(output)),
+    node("strong","","Всего: "+formatTokens(total))
+  );
+  if(usage.complete===false)receipt.append(node("span","","· частичный учёт"));
+  if(Number.isSafeInteger(usage.requests))receipt.append(node("span","","· запросов модели: "+usage.requests));
+  if(usage.provider)receipt.append(node("span","","· "+usage.provider));
+  reply?.wrap?.append(receipt);
+  const totals=state.usageTotals[mode];
+  if(input!==null)totals.input+=input;
+  if(output!==null)totals.output+=output;
+  if(total!==null)totals.total+=total;
+  totals.measuredTurns+=1;
+  state.lastUsage[mode]={available:true,input,output,total,complete:usage.complete!==false};
+  updateTokenUsageStatus(mode);
+}
+function updateTokenUsageStatus(mode){
+  const last=state.lastUsage[mode],totals=state.usageTotals[mode];
+  if(!last){$("tokenUsageStatus").textContent="Токены: —";return;}
+  if(!last.available){$("tokenUsageStatus").textContent="Токены: нет usage от провайдера";return;}
+  const lastText=last.total===null?"частично":formatTokens(last.total);
+  $("tokenUsageStatus").textContent=
+    "Последний ход: "+lastText+" · сеанс: "+formatTokens(totals.total);
+  $("tokenUsageStatus").title=
+    "Фактический учёт по usage провайдера. Вход: "+formatTokens(totals.input)+
+    "; выход: "+formatTokens(totals.output)+
+    "; суммарно по сеансу: "+formatTokens(totals.total)+
+    "; учтённых ходов: "+totals.measuredTurns;
+}
+function toolPickerOpen(open){
+  const panel=$("toolPicker"),toggle=$("toolPickerToggle");
+  panel.hidden=!open;
+  toggle.setAttribute("aria-expanded",String(!!open));
+  if(open)$("toolPickerClose").focus();
+}
+function updateToolPickerSummary(){
+  const selected=state.toolGroups;
+  if(!selected.length){
+    $("toolSelectionBadge").textContent="Авто";
+    $("toolPickerSummary").textContent="Автовыбор: модель видит все доступные группы инструментов.";
+    return;
+  }
+  const labels=state.toolGroupCatalog.filter(x=>selected.includes(x.id)).map(x=>x.label);
+  $("toolSelectionBadge").textContent=String(selected.length);
+  $("toolPickerSummary").textContent="Ограничено выбранным: "+labels.join(" · ");
+}
+function persistToolGroups(){
+  try{window.localStorage.setItem("cybernova_tool_groups",JSON.stringify(state.toolGroups));}catch(_){}
+}
+function renderToolPicker(groups){
+  const catalog=Array.isArray(groups)&&groups.length?groups:TOOL_GROUP_FALLBACK;
+  state.toolGroupCatalog=catalog;
+  const container=$("toolPickerGroups");
+  container.replaceChildren();
+  for(const group of catalog){
+    const count=Number.isSafeInteger(group.count)?group.count:null;
+    const available=group.available!==false&&count!==0;
+    const selected=state.toolGroups.includes(group.id);
+    const label=node("label","tool-group-option"+(selected?" selected":""));
+    const input=node("input");
+    input.type="checkbox";input.checked=selected;
+    input.dataset.toolGroup=group.id;
+    input.dataset.available=String(available);
+    input.disabled=!available||state.running;
+    input.addEventListener("change",()=>{
+      const next=new Set(state.toolGroups);
+      if(input.checked)next.add(group.id);else next.delete(group.id);
+      state.toolGroups=catalog.map(item=>item.id).filter(id=>next.has(id));
+      persistToolGroups();
+      renderToolPicker(catalog);
+    });
+    const icon=node("span","tool-group-icon",TOOL_GROUP_GLYPHS[group.id]||"＋");
+    icon.setAttribute("aria-hidden","true");
+    const copy=node("span","tool-group-copy");
+    const title=node("span","tool-group-name",group.label||group.id);
+    title.append(node("span","tool-group-count",count===null?"":String(count)+" функций"));
+    copy.append(title,node("span","tool-group-description",group.description||"Инструменты этой группы."));
+    label.append(icon,copy,input);
+    if(!available)label.title="В этой конфигурации группа сейчас не обнаружена";
+    container.append(label);
+  }
+  updateToolPickerSummary();
 }
 async function requestJson(path,data){
   const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -312,7 +442,7 @@ async function send(){
   busy(true);
   try{
     const result=await requestJson("/api/chat",{
-      session_id:state.sessionId,message:text,
+      session_id:state.sessionId,message:text,tool_groups:state.toolGroups,
     });
     state.sessionId=result.session_id;
     state.taskId=result.task_id||state.taskId;
@@ -450,7 +580,7 @@ async function sendGPT(){
   busy(true);
   try{
     const result=await requestJson("/api/siwc/chat",{
-      thread_id:state.gptThreadId,model,message
+      thread_id:state.gptThreadId,model,message,tool_groups:state.toolGroups
     });
     state.gptThreadId=result.thread_id;
     pending.wrap.classList.remove("working");
@@ -891,6 +1021,7 @@ async function status(){
       ready?"Ollama и MCP подключены":
       info.ollama_ready?"Ollama подключена · MCP недоступен":"Проверь Ollama";
     renderTools(Array.isArray(info.tools)?info.tools:[],info.auto_executable||[],info.lab_scanners?.engines||[]);
+    renderToolPicker(Array.isArray(info.tool_groups)?info.tool_groups:[]);
     if(!state.taskId)showTaskStatus(info.communication?.enabled?"Общая очередь":"Шлюз недоступен");
   }catch(_){
     $("backendDot").className="dot bad";
@@ -898,6 +1029,7 @@ async function status(){
     $("ollamaState").textContent="Модель недоступна";
     $("mcpState").textContent="MCP недоступен";
     renderTools([]);
+    renderToolPicker([]);
   }
 }
 async function reset(){
@@ -1302,6 +1434,27 @@ function init(){
   window.cybernovaWelcome=$("welcome").cloneNode(true);
   window.cybernovaGptWelcome=$("gptWelcome").cloneNode(true);
   showResearchScope({hosts:[],capture_detail:"evidence"});
+  try{
+    const saved=JSON.parse(window.localStorage.getItem("cybernova_tool_groups")||"[]");
+    if(Array.isArray(saved))state.toolGroups=saved.filter(id=>
+      TOOL_GROUP_FALLBACK.some(group=>group.id===id));
+  }catch(_){state.toolGroups=[];}
+  renderToolPicker([]);
+  $("toolPickerToggle").addEventListener("click",()=>{
+    toolPickerOpen($("toolPicker").hidden);
+  });
+  $("toolPickerClose").addEventListener("click",()=>toolPickerOpen(false));
+  $("toolPickerAuto").addEventListener("click",()=>{
+    state.toolGroups=[];persistToolGroups();renderToolPicker(state.toolGroupCatalog);
+  });
+  document.addEventListener("click",event=>{
+    if(!$("toolPicker").hidden&&
+       !event.target.closest("#toolPicker")&&
+       !event.target.closest("#toolPickerToggle"))toolPickerOpen(false);
+  });
+  document.addEventListener("keydown",event=>{
+    if(event.key==="Escape"&&!$("toolPicker").hidden)toolPickerOpen(false);
+  });
   $("sendButton").addEventListener("click",send);
   $("artifactFile").addEventListener("change",event=>importArtifact(event.target.files?.[0]));
   $("messageInput").addEventListener("keydown",e=>{
