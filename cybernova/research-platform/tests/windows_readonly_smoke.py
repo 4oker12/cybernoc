@@ -158,7 +158,7 @@ def run():
             if snapshot.get("ok") and (not snapshot.get("headings") or not snapshot.get("page_type")):
                 failures.append("browser_snapshot_semantic_map_incomplete")
             found = call("browser_find_text", {
-                "query": "Getting started", "max_matches": 3,
+                "query": "Installation", "max_matches": 3,
             }, important=True, detail=lambda x: {
                 "matches": len(x.get("matches", [])),
                 "total_matches": x.get("total_matches"),
