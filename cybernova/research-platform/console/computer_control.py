@@ -135,7 +135,7 @@ COMPUTER_TOOLS = [
           "Launch one allowlisted Windows diagnostic or settings application without elevation or shell execution.",
           {"app": {"type": "string", "enum": sorted(APP_COMMANDS)}}, ["app"]),
     _tool("computer_screenshot",
-          "Capture the visible local desktop and send the image to Account GPT for visual inspection. Use only when needed; visible personal information may be included."),
+          "Capture the visible local desktop as an image for a vision-capable model. Text-only models should use computer_ui_windows and computer_ui_controls instead; visible personal information may be included."),
     _tool("computer_ui_windows",
           "List visible top-level desktop windows by title for local UI navigation. No window contents or input values are read."),
     _tool("computer_ui_controls",
