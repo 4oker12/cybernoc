@@ -215,10 +215,21 @@ class Agent:
     def _call_registered_tool(self, name: str, args: dict, *, mcp=None,
                               authorized_targets=None, user_messages=None):
         if self.local_tool_runtime is not None and name in self.local_tool_runtime.tool_map:
-            return self.local_tool_runtime.call(
+            result, is_error = self.local_tool_runtime.call(
                 name, args, authorized_targets=authorized_targets,
                 user_messages=user_messages,
             )
+            if isinstance(result, dict) and isinstance(result.get("image_data_url"), str):
+                # The current DeepSeek/Ollama chat adapter is text-only. Do not
+                # serialize megabytes of base64 into its prompt; use DOM/UIA data.
+                result = dict(result)
+                result.pop("image_data_url", None)
+                result["visual_input"] = {
+                    "captured": True, "forwarded_to_model": False,
+                    "reason": "current_agent_model_adapter_is_text_only",
+                    "alternative": "Use browser_snapshot/browser_network or computer_ui_windows/computer_ui_controls.",
+                }
+            return result, is_error
         if mcp is None:
             return {"ok": False, "error": "mcp_backend_unavailable"}, True
         return mcp.call(name, args)
