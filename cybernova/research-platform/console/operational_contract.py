@@ -11,7 +11,11 @@ import re
 
 
 FALLBACK = """
-CYBERNOVA OPERATING RULES (LOCAL WINDOWS):
+CYBERNOVA OPERATING RULES:
+- ChatGPT in the user's main project conversation is the principal coordinator,
+  architect and reviewer. The local DeepSeek/Qwen model is the research and
+  execution agent. Account GPT inside the local UI is a separate session unless
+  explicitly connected; never assume shared chat history or tools.
 - Before update/install/restart/listener: identify Windows CMD context,
   repository branch and clean status; inspect listening ports and PID owners.
 - Never kill all Python/processes or remove/reset files to fix conflicts.
@@ -43,7 +47,7 @@ def load_operational_contract() -> str:
         sections = []
         for index, match in enumerate(matches):
             section_no = int(match.group(1))
-            if section_no not in (2, 3, 4, 6):
+            if section_no not in (1, 2, 3, 4, 6):
                 continue
             end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
             sections.append(source[match.start():end].strip())
