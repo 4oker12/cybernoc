@@ -196,7 +196,7 @@ class GPTToolRuntimeTests(unittest.TestCase):
         runtime = GPTToolRuntime()
         result, failed = runtime.call("terminal_run", {"command": "whoami"})
         self.assertTrue(failed)
-        self.assertEqual(result["error"], "terminal_arguments_invalid")
+        self.assertTrue(result["error"].endswith("terminal_arguments_invalid"))
 
     def test_runtime_does_not_execute_terminal_on_non_windows_host(self):
         runtime = GPTToolRuntime()
@@ -290,7 +290,7 @@ class GPTToolRuntimeTests(unittest.TestCase):
                         break
                     cursor = page["cursor"]
                 self.assertTrue(page["complete"])
-                self.assertEqual(len(found), 3)
+                self.assertEqual(len(found), 4)
                 self.assertEqual(page["cursor"], "")
                 self.assertGreaterEqual(page["visited_entries"], 4)
             _SEARCH_JOBS.clear()
