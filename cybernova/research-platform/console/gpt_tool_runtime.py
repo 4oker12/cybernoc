@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from threading import RLock
 
 try:
@@ -28,13 +29,12 @@ except ImportError:
     from computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
 
 
-MAX_TOOL_ROUNDS = 12
-MAX_TOOL_CALLS = 24
-MAX_TOOL_OUTPUT_CHARS = 12000
+MAX_TOOL_ROUNDS = 24
+MAX_TOOL_CALLS = 64
+MAX_TOOL_OUTPUT_CHARS = 50000
+MAX_TERMINAL_COMMAND_CHARS = 20000
+MAX_TERMINAL_TIMEOUT_SECONDS = 300
 
-# Only one simple command is accepted per call. No shell operators, variables,
-# command substitution, script blocks, redirection or chained commands.
-_FORBIDDEN_SCRIPT = re.compile(r"[;\|&<>$(){}" + chr(96) + r"%!^\"']")
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 _DOMAIN = re.compile(r"(?i)(?<![a-z0-9.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?![a-z0-9.-])")
 _SECRET = re.compile(
@@ -203,23 +203,29 @@ def build_tool_catalog() -> list[dict]:
             "command": {
                 "type": "string",
                 "description": (
-                    "One read-only Windows CMD command. Supported diagnostics: "
-                    "hostname, whoami, whoami /groups, whoami /priv, ver, systeminfo, "
-                    "ipconfig /all, ipconfig /displaydns, route print -4, "
-                    "netstat -ano, netstat -e, netstat -s, arp -a, getmac /v, "
-                    "tasklist /fo csv, driverquery /fo csv, sc query [service], "
-                    "powercfg /getactivescheme, where.exe <allowlisted-program>, "
-                    "netsh interface show interface, netsh interface ipv4 show config, "
-                    "netsh wlan show interfaces, netsh advfirewall show allprofiles, ping -n <count> <host>, "
-                    "tracert -d -h <hops> -w <ms> <host>, pathping, nslookup <host>, "
-                    "curl.exe -I --connect-timeout <seconds> --max-time <seconds> https://<host>/, "
-                    "git status, git log, git diff --stat, python --version. "
-                    "Exactly one command; no shell operators, scripts or writes. "
-                    "Network targets must have been named by the user in this task."
+                    "Arbitrary Windows CMD or PowerShell command, including multiple commands, "
+                    "pipes, redirects, variables and multiline scripts. Runs as the current "
+                    "Cybernova backend user. Do not use it to read credentials, cookies, private "
+                    "keys or unrelated personal data. Do not attempt privilege escalation. "
+                    "Ask before destructive or irreversible changes unless the user explicitly "
+                    "requested that exact operation."
                 ),
             },
+            "shell": {"type": "string", "enum": ["cmd", "powershell", "pwsh"]},
+            "cwd": {
+                "type": "string",
+                "description": "Working directory. Empty string uses the current user's home directory.",
+            },
+            "timeout_seconds": {
+                "type": "integer", "minimum": 1, "maximum": 300,
+                "description": "Execution timeout from 1 to 300 seconds.",
+            },
+            "max_output_chars": {
+                "type": "integer", "minimum": 1000, "maximum": 50000,
+                "description": "Maximum combined stdout/stderr characters returned.",
+            },
         },
-        "required": ["command"],
+        "required": ["command", "shell", "cwd", "timeout_seconds", "max_output_chars"],
         "additionalProperties": False,
     }
     status_schema = {
@@ -229,12 +235,12 @@ def build_tool_catalog() -> list[dict]:
     rows = [
         _function_tool(
             "terminal_run",
-            "Run one bounded, read-only diagnostic command in the local Windows Command Prompt (cmd.exe) process hosting Cybernova. This is the user's laptop only when the Cybernova backend is running locally. Never use it for writes, installs, privilege escalation or arbitrary scripts.",
+            "Run arbitrary Windows CMD, Windows PowerShell 5.1, or PowerShell 7 commands and multiline scripts on the local machine hosting Cybernova. No command allowlist: supports navigation, file operations, search, diagnostics, package tools, scripts, pipes and redirects. Runs with the backend process's current Windows permissions; it does not silently elevate. Output is bounded and redacted.",
             terminal_schema,
         ),
         _function_tool(
             "terminal_status",
-            "Check which operating system and local Windows CMD executable host this Account GPT tool runtime. Does not expose environment variables or secrets.",
+            "Detect local Windows CMD, Windows PowerShell 5.1 and PowerShell 7 availability, process elevation state, and installed computer-control dependencies. Does not expose environment variables or secrets.",
             status_schema,
         ),
     ]
@@ -261,208 +267,152 @@ def _redact_output(value: str) -> str:
     return value[:MAX_TOOL_OUTPUT_CHARS]
 
 
-def _target_from_command(command: str, name: str) -> str | None:
-    patterns = {
-        "nslookup": r"(?i)^\s*nslookup(?:\.exe)?\s+([^\s]+)",
-        "curl": r"(?i)https://([a-z0-9.-]+)(?:/|\s|$)",
-    }
-    pattern = patterns.get(name)
-    if pattern:
-        match = re.search(pattern, command)
-        return match.group(1).lower().rstrip(".") if match else None
-    tokens = command.split()
-    candidates = [
-        token for token in tokens[1:]
-        if token and not token.startswith("-") and not token.startswith("/")
-    ]
-    return candidates[-1] if candidates else None
+def _redact_output(value: str, limit: int = MAX_TOOL_OUTPUT_CHARS) -> str:
+    value = _SECRET.sub("[REDACTED]", value)
+    value = _EMAIL.sub("[REDACTED EMAIL]", value)
+    return value[:max(1000, min(int(limit), MAX_TOOL_OUTPUT_CHARS))]
 
 
-def _validate_terminal_command(command: object, authorized_targets: set[str]) -> str:
-    if not isinstance(command, str) or not 1 <= len(command.strip()) <= 900:
-        raise ValueError("terminal_command_invalid")
-    command = command.strip()
-    if "\n" in command or "\r" in command or _FORBIDDEN_SCRIPT.search(command):
-        raise ValueError("terminal_single_readonly_command_required")
-
-    first_token = command.split(None, 1)[0].lower()
-    first = first_token.rsplit("\\", 1)[-1]
-    base = first[:-4] if first.endswith(".exe") else first
-
-    if base == "git":
-        if not re.fullmatch(
-            r"(?i)git\s+(?:status(?:\s+--short)?|log(?:\s+--oneline)?|diff\s+--stat|diff\s+--name-only)",
-            command,
-        ):
-            raise ValueError("terminal_git_subcommand_not_allowlisted")
-        return command
-    if base in {"python", "py"}:
-        if not re.fullmatch(r"(?i)(?:python(?:\.exe)?|py(?:\.exe)?)\s+--version", command):
-            raise ValueError("terminal_python_command_not_allowlisted")
-        return command
-
-    if base in {"hostname", "ver", "systeminfo"}:
-        if len(command.split()) != 1:
-            raise ValueError("terminal_local_command_arguments_forbidden")
-        return command
-    if base == "whoami":
-        if not re.fullmatch(r"(?i)whoami(?:\.exe)?(?:\s+/(?:groups|priv))?", command):
-            raise ValueError("terminal_whoami_argument_not_allowlisted")
-        return command
-    if base == "tasklist":
-        if not re.fullmatch(r"(?i)tasklist(?:\.exe)?\s+/fo\s+(?:csv|table)", command):
-            raise ValueError("terminal_tasklist_argument_not_allowlisted")
-        return command
-    if base == "driverquery":
-        if not re.fullmatch(r"(?i)driverquery(?:\.exe)?\s+/fo\s+csv", command):
-            raise ValueError("terminal_driverquery_argument_not_allowlisted")
-        return command
-    if base == "sc":
-        if not re.fullmatch(r"(?i)sc(?:\.exe)?\s+query(?:\s+[A-Za-z0-9_.-]{1,80})?", command):
-            raise ValueError("terminal_sc_query_only")
-        return command
-    if base == "powercfg":
-        if not re.fullmatch(r"(?i)powercfg(?:\.exe)?\s+/getactivescheme", command):
-            raise ValueError("terminal_powercfg_readonly_only")
-        return command
-    if base == "where":
-        if not re.fullmatch(r"(?i)where(?:\.exe)?\s+(?:winget|python|cmd|chrome|msedge)", command):
-            raise ValueError("terminal_where_program_not_allowlisted")
-        return command
-    if base == "ipconfig":
-        if not re.fullmatch(r"(?i)ipconfig(?:\.exe)?\s+/(?:all|displaydns)", command):
-            raise ValueError("terminal_ipconfig_argument_not_allowlisted")
-        return command
-    if base == "route":
-        if not re.fullmatch(r"(?i)route(?:\.exe)?\s+print(?:\s+-(?:4|6))?", command):
-            raise ValueError("terminal_route_argument_not_allowlisted")
-        return command
-    if base == "netstat":
-        if not re.fullmatch(r"(?i)netstat(?:\.exe)?\s+(?:-an|-ano|-e|-s)", command):
-            raise ValueError("terminal_netstat_argument_not_allowlisted")
-        return command
-    if base == "arp":
-        if not re.fullmatch(r"(?i)arp(?:\.exe)?\s+-a", command):
-            raise ValueError("terminal_arp_argument_not_allowlisted")
-        return command
-    if base == "getmac":
-        if not re.fullmatch(r"(?i)getmac(?:\.exe)?\s+/v", command):
-            raise ValueError("terminal_getmac_argument_not_allowlisted")
-        return command
-    if base == "netsh":
-        if not re.fullmatch(
-            r"(?i)netsh(?:\.exe)?\s+(?:interface\s+show\s+interface|"
-            r"interface\s+ipv4\s+show\s+config|advfirewall\s+show\s+allprofiles|"
-            r"wlan\s+show\s+interfaces)",
-            command,
-        ):
-            raise ValueError("terminal_netsh_readonly_command_not_allowlisted")
-        return command
-
-    if base not in {"ping", "tracert", "pathping", "nslookup", "curl"}:
-        raise ValueError("terminal_command_not_allowlisted")
-
-    if base == "nslookup":
-        if not re.fullmatch(r"(?i)nslookup(?:\.exe)?\s+[A-Za-z0-9._:-]+", command):
-            raise ValueError("terminal_nslookup_custom_server_or_options_forbidden")
-    elif base == "ping":
-        match = re.fullmatch(
-            r"(?i)ping(?:\.exe)?\s+-n\s+(\d{1,2})(?:\s+-w\s+(\d{1,5}))?\s+([A-Za-z0-9._:-]+)",
-            command,
+def _shell_executable(shell: str) -> str:
+    if platform.system() != "Windows":
+        raise ValueError("local_windows_terminal_unavailable")
+    system_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
+    if shell == "cmd":
+        candidate = shutil.which("cmd.exe") or str(Path(system_root) / "System32" / "cmd.exe")
+    elif shell == "powershell":
+        candidate = shutil.which("powershell.exe") or str(
+            Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
         )
-        if not match:
-            raise ValueError("terminal_ping_options_not_allowlisted")
-        if not 1 <= int(match.group(1)) <= 20:
-            raise ValueError("terminal_ping_count_out_of_range")
-        if match.group(2) and not 100 <= int(match.group(2)) <= 5000:
-            raise ValueError("terminal_ping_timeout_out_of_range")
-    elif base == "tracert":
-        match = re.fullmatch(
-            r"(?i)tracert(?:\.exe)?(?:\s+-d)?(?:\s+-h\s+(\d{1,2}))?"
-            r"(?:\s+-w\s+(\d{1,5}))?\s+([A-Za-z0-9._:-]+)",
-            command,
-        )
-        if not match:
-            raise ValueError("terminal_tracert_options_not_allowlisted")
-        if match.group(1) and not 1 <= int(match.group(1)) <= 30:
-            raise ValueError("terminal_traceroute_hops_out_of_range")
-        if match.group(2) and not 100 <= int(match.group(2)) <= 2000:
-            raise ValueError("terminal_traceroute_timeout_out_of_range")
-    elif base == "pathping":
-        match = re.fullmatch(
-            r"(?i)pathping(?:\.exe)?(?:\s+-n)?\s+-q\s+(\d{1,2})"
-            r"(?:\s+-w\s+(\d{1,5}))?\s+([A-Za-z0-9._:-]+)",
-            command,
-        )
-        if not match:
-            raise ValueError("terminal_pathping_options_not_allowlisted")
-        if not 1 <= int(match.group(1)) <= 10:
-            raise ValueError("terminal_pathping_queries_out_of_range")
-        if match.group(2) and not 100 <= int(match.group(2)) <= 2000:
-            raise ValueError("terminal_pathping_timeout_out_of_range")
-    elif base == "curl":
-        match = re.fullmatch(
-            r"(?i)curl(?:\.exe)?\s+-I\s+--connect-timeout\s+(\d{1,2})"
-            r"\s+--max-time\s+(\d{1,2})\s+https://([a-z0-9.-]+)/?",
-            command,
-        )
-        if not match:
-            raise ValueError("terminal_curl_head_only_options_not_allowlisted")
-        if not 1 <= int(match.group(1)) <= 10 or not 1 <= int(match.group(2)) <= 30:
-            raise ValueError("terminal_curl_timeout_out_of_range")
+    elif shell == "pwsh":
+        candidate = shutil.which("pwsh.exe") or shutil.which("pwsh") or ""
+    else:
+        raise ValueError("terminal_shell_invalid")
+    if not candidate or not Path(candidate).is_file():
+        raise ValueError("terminal_shell_not_installed:" + shell)
+    return candidate
 
-    target = _target_from_command(command, base)
-    if not target:
-        raise ValueError("terminal_network_target_missing")
-    normalized = target.lower().rstrip(".")
+
+def _terminal_argv(shell: str, executable: str, command: str) -> list[str]:
+    if shell == "cmd":
+        return [executable, "/d", "/s", "/c", command]
+    return [executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
+
+
+def _validate_terminal_request(command: object, shell: object, cwd: object,
+                               timeout_seconds: object, max_output_chars: object) -> tuple[str, str, Path, int, int]:
+    if not isinstance(command, str) or not command.strip() or len(command) > MAX_TERMINAL_COMMAND_CHARS:
+        raise ValueError("terminal_command_invalid_or_too_large")
+    if "\x00" in command:
+        raise ValueError("terminal_command_contains_nul")
+    if shell not in {"cmd", "powershell", "pwsh"}:
+        raise ValueError("terminal_shell_invalid")
+    if not isinstance(cwd, str) or len(cwd) > 1000:
+        raise ValueError("terminal_working_directory_invalid")
+    timeout = int(timeout_seconds) if type(timeout_seconds) is int else 0
+    if not 1 <= timeout <= MAX_TERMINAL_TIMEOUT_SECONDS:
+        raise ValueError("terminal_timeout_out_of_range")
+    output_limit = int(max_output_chars) if type(max_output_chars) is int else 0
+    if not 1000 <= output_limit <= MAX_TOOL_OUTPUT_CHARS:
+        raise ValueError("terminal_output_limit_out_of_range")
+    raw_cwd = os.path.expandvars(os.path.expanduser(cwd.strip())) if cwd.strip() else str(Path.home())
+    working_dir = Path(raw_cwd)
+    if not working_dir.is_absolute():
+        working_dir = Path.home() / working_dir
     try:
-        normalized = str(ipaddress.ip_address(normalized))
-    except ValueError:
-        pass
-    if normalized not in authorized_targets:
-        raise ValueError("terminal_target_not_explicitly_named_by_user")
-    return command
+        working_dir = working_dir.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise ValueError("terminal_working_directory_not_found") from None
+    if not working_dir.is_dir():
+        raise ValueError("terminal_working_directory_not_directory")
+    return command, shell, working_dir, timeout, output_limit
 
 
-def _run_terminal(command: str, authorized_targets: set[str]) -> dict:
+def _terminal_environment() -> dict[str, str]:
+    env = dict(os.environ)
+    sensitive_name = re.compile(
+        r"(?i)(?:TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|COOKIE|AUTH)"
+    )
+    for key in list(env):
+        if sensitive_name.search(key):
+            env.pop(key, None)
+    return env
+
+
+def _run_terminal(command: str, shell: str = "cmd", cwd: str = "",
+                  timeout_seconds: int = 60, max_output_chars: int = 20000) -> dict:
     if platform.system() != "Windows":
         return {
             "ok": False, "error": "local_windows_terminal_unavailable",
             "execution_host": platform.system().lower(),
         }
-    command = _validate_terminal_command(command, authorized_targets)
-    system_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
-    cmd = shutil.which("cmd.exe") or str(Path(system_root) / "System32" / "cmd.exe")
-    if not Path(cmd).is_file():
-        return {"ok": False, "error": "windows_cmd_not_found"}
-    timeout = 45 if command.lower().startswith(("pathping", "pathping.exe")) else 20
-    env_names = (
-        "PATH", "SystemRoot", "WINDIR", "USERPROFILE", "LOCALAPPDATA",
-        "APPDATA", "TEMP", "TMP", "ProgramFiles", "ProgramFiles(x86)",
-        "HOMEDRIVE", "HOMEPATH", "ComSpec", "PATHEXT",
+    command, shell, working_dir, timeout, output_limit = _validate_terminal_request(
+        command, shell, cwd, timeout_seconds, max_output_chars,
     )
-    env = {key: os.environ[key] for key in env_names if key in os.environ}
     try:
-        result = subprocess.run(
-            [cmd, "/d", "/s", "/c", command],
-            cwd=str(SOURCE), shell=False, capture_output=True, text=False,
-            timeout=timeout, stdin=subprocess.DEVNULL, env=env,
+        executable = _shell_executable(shell)
+        argv = _terminal_argv(shell, executable, command)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "shell": shell}
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    started = time.monotonic()
+    try:
+        process = subprocess.Popen(
+            argv, cwd=str(working_dir), shell=False,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=_terminal_environment(), creationflags=creationflags,
         )
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "command": command, "error": "terminal_timeout",
-                "timeout_seconds": timeout}
     except OSError as exc:
-        return {"ok": False, "command": command, "error": type(exc).__name__}
-    stdout = _decode_cmd_output(result.stdout or b"")
-    stderr = _decode_cmd_output(result.stderr or b"")
-    output = _redact_output((stdout + "\n" + stderr).strip())
+        return {
+            "ok": False, "error": type(exc).__name__, "shell": shell,
+            "cwd": str(working_dir),
+        }
+    timed_out = False
+    try:
+        stdout_raw, stderr_raw = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        taskkill = shutil.which("taskkill.exe") or str(
+            Path(os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows")
+            / "System32" / "taskkill.exe"
+        )
+        try:
+            if Path(taskkill).is_file():
+                subprocess.run(
+                    [taskkill, "/PID", str(process.pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=8, check=False,
+                )
+            else:
+                process.kill()
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                process.kill()
+            except OSError:
+                pass
+        try:
+            stdout_raw, stderr_raw = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            stdout_raw, stderr_raw = b"", b""
+    stdout = _decode_cmd_output(stdout_raw or b"")
+    stderr = _decode_cmd_output(stderr_raw or b"")
+    combined = stdout + (("\n" if stdout and stderr else "") + stderr)
+    output = _redact_output(combined, output_limit)
+    truncated = len(combined) > output_limit
     return {
-        "ok": result.returncode == 0,
-        "command": command,
-        "exit_code": result.returncode,
+        "ok": process.returncode == 0 and not timed_out,
+        "command": command[:500],
+        "shell": {"cmd": "Windows CMD", "powershell": "Windows PowerShell", "pwsh": "PowerShell 7"}[shell],
+        "shell_id": shell,
+        "cwd": str(working_dir),
+        "exit_code": process.returncode,
+        "timed_out": timed_out,
+        "timeout_seconds": timeout,
+        "duration_ms": round((time.monotonic() - started) * 1000, 1),
         "output": output,
+        "output_truncated": truncated,
         "execution_host": "local_windows",
-        "shell": "Windows CMD",
+        "execution_identity": "current_backend_process_token",
+        "elevated": None,
     }
 
 
@@ -504,12 +454,14 @@ class GPTToolRuntime:
                     if args:
                         raise ValueError("terminal_status_takes_no_arguments")
                     windows = platform.system() == "Windows"
-                    cmd_exe = bool(
-                        shutil.which("cmd.exe") or Path(
-                            os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows",
-                            "System32", "cmd.exe",
-                        ).is_file()
-                    ) if windows else False
+                    shell_paths = {}
+                    if windows:
+                        for shell_id in ("cmd", "powershell", "pwsh"):
+                            try:
+                                shell_paths[shell_id] = _shell_executable(shell_id)
+                            except ValueError:
+                                shell_paths[shell_id] = None
+                    cmd_exe = bool(shell_paths.get("cmd"))
                     modules = {}
                     for module in ("psutil", "pyautogui", "pywinauto", "win32com", "playwright"):
                         try:
@@ -520,6 +472,9 @@ class GPTToolRuntime:
                         "ok": True, "os": platform.system(),
                         "cmd_exe": cmd_exe,
                         "terminal": "Windows CMD" if windows and cmd_exe else None,
+                        "shells": shell_paths,
+                        "powershell_5_1": bool(shell_paths.get("powershell")),
+                        "powershell_7": bool(shell_paths.get("pwsh")),
                         "execution_host": "local_windows" if windows else "remote_or_non_windows",
                         "computer_tool_dependencies": modules,
                         "computer_tool_dependencies_ready": all(
@@ -528,9 +483,13 @@ class GPTToolRuntime:
                         ) if windows else False,
                     }, False
                 if name == "terminal_run":
-                    if set(args) != {"command"}:
+                    required = {"command", "shell", "cwd", "timeout_seconds", "max_output_chars"}
+                    if set(args) != required:
                         raise ValueError("terminal_arguments_invalid")
-                    result = _run_terminal(args["command"], set(authorized_targets or ()))
+                    result = _run_terminal(
+                        args["command"], args["shell"], args["cwd"],
+                        args["timeout_seconds"], args["max_output_chars"],
+                    )
                     return result, not bool(result.get("ok"))
                 if name in COMPUTER_TOOL_NAMES:
                     return computer_control_call(name, args, user_messages=user_messages)
