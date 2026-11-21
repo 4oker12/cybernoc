@@ -15,7 +15,8 @@
     'button[data-testid="send-button"]',
     'button[aria-label="Send prompt"]',
     'button[aria-label="Send message"]',
-    'button[aria-label^="Send"]'
+    'button[aria-label^="Send"]',
+    'button[aria-label*="Отправ"]'
   ].join(",");
 
   const MAX_CLIPBOARD_CHARS = 100000;
@@ -75,8 +76,7 @@
     if (!candidate) return null;
 
     if (candidate.id === "prompt-textarea" ||
-        candidate.getAttribute("data-testid") === "prompt-textarea" ||
-        candidate.tagName === "TEXTAREA") {
+        candidate.getAttribute("data-testid") === "prompt-textarea") {
       return candidate;
     }
 
@@ -92,7 +92,14 @@
 
   function findCurrentComposer(preferred) {
     if (preferred?.isConnected) return preferred;
-    return document.querySelector(COMPOSER_SELECTOR);
+    const primary = document.querySelector(
+      '#prompt-textarea, [data-testid="prompt-textarea"], [contenteditable="true"][role="textbox"]'
+    );
+    if (primary) return primary;
+    const form = [...document.querySelectorAll("form")].find(item =>
+      item.querySelector(SEND_SELECTOR)
+    );
+    return form?.querySelector('textarea[placeholder], [contenteditable="true"]') || null;
   }
 
   function composerText(element) {
