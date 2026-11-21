@@ -102,7 +102,6 @@ class AccountGPTToolLoopTests(unittest.TestCase):
               ]),
               patch.object(siwc_inference.connection, "access", return_value="test-token"),
               patch.object(siwc_inference.request, "build_opener", return_value=opener)):
-             patch.object(siwc_inference.request, "build_opener", return_value=opener):
             result = siwc_inference.chat(
                 "gpt-6.2-sol",
                 [{"role": "user", "content": "Проверь локальный терминал."}],
@@ -137,11 +136,11 @@ class AccountGPTToolLoopTests(unittest.TestCase):
     def test_selected_browser_bundle_is_the_only_catalog_exposed_to_chatgpt(self):
         opener = FakeOpener(tool_name="browser_tabs")
         runtime = FakeRuntime(tool_name="browser_tabs")
-        with patch.object(siwc_inference, "models", return_value=[
-                 {"slug": "gpt-6.2-sol", "display_name": "GPT"},
-             ]), \\
-             patch.object(siwc_inference.connection, "access", return_value="test-token"), \\
-             patch.object(siwc_inference.request, "build_opener", return_value=opener):
+        with (patch.object(siwc_inference, "models", return_value=[
+                  {"slug": "gpt-6.2-sol", "display_name": "GPT"},
+              ]),
+              patch.object(siwc_inference.connection, "access", return_value="test-token"),
+              patch.object(siwc_inference.request, "build_opener", return_value=opener)):
             siwc_inference.chat(
                 "gpt-6.2-sol",
                 [{"role": "user", "content": "Открой вкладки."}],
