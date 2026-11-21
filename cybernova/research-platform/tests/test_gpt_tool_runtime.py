@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from console.gpt_tool_runtime import (
-    GPTToolRuntime, _validate_terminal_command, build_tool_catalog,
+    GPTToolRuntime, _run_terminal, _validate_terminal_command, build_tool_catalog,
     extract_user_targets,
 )
 
@@ -161,6 +161,22 @@ class GPTToolRuntimeTests(unittest.TestCase):
             _validate_terminal_command("ping -t 185.238.114.6", {"185.238.114.6"})
         with self.assertRaisesRegex(ValueError, "terminal_ping_count_out_of_range"):
             _validate_terminal_command("ping -n 99 185.238.114.6", {"185.238.114.6"})
+
+    def test_terminal_executes_through_local_cmd_exe(self):
+        from types import SimpleNamespace
+        cmd_path = r"C:\Windows\System32\cmd.exe"
+        with patch("console.gpt_tool_runtime.platform.system", return_value="Windows"), \
+             patch("console.gpt_tool_runtime.shutil.which", return_value=cmd_path), \
+             patch("console.gpt_tool_runtime.Path.is_file", return_value=True), \
+             patch("console.gpt_tool_runtime.subprocess.run",
+                   return_value=SimpleNamespace(returncode=0, stdout=b"CMD OK", stderr=b"")) as run:
+            result = _run_terminal("ipconfig /all", set())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["shell"], "Windows CMD")
+        self.assertEqual(result["execution_host"], "local_windows")
+        args = run.call_args.args[0]
+        self.assertEqual(args, [cmd_path, "/d", "/s", "/c", "ipconfig /all"])
+        self.assertFalse(run.call_args.kwargs["shell"])
 
     def test_runtime_does_not_execute_terminal_on_non_windows_host(self):
         runtime = GPTToolRuntime()
