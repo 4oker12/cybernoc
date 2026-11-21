@@ -107,10 +107,13 @@ const fetch=async path=>({
    return {};
  }
 });
-const context={document,window,fetch,URLSearchParams,console};
+const context={document,window,fetch,URLSearchParams,console,
+  navigator:{clipboard:{readText:async()=>'PS> Get-Process\\npython 1234'}}};
 vm.runInNewContext(app,context);
 if(typeof callbacks.DOMContentLoaded!=='function')throw Error('Init handler missing');
 callbacks.DOMContentLoaded();
+if(typeof byId('pasteOutputButton').listeners.click!=='function')
+ throw Error('Clipboard paste button not bound');
 for(const id of ['sendButton','newSession','modeQwen','modeChatGPT','navChatGPT','navTools']){
  if(typeof byId(id).listeners.click!=='function')throw Error('Button not bound: '+id);
 }
@@ -151,6 +154,17 @@ if(!excerpt.endsWith('…') || excerpt.length>180)
 detail.open=true;detail.listeners.toggle();
 if(detail.children[1].textContent!==largeMessage)
  throw Error('Expansion lost the full original answer');
+
+Promise.resolve().then(async()=>{
+ await byId('pasteOutputButton').listeners.click();
+ const pasted=byId('messageInput').value;
+ if(!pasted.includes('Вывод из терминала:'))
+   throw Error('Clipboard output header was not inserted');
+ if(!pasted.includes('PS> Get-Process\\npython 1234'))
+   throw Error('Clipboard text was not preserved');
+ if(!byId('uploadStatus').textContent.includes('нажми Enter'))
+   throw Error('Paste action did not tell the user to review and press Enter');
+}).catch(error=>{console.error(error);process.exitCode=1;});
 """
         run=subprocess.run(["node","-e",script,html,app],
                            capture_output=True,text=True,timeout=20)
