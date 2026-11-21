@@ -77,6 +77,7 @@ def review(model: str, prompt: str, *, user_context: str = "") -> dict:
     )
     chunks = []
     completed = False
+    usage = None
     total_bytes = 0
     total_chars = 0
     try:
@@ -103,6 +104,11 @@ def review(model: str, prompt: str, *, user_context: str = "") -> dict:
                         chunks.append(delta)
                 elif kind == "response.completed":
                     completed = True
+                    completed_response = event.get("response")
+                    usage = _normalized_usage(
+                        completed_response.get("usage")
+                        if isinstance(completed_response, dict) else None
+                    )
                     break
                 elif kind in {"response.failed", "error"}:
                     raise SIWCError("gpt_response_failed")
@@ -115,7 +121,17 @@ def review(model: str, prompt: str, *, user_context: str = "") -> dict:
     answer = "".join(chunks).strip()
     if not answer:
         raise SIWCError("gpt_response_empty")
-    return {"answer": answer, "model": model, "source": "chatgpt_plan_responses"}
+    measured = bool(usage and (
+        usage.get("input_tokens") is not None or usage.get("output_tokens") is not None
+    ))
+    usage = usage or _normalized_usage(None)
+    usage.update({
+        "available": measured, "requests": 1,
+        "measured_requests": 1 if measured else 0,
+        "complete": measured,
+    })
+    return {"answer": answer, "model": model, "source": "chatgpt_plan_responses",
+            "usage": usage}
 
 
 
