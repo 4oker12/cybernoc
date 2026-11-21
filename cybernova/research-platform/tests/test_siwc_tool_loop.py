@@ -68,7 +68,7 @@ class FakeRuntime:
                            "required": [], "additionalProperties": False},
             "strict": True,
         }]
-        self.result = result or {"ok": True, "os": "Windows", "powershell_7": True}
+        self.result = result or {"ok": True, "os": "Windows", "cmd_exe": True, "terminal": "Windows CMD"}
         self.calls = []
 
     def call(self, name, args, *, authorized_targets=None, user_messages=None):
