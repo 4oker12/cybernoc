@@ -39,14 +39,24 @@ report the limitation; do not claim compliance.
   Some historical source files and names still include `Vast` or `tunnel_access`;
   their presence does NOT prove that a remote Vast machine is running.
   Use remote infrastructure only after a new, explicit request.
-- Default operator terminal is **Windows CMD**, not Git Bash or PowerShell.
-  All directly pasteable commands must use valid CMD syntax. If PowerShell is
-  needed, wrap it in `powershell.exe -NoProfile -Command "..."`, or provide an
-  audited local `.cmd` launcher for a versioned PowerShell script.
-- Do not put multiple CMD commands together without `&&`, `&` or correct
-  line breaks. Prefer a single pasteable block with labelled stages, e.g.
-  `[1/5] PORTS`, `[2/5] PROCESSES`, `[3/5] GIT`, `[4/5] UPDATE`,
-  `[5/5] VERIFY`. Fail at the first blocking error.
+- The user uses both **Windows PowerShell 5.1** and **CMD**. Determine the
+  actual shell from the prompt before generating commands (`PS ...>` means
+  PowerShell; `C:\\...>` means CMD). Never mix their syntax.
+- PowerShell 5.1 has a confirmed multiline-paste problem: pasted multiline
+  scripts can be reversed or corrupted. Never provide multiline PowerShell
+  blocks for direct paste. Simple PowerShell commands must be one physical line;
+  combine multiple statements with semicolons.
+- Complex PowerShell scripts containing `try/catch`, loops, functions or nested
+  blocks must be supplied as one complete
+  `powershell.exe -NoProfile -EncodedCommand BASE64` command. Generate Base64
+  from the complete script using UTF-16LE, decode it back and validate the
+  original syntax before sharing. Never invent, truncate or use a placeholder
+  for Base64.
+- For CMD, use valid CMD syntax and one-line commands or a reviewed `.cmd`
+  launcher. Chain dependent commands with `&&`; do not paste PowerShell syntax
+  into CMD.
+- Prefer one command block with 4–5 labelled stages and stop at the first
+  blocking error. Include the stage name and preserve the exact error output.
 
 ## 3. Mandatory preflight BEFORE ANY update, install, restart or new listener
 
@@ -117,9 +127,12 @@ Verify all expected ports listening and HTTP application readiness, not merely
 When the user asks for an operational fix or update:
 
 1. First state **what is confirmed**, the likely cause, and what will change.
-2. Give **one CMD-ready block** (or one committed `.cmd` launcher) instead
-   of repeated fragments. Mark each stage and **stop on error**, recording
-   which stage failed. Favor reversible read-only checks before changes.
+2. Give **one block in the user's actual shell** instead of repeated fragments.
+   For PowerShell 5.1, obey the one-line / UTF-16LE Base64 rules in Section 2;
+   for CMD, use CMD syntax. Prefer 4–5 labelled stages and stop on error.
+   For project operations, make port/PID ownership inspection the first stage
+   before any update, install, start, stop, restart or listener change. Favor
+   reversible read-only checks before changes.
 3. Explain clearly what is **checked**, **changed**, **not changed**, and
    what constitutes success.
 4. Add the exact next commands for any claimed verification, unless the check
@@ -138,3 +151,17 @@ ChatGPT browser session or for a DeepSeek model invoked through an API.
 Every agent entry point must explicitly load/reference these rules in its own
 trusted instruction path, and this should be tested. Do not claim that writing
 this file alone activates the instructions in all agents.
+
+## 8. ChatGPT Project instructions and repository instructions
+
+- This `AGENTS.md` is repository guidance. It affects a local agent only when
+  that agent's trusted entry point explicitly loads it; verify the loader path
+  and effective prompt instead of assuming automatic discovery.
+- The ChatGPT Project's own **Project Instructions** are a separate setting and
+  are not changed by a Git commit. The paste-ready text is maintained in
+  `docs/CHATGPT_PROJECT_INSTRUCTIONS.md`. Keep it concise and synchronized
+  with this file. The full operational handoff is in
+  `docs/CYBERNOVA_MASTER_CONTEXT.md`.
+- Do not state that ChatGPT Project settings, local profile settings or the
+  installed Windows runtime were changed merely because repository files were
+  committed. Report each layer separately.
