@@ -52,6 +52,7 @@ try:
     from .siwc_chat_store import GPTChatStore, GPTChatError
     from .research_scope import ResearchScopeStore, scope_profile
     from .profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
+    from .model_settings import ModelSettingsError, apply_model_settings, get_model_settings
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS
     from followups import generate_followups
@@ -83,6 +84,7 @@ except ImportError:
     from siwc_chat_store import GPTChatStore, GPTChatError
     from research_scope import ResearchScopeStore, scope_profile
     from profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
+    from model_settings import ModelSettingsError, apply_model_settings, get_model_settings
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -331,6 +333,14 @@ class ProfileSettingsRequest(BaseModel):
     settings: dict
 
 
+class ModelSettingsRequest(BaseModel):
+    provider: str = Field(pattern="^(ollama|openai_compatible)$")
+    model: str = Field(min_length=1, max_length=160)
+    base_url: str = Field(default="", max_length=500)
+    api_key: str | None = Field(default=None, max_length=10000)
+    clear_api_key: bool = False
+
+
 class CollaborationStartRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=3000)
     model: str = Field(min_length=1, max_length=160)
@@ -511,6 +521,26 @@ def run_shared_utility(payload: SharedToolRequest):
         return {"tool": payload.name, "result": result}
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)[:160]) from None
+
+
+@app.get("/api/model-config")
+def get_model_config():
+    try:
+        return {"settings": get_model_settings()}
+    except ModelSettingsError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from None
+
+
+@app.post("/api/model-config")
+def save_model_config(payload: ModelSettingsRequest):
+    try:
+        client, settings = apply_model_settings(payload.dict())
+        # Current requests keep their existing client object; subsequent turns
+        # and background continuations receive the newly selected provider.
+        agent.ollama = client
+        return {"settings": settings, "applied": True}
+    except ModelSettingsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 @app.get("/api/profile-settings")
@@ -729,7 +759,7 @@ def status():
         [t["name"] for t in gpt_tool_runtime.mcp_tools()]
     ))
     return {
-        "model": MODEL,
+        "model": getattr(agent.ollama, "model", MODEL),
         "source_commit": os.environ.get("CYBERNOVA_SOURCE_COMMIT","unknown"),
         "ollama_ready": _ollama_health() if os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama") == "ollama" else False,
         "model_provider": os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama"),
