@@ -60,13 +60,15 @@ class FakeLocalToolRuntime:
         }]
         self.tool_map = {item["name"]: item for item in self.tools}
 
-    def mcp_tools(self):
+    def mcp_tools(self, groups=None):
         return [{
             "name": item["name"], "description": item["description"],
             "inputSchema": item["parameters"],
-        } for item in self.tools]
+        } for item in self.tools
+            if not groups or "computer" in groups]
 
-    def call(self, name, args, *, authorized_targets=None, user_messages=None):
+    def call(self, name, args, *, authorized_targets=None, user_messages=None,
+             enabled_groups=None):
         self.calls.append((name, args, set(authorized_targets or ()), user_messages))
         if self.image:
             return {"ok": True, "image_data_url": "data:image/png;base64,AAAA"}, False
@@ -144,6 +146,34 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(mcp.calls, [])
         advertised = [tool["function"]["name"] for tool in lm.prompts[0][1]]
         self.assertIn("computer_system_overview", advertised)
+
+    def test_selected_tool_bundle_limits_advertised_tools_and_runtime(self):
+        local = FakeLocalToolRuntime()
+        lm = FakeOllama([
+            calls(("computer_system_overview", {})),
+            {"role": "assistant", "content": "Windows доступна."},
+        ])
+        out = Agent(lm, lambda: FakeMCP(), local_tool_runtime=local).run(
+            [], "Проверь компьютер", force_tools=False, tool_groups=["computer"],
+        )
+        advertised = [tool["function"]["name"] for tool in lm.prompts[0][1]]
+        self.assertEqual(advertised, ["computer_system_overview"])
+        self.assertEqual(out["tool_calls"], 1)
+        self.assertEqual(local.calls[0][0], "computer_system_overview")
+
+    def test_agent_reports_actual_token_usage_across_model_rounds(self):
+        first = calls(("ip_network_summary", {"cidr": "192.0.2.7/24"}))
+        first["_usage"] = {"input_tokens": 120, "output_tokens": 15}
+        final = {"role": "assistant", "content": "Сеть 192.0.2.0/24.",
+                 "_usage": {"input_tokens": 180, "output_tokens": 25}}
+        out = Agent(FakeOllama([first, final]), lambda: FakeMCP()).run(
+            [], "Проверь подсеть", force_tools=False,
+        )
+        self.assertEqual(out["usage"]["input_tokens"], 300)
+        self.assertEqual(out["usage"]["output_tokens"], 40)
+        self.assertEqual(out["usage"]["total_tokens"], 340)
+        self.assertEqual(out["usage"]["requests"], 2)
+        self.assertTrue(out["usage"]["complete"])
 
     def test_shared_local_tools_remain_available_when_remote_mcp_is_down(self):
         local = FakeLocalToolRuntime()
