@@ -201,7 +201,7 @@ def _allowed_http(url: str, hosts: set[str]) -> bool:
 
 
 class Agent:
-    def __init__(self, ollama=None, mcp_factory=None):
+    def __init__(self, ollama=None, mcp_factory=None, local_tool_runtime=None):
         if ollama is None:
             try:
                 from .model_providers import build_model_client
@@ -210,6 +210,18 @@ class Agent:
             ollama = build_model_client()
         self.ollama = ollama
         self.mcp_factory = mcp_factory or (lambda: MCPClient())
+        self.local_tool_runtime = local_tool_runtime
+
+    def _call_registered_tool(self, name: str, args: dict, *, mcp=None,
+                              authorized_targets=None, user_messages=None):
+        if self.local_tool_runtime is not None and name in self.local_tool_runtime.tool_map:
+            return self.local_tool_runtime.call(
+                name, args, authorized_targets=authorized_targets,
+                user_messages=user_messages,
+            )
+        if mcp is None:
+            return {"ok": False, "error": "mcp_backend_unavailable"}, True
+        return mcp.call(name, args)
 
     def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True, scope: dict | None = None, user_context: str = "", profile_instructions: str = "") -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
@@ -243,21 +255,47 @@ class Agent:
         context.append({"role": "user", "content": text})
         events = []
         pending_requests = []
+        task_messages = [
+            {"role": item["role"], "content": item["content"]}
+            for item in history[-16:]
+            if isinstance(item, dict) and item.get("role") in {"user", "assistant"}
+            and isinstance(item.get("content"), str)
+        ] + [{"role": "user", "content": text}]
+        authorized_targets = extract_user_targets(task_messages)
+        authorized_targets.update(
+            str(host).lower().rstrip(".") for host in scope_hosts
+            if isinstance(host, str) and host.strip()
+        )
+        mcp = None
+        remote_rows = []
         try:
             mcp = self.mcp_factory()
-            registered = discovered_tools(mcp.initialize())
-            descriptors = {t["name"]: t for t in registered}
-            tools = _tool_schema(registered)
+            remote_rows = mcp.initialize()
         except (BackendError, ToolPolicyError) as exc:
             events.append({"type": "mcp_error", "message": str(exc)[:240]})
-            tools, descriptors, mcp = [], {}, None
+        local_rows = (
+            self.local_tool_runtime.mcp_tools()
+            if self.local_tool_runtime is not None else []
+        )
+        local_names = {row["name"] for row in local_rows}
+        combined_rows = local_rows + [
+            row for row in remote_rows
+            if isinstance(row, dict) and row.get("name") not in local_names
+        ]
+        try:
+            registered = discovered_tools(combined_rows)
+            descriptors = {t["name"]: t for t in registered}
+            tools = _tool_schema(registered)
+        except ToolPolicyError as exc:
+            events.append({"type": "tool_catalog_error", "message": str(exc)[:240]})
+            descriptors, tools = {}, []
         count, gets, executed = 0, 0, 0
         selected_by = "native"
         try:
             for round_no in range(MAX_ROUNDS):
                 result = self.ollama.chat(context, tools if tools and round_no < MAX_ROUNDS - 1 else [])
                 calls = result.get("tool_calls") or []
-                if (not calls and round_no == 0 and force_tools and tools and mcp):
+                if (not calls and round_no == 0 and force_tools and tools):
                     # Some derivative models ignore native tool_calls. The
                     # fallback still asks the active model to SELECT tools, and every tool
                     # goes through exactly the same strict validation.
@@ -330,13 +368,20 @@ class Agent:
                         r"(?i)(?:открой|исследуй|изучи|проверь|проанализируй|собери|network|devtools|браузер|сайт)",
                         text))
                     if selected_url and browser_intent and round_no == 0:
-                        chosen = "browser_network" if re.search(
+                        wants_network = bool(re.search(
                             r"(?i)(?:network|devtools|сетевы[хе]|запрос[ыов])", text
-                        ) else "browser_open"
+                        ))
+                        chosen = (
+                            "browser_network" if wants_network and "browser_network" in descriptors
+                            else "browser_navigate" if "browser_navigate" in descriptors
+                            else "browser_open"
+                        )
                         if chosen in descriptors:
-                            observed, error_flag = mcp.call(chosen, {
-                                "url": selected_url
-                            })
+                            observed, error_flag = self._call_registered_tool(
+                                chosen, {"url": selected_url}, mcp=mcp,
+                                authorized_targets=authorized_targets,
+                                user_messages=task_messages,
+                            )
                             executed += 1
                             selected_by = "evidence_first_fallback"
                             serialized = json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]
@@ -446,7 +491,16 @@ class Agent:
                                 gets += 1
                                 safe_result, failed = mcp.call(name, args)
                                 executed += 1
+                        elif name in local_names:
+                            safe_result, failed = self._call_registered_tool(
+                                name, args, mcp=mcp,
+                                authorized_targets=authorized_targets,
+                                user_messages=task_messages,
+                            )
+                            executed += 1
                         elif name in REVIEWED_TOOLS:
+                            if mcp is None:
+                                raise BackendError("mcp_backend_unavailable")
                             safe_result, failed = mcp.call(name, args)
                             executed += 1
                         else:
