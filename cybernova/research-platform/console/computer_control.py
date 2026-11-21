@@ -54,7 +54,8 @@ HIGH_IMPACT_UI = re.compile(
     r"disable|deactivate|turn\s+off|stop|kill|terminate|submit|send|purchase|"
     r"pay|confirm|apply|save|scan|quarantine|clean|allow|block|enable|"
     r"install|update|оплат|удал|сброс|восстанов|отключ|выключ|перезапуск|"
-    r"останов|подтверд|примен|сохран|скан|карантин|очист|разреш|установ|обнов)"
+    r"останов|подтверд|примен|сохран|скан|карантин|очист|разреш|установ|обнов|"
+    r"\\b(ok|yes|next|continue|finish|accept|agree|да|ок|далее|продолжить|готово)\\b)"
 )
 SAFE_UI_CONTROL_TYPES = {
     "Button", "TabItem", "TreeItem", "ListItem", "MenuItem", "Hyperlink",
@@ -549,7 +550,7 @@ def _startup_items() -> dict:
     ]
     for folder in startup_dirs:
         try:
-            if folder.is_dir() and not any(_sensitive_component(p) for p in folder.parts):
+            if folder.is_dir():
                 for item in folder.iterdir():
                     if not item.is_symlink() and not _sensitive_component(item.name):
                         rows.append({"startup_folder": str(folder), "name": item.name[:180]})
