@@ -190,7 +190,7 @@ def run():
             "page1_results": len(page_one), "page2_results": len(page_two),
             "overlap": overlap, "new_page2_results": len(page_two - page_one),
             "first_result_opened": bool(first_search_url),
-        }, ensure_ascii=False))
+        }, ensure_ascii=True))
         if not pagination_ok:
             warnings.append("search_pagination_not_distinct")
         # Probe alternative read-only public search providers if Google's
@@ -228,7 +228,7 @@ def run():
                     "test": "public_search_provider_probe",
                     "provider": host, "status": "WARN",
                     "error": type(exc).__name__,
-                }, ensure_ascii=False))
+                }, ensure_ascii=True))
 
         call("research_source_open", {"url": "https://playwright.dev/python/docs/intro"})
         call("research_source_open", {"url": "https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-antivirus-windows"})
