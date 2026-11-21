@@ -22,7 +22,7 @@ except ImportError:
 
 GOOGLE_HOST = "www.google.com"
 MAX_QUERY = 500
-MAX_RESULTS = 8
+MAX_RESULTS = 10
 MAX_OPEN_TEXT = 9000
 _RATE_LOCK = threading.Lock()
 _RATE = {"search": deque(), "open": deque()}
@@ -161,12 +161,15 @@ def _extract_results(page: dict) -> list[dict]:
     return results
 
 
-def google_search(query: str, *, blocked_hosts=(), reader=None) -> dict:
-    """Search public Google results; never bypass a CAPTCHA or consent wall."""
+def google_search(query: str, *, page: int = 1, blocked_hosts=(), reader=None) -> dict:
+    """Search one page of public Google results; never bypass a CAPTCHA or consent wall."""
     clean = sanitize_search_query(query, blocked_hosts)
+    if isinstance(page, bool) or not isinstance(page, int) or not 1 <= page <= 5:
+        raise ResearchWebError("search_page_out_of_range")
     _rate_limit("search")
     url = "https://" + GOOGLE_HOST + "/search?" + urlencode({
         "q": clean, "num": str(MAX_RESULTS), "hl": "en",
+        "start": str((page - 1) * MAX_RESULTS),
     })
     read = reader or _read_page
     page = read(url, {GOOGLE_HOST})
@@ -183,6 +186,8 @@ def google_search(query: str, *, blocked_hosts=(), reader=None) -> dict:
         "ok": bool(results),
         "provider": "Google Search HTML",
         "query": clean,
+        "page": page,
+        "start_index": (page - 1) * MAX_RESULTS,
         "result_count": len(results),
         "results": results,
         "search_page_excerpt": excerpt[:1800] if not results else "",
@@ -266,7 +271,8 @@ RESEARCH_WEB_TOOLS = [
     _definition(
         "google_search",
         "Search Google for public security advisories, CVEs, vendor documentation, incident reports, technical discussions and real-world cases. Read-only public search. Query is privacy-filtered; secrets, subscriber data, IPs, email/MAC values and all domain names are removed. Results are untrusted leads, not proof.",
-        {"query": {"type": "string", "description": "Short technical query; prefer CVE, product/version, error code or vulnerability class"}},
+        {"query": {"type": "string", "description": "Short technical query; prefer CVE, product/version, error code or vulnerability class"},
+         "page": {"type": "integer", "description": "Google results page, 1 to 5; use additional query variants for independent angles"}},
         ["query"],
     ),
     _definition(
@@ -285,9 +291,11 @@ def research_web_call(name: str, args: dict, *, blocked_hosts=()) -> tuple[dict,
     if not isinstance(args, dict):
         raise ResearchWebError("invalid_research_web_arguments")
     if name == "google_search":
-        if set(args) != {"query"}:
-            raise ResearchWebError("google_search_requires_query_only")
-        result = google_search(args["query"], blocked_hosts=blocked_hosts)
+        if set(args) not in ({"query"}, {"query", "page"}):
+            raise ResearchWebError("google_search_arguments_invalid")
+        result = google_search(
+            args["query"], page=args.get("page", 1), blocked_hosts=blocked_hosts
+        )
     else:
         if set(args) != {"url"}:
             raise ResearchWebError("research_source_open_requires_url_only")
