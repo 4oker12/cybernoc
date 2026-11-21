@@ -150,6 +150,41 @@ def run():
                                    "result_count": x.get("result_count"),
                                    "source_status": x.get("source_status"),
                                    "excerpt_sample": str(x.get("search_page_excerpt") or "")[:240]})
+        # Probe alternative read-only public search providers if Google's
+        # JavaScript shell returns no results; never attempt a challenge bypass.
+        from console.browser_tools import _read_page
+        from urllib.parse import urlencode, urlsplit
+        for host, stem in (
+            ("www.bing.com", "/search"),
+            ("html.duckduckgo.com", "/html/"),
+            ("search.brave.com", "/search"),
+        ):
+            url = "https://" + host + stem + "?" + urlencode({
+                "q": "Playwright Python official documentation"
+            })
+            try:
+                result = _read_page(url, {host})
+                links = result.get("links", [])
+                external = [
+                    x for x in links
+                    if urlsplit(str(x.get("url") or "")).hostname != host
+                ]
+                print(json.dumps({
+                    "test": "public_search_provider_probe",
+                    "provider": host, "status": "PASS",
+                    "http_status": result.get("http_status"),
+                    "link_count": len(links),
+                    "external_link_count": len(external),
+                    "heading_count": len(result.get("headings", [])),
+                    "excerpt_sample": str(result.get("text_excerpt") or "")[:180],
+                }, ensure_ascii=False))
+            except Exception as exc:
+                print(json.dumps({
+                    "test": "public_search_provider_probe",
+                    "provider": host, "status": "WARN",
+                    "error": type(exc).__name__,
+                }, ensure_ascii=False))
+
         call("research_source_open", {"url": "https://playwright.dev/python/docs/intro"})
         call("research_source_open", {"url": "https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-antivirus-windows"})
 
