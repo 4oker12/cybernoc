@@ -29,11 +29,11 @@ except ImportError:
 OLLAMA_URL = os.environ.get("CYBERNOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MCP_URL = os.environ.get("CYBERNOVA_MCP_URL", "http://127.0.0.1:18792/mcp")
 MODEL = os.environ.get("CYBERNOVA_MODEL", "cybernova-security:30b")
-MAX_ROUNDS = 5
-MAX_CALLS = 12
-MAX_HTTP_GETS = 3
+MAX_ROUNDS = 16
+MAX_CALLS = 32
+MAX_HTTP_GETS = 12
 MAX_PROMPT = 10000
-MAX_RESULT = 6000
+MAX_RESULT = 12000
 APPROVAL_TTL_SECONDS = 3600
 OFFLINE_TOOLS = frozenset({
     "gateway_status", "python_static_review", "http_header_review",
@@ -322,7 +322,7 @@ class Agent:
                                 selected_by = "model_json_fallback"
                     except (ValueError, TypeError, AttributeError):
                         events.append({"type": "tool_selection_error", "message": "Active model did not return valid JSON"})
-                if not executed and not pending_requests and mcp and tools and round_no == 0:
+                if not executed and not pending_requests and tools and round_no == 0:
                     # Security cases should be grounded in public advisories and
                     # real incidents. Ensure one privacy-filtered search is part
                     # of the first tool batch, even if the model selected another
@@ -356,7 +356,7 @@ class Agent:
                                 "arguments": {"query": query},
                             }})
                             selected_by = "google_research_fallback"
-                if not calls and not executed and not pending_requests and mcp and tools:
+                if not calls and not executed and not pending_requests and tools:
                     # On unambiguous, scoped website research tasks a weak local
                     # model may ignore native tool calls AND JSON fallback.
                     # Try exactly one browser evidence call instead of claiming
