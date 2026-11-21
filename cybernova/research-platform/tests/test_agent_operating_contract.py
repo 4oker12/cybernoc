@@ -29,7 +29,7 @@ class AgentOperatingContractTests(unittest.TestCase):
         self.assertIn("CMD", contract)
         self.assertIn("Vast", contract)
         self.assertIn("ChatGPT", contract)
-        self.assertIn("координатор", contract)
+        self.assertIn("principal coordinator", contract)
         self.assertIn("DeepSeek", contract)
         self.assertLessEqual(len(contract), 8500)
 
