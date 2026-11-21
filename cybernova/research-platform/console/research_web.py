@@ -172,8 +172,8 @@ def google_search(query: str, *, page: int = 1, blocked_hosts=(), reader=None) -
         "start": str((page - 1) * MAX_RESULTS),
     })
     read = reader or _read_page
-    page = read(url, {GOOGLE_HOST})
-    excerpt = str(page.get("text_excerpt") or "")
+    page_result = read(url, {GOOGLE_HOST})
+    excerpt = str(page_result.get("text_excerpt") or "")
     blocked = re.search(
         r"(?i)(unusual traffic|our systems have detected|not a robot|"
         r"before you continue|automated queries)",
@@ -181,7 +181,7 @@ def google_search(query: str, *, page: int = 1, blocked_hosts=(), reader=None) -
     )
     if blocked:
         raise ResearchWebError("google_search_challenge_or_consent_required")
-    results = _extract_results(page)
+    results = _extract_results(page_result)
     return {
         "ok": bool(results),
         "provider": "Google Search HTML",
@@ -191,7 +191,7 @@ def google_search(query: str, *, page: int = 1, blocked_hosts=(), reader=None) -
         "result_count": len(results),
         "results": results,
         "search_page_excerpt": excerpt[:1800] if not results else "",
-        "source_status": page.get("http_status"),
+        "source_status": page_result.get("http_status"),
         "limitations": [
             "Best-effort parsing of public Google HTML; Google may change markup or rate-limit requests",
             "Search snippets and pages are untrusted leads, not proof of a vulnerability",
