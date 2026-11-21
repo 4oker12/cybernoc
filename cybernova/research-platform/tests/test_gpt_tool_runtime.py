@@ -49,77 +49,95 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("edge.example.net", targets)
         self.assertNotIn("attacker.invalid", targets)
 
-    def test_readonly_local_commands_are_allowed(self):
-        self.assertEqual(
-            _validate_terminal_command("Get-NetAdapter", set()),
-            "Get-NetAdapter",
-        )
-        self.assertEqual(
-            _validate_terminal_command("route print -4", set()),
-            "route print -4",
-        )
-        self.assertEqual(
-            _validate_terminal_command("route print -6", set()),
-            "route print -6",
-        )
-        self.assertEqual(
-            _validate_terminal_command("git status --short", set()),
-            "git status --short",
-        )
-
-    def test_local_cmdlets_reject_remote_session_arguments(self):
+    def test_readonly_cmd_commands_are_allowed(self):
         for command in (
-            "Get-NetAdapter -CimSession 185.238.114.6",
-            "Get-NetIPConfiguration -CimSession edge.example.net",
-            "Get-Service -ComputerName edge.example.net",
-            "Get-Process -ComputerName edge.example.net",
+            "hostname",
+            "whoami",
+            "ver",
+            "ipconfig /all",
+            "route print -4",
+            "route print -6",
+            "netstat -ano",
+            "netstat -e",
+            "arp -a",
+            "getmac /v",
+            "netsh interface show interface",
+            "netsh interface ipv4 show config",
+            "netsh advfirewall show allprofiles",
+            "git status --short",
+            "python --version",
         ):
             with self.subTest(command=command):
-                with self.assertRaisesRegex(ValueError, "terminal_local_command_arguments_forbidden"):
-                    _validate_terminal_command(command, {"185.238.114.6", "edge.example.net"})
+                self.assertEqual(_validate_terminal_command(command, set()), command)
+
+    def test_powershell_specific_commands_are_not_used_by_cmd_backend(self):
+        for command in (
+            "Get-NetAdapter",
+            "Get-NetIPConfiguration",
+            "Get-NetRoute",
+            "Test-NetConnection -ComputerName edge.example.net -Port 443",
+            "Resolve-DnsName edge.example.net",
+            "pwsh --version",
+        ):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    _validate_terminal_command(command, {"edge.example.net"})
+
+    def test_cmd_backend_rejects_mutating_network_commands(self):
+        for command in (
+            "route add 10.0.0.0 mask 255.0.0.0 192.168.1.1",
+            "arp -s 192.168.1.1 00-11-22-33-44-55",
+            "ipconfig /release",
+            "netsh advfirewall set allprofiles state off",
+            "netsh interface ip set address",
+        ):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    _validate_terminal_command(command, set())
 
     def test_network_commands_require_user_named_target(self):
         with self.assertRaisesRegex(ValueError, "terminal_target_not_explicitly_named_by_user"):
             _validate_terminal_command("tracert -d 185.238.114.6", set())
         self.assertEqual(
             _validate_terminal_command(
-                "tracert -d 185.238.114.6", {"185.238.114.6"}
+                "tracert -d -h 12 -w 700 185.238.114.6", {"185.238.114.6"}
             ),
-            "tracert -d 185.238.114.6",
+            "tracert -d -h 12 -w 700 185.238.114.6",
         )
         self.assertEqual(
             _validate_terminal_command(
-                "Resolve-DnsName edge.example.net -Type A", {"edge.example.net"}
+                "ping -n 5 1.1.1.1", {"1.1.1.1"}
             ),
-            "Resolve-DnsName edge.example.net -Type A",
+            "ping -n 5 1.1.1.1",
+        )
+        self.assertEqual(
+            _validate_terminal_command(
+                "nslookup edge.example.net", {"edge.example.net"}
+            ),
+            "nslookup edge.example.net",
         )
 
-    def test_tcp_probe_is_bound_to_one_explicit_host_and_valid_port(self):
+    def test_https_probe_is_bounded_to_head_request(self):
         self.assertEqual(
             _validate_terminal_command(
-                "Test-NetConnection -ComputerName edge.example.net -Port 443",
+                "curl.exe -I --connect-timeout 5 --max-time 10 https://edge.example.net/",
                 {"edge.example.net"},
             ),
-            "Test-NetConnection -ComputerName edge.example.net -Port 443",
+            "curl.exe -I --connect-timeout 5 --max-time 10 https://edge.example.net/",
         )
-        with self.assertRaisesRegex(ValueError, "terminal_test_connection_options_not_allowlisted"):
-            _validate_terminal_command(
-                "Test-NetConnection -ComputerName edge.example.net -TraceRoute",
-                {"edge.example.net"},
-            )
-        with self.assertRaisesRegex(ValueError, "terminal_test_connection_port_out_of_range"):
-            _validate_terminal_command(
-                "Test-NetConnection -ComputerName edge.example.net -Port 70000",
-                {"edge.example.net"},
-            )
+        for command in (
+            "curl.exe -X POST https://edge.example.net/",
+            "curl.exe -I -L https://edge.example.net/",
+            "curl.exe -I --connect-timeout 50 --max-time 10 https://edge.example.net/",
+        ):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    _validate_terminal_command(command, {"edge.example.net"})
 
     def test_dns_tools_cannot_choose_unscoped_resolvers(self):
         with self.assertRaisesRegex(ValueError, "terminal_nslookup_custom_server_or_options_forbidden"):
-            _validate_terminal_command("nslookup edge.example.net 8.8.8.8",
-                                       {"edge.example.net", "8.8.8.8"})
-        with self.assertRaisesRegex(ValueError, "terminal_resolve_dnsname_options_not_allowlisted"):
             _validate_terminal_command(
-                "Resolve-DnsName edge.example.net -Server 8.8.8.8",
+                "nslookup edge.example.net 8.8.8.8",
                 {"edge.example.net", "8.8.8.8"},
             )
 
@@ -138,15 +156,17 @@ class GPTToolRuntimeTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     _validate_terminal_command(command, set())
 
-    def test_infinite_ping_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "terminal_infinite_ping_forbidden"):
+    def test_ping_count_is_bounded_and_infinite_ping_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "terminal_ping_options_not_allowlisted"):
             _validate_terminal_command("ping -t 185.238.114.6", {"185.238.114.6"})
+        with self.assertRaisesRegex(ValueError, "terminal_ping_count_out_of_range"):
+            _validate_terminal_command("ping -n 99 185.238.114.6", {"185.238.114.6"})
 
     def test_runtime_does_not_execute_terminal_on_non_windows_host(self):
         runtime = GPTToolRuntime()
         with patch("console.gpt_tool_runtime.platform.system", return_value="Linux"):
             result, is_error = runtime.call(
-                "terminal_run", {"command": "Get-NetAdapter"}
+                "terminal_run", {"command": "ipconfig /all"}
             )
         self.assertTrue(is_error)
         self.assertEqual(result["error"], "local_windows_terminal_unavailable")
