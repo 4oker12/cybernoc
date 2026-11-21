@@ -368,9 +368,13 @@ class Agent:
                         if query:
                             if not isinstance(calls, list):
                                 calls = []
+                            search_args = {"query": query}
+                            search_schema = descriptors["google_search"].get("inputSchema", {})
+                            if "page" in (search_schema.get("properties") or {}):
+                                search_args["page"] = 1
                             calls.append({"function": {
                                 "name": "google_search",
-                                "arguments": {"query": query},
+                                "arguments": search_args,
                             }})
                             selected_by = "google_research_fallback"
                 if not calls and not executed and not pending_requests and tools:
