@@ -163,7 +163,7 @@ class ModelProviderTests(unittest.TestCase):
         self.assertEqual(system["role"],"system")
         self.assertIn("ChatGPT в основном проектном чате пользователя",system["content"])
         self.assertIn("локальный исполнитель Cybernova",system["content"])
-        self.assertIn("разработчик самой Cybernova",system["content"])
+        self.assertIn("разработчиком самой",system["content"])
         self.assertIn("Chromium/Playwright",system["content"])
 
     def test_controller_tool_history_translated_to_valid_openai_protocol(self):
