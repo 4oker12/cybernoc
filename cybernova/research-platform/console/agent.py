@@ -594,6 +594,7 @@ class Agent:
                                 name, args, mcp=mcp,
                                 authorized_targets=authorized_targets,
                                 user_messages=task_messages,
+                                enabled_groups=selected_groups or None,
                             )
                             executed += 1
                         elif name in REVIEWED_TOOLS:
