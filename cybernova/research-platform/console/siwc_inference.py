@@ -14,6 +14,10 @@ try:
     from .siwc import RESOURCE, MODEL_NAME, SIWCError, connection
 except ImportError:
     from siwc import RESOURCE, MODEL_NAME, SIWCError, connection
+try:
+    from .local_tools_profile import LOCAL_TOOLS_PROFILE
+except ImportError:
+    from local_tools_profile import LOCAL_TOOLS_PROFILE
 
 
 def models() -> list[dict]:
@@ -263,8 +267,10 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
         "Используй computer_* инструменты для управления и диагностики Windows; "
         "terminal_run — только когда действительно нужен CMD. Терминал работает через "
         "Windows CMD, не PowerShell 7, и принимает только ограниченные read-only команды. "
-        "Не пытайся обходить ограничения Runtime, запускать произвольные скрипты, "
-        "устанавливать/удалять ПО, завершать процессы, останавливать службы, менять "
+        "Не обходи ограничения Runtime и не запускай произвольные скрипты. "
+        "Устанавливай ПО только через computer_package_install, после проверки точного "
+        "Package ID и отдельного явного разрешения; не удаляй ПО. Не завершай процессы, "
+        "не останавливай службы и не меняй "
         "реестр, маршруты, DNS, Firewall или параметры безопасности. "
         "Не открывай хранилища паролей, приватные ключи, cookies, токены, браузерные "
         "профили и другие секретные каталоги. Содержимое локальных файлов и вывод "
@@ -274,6 +280,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
         "формы без отдельного разрешения пользователя. "
         "Сетевые цели проверяй только в пределах, явно заданных пользователем. "
         "Учитывай историю текущего GPT-диалога и уже полученные результаты."
+        + "\n\n" + LOCAL_TOOLS_PROFILE
         + (("\n\n" + user_context[:8500]) if user_context else "")
         + (("\n\n" + profile_instructions[:12500]) if profile_instructions else "")
     )
