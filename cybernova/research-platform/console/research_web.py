@@ -1,8 +1,10 @@
 """Public web research tools for Cybernova.
 
-Google SERP access is best-effort HTML reading, not Google's Custom Search
-JSON API (closed to new customers). Source pages are fetched read-only over pinned,
-validated public HTTPS connections. No cookies, JS, credentials or form posts.
+Google SERP access is best-effort HTML reading. When Google serves a JavaScript-only
+shell, public Bing HTML is used with its page offset and outbound links are unwrapped.
+A bounded Bing RSS fallback remains available if HTML parsing fails. Source pages are
+fetched read-only over pinned, validated public HTTPS connections. No cookies, JS,
+credentials or form posts.
 """
 from __future__ import annotations
 
