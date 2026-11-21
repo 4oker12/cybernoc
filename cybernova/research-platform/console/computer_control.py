@@ -135,7 +135,7 @@ COMPUTER_TOOLS = [
           "Launch one allowlisted Windows diagnostic or settings application without elevation or shell execution.",
           {"app": {"type": "string", "enum": sorted(APP_COMMANDS)}}, ["app"]),
     _tool("computer_screenshot",
-          "Capture the visible local desktop as an image for a vision-capable model. Text-only models should use computer_ui_windows and computer_ui_controls instead; visible personal information may be included."),
+          "Capture the visible local desktop only after explicit consent in the latest user turn using this exact phrase: Разрешаю сделать снимок экрана и передать его ChatGPT для анализа. The image may include personal information."),
     _tool("computer_ui_windows",
           "List visible top-level desktop windows by title for local UI navigation. No window contents or input values are read."),
     _tool("computer_ui_controls",
@@ -881,6 +881,9 @@ def _latest_user_and_previous_assistant(messages):
 
 def _explicit_action_approved(messages, action_pattern: str, identifiers: list[str]) -> bool:
     latest, previous = _latest_user_and_previous_assistant(messages)
+    # Fail closed on explicit negation, even if the sentence also contains an approval verb.
+    if re.search(r"(?i)(?:\\bне\\b|\\bнет\\b|\\bнельзя\\b|\\bзапрещаю\\b|\\bотказываюсь\\b|\\bотмена\\b|\\bdo\\s+not\\b|\\bdon't\\b|\\bnever\\b|\\bdeny\\b|\\brefuse\\b)", latest):
+        return False
     simple_yes = bool(re.fullmatch(
         r"\s*(да|yes|подтверждаю|разрешаю|выполняй)[!. ]*\s*",
         latest, flags=re.I,
@@ -1452,6 +1455,10 @@ def computer_control_call(name: str, args: dict, *, user_messages=None) -> tuple
                 raise ValueError("computer_open_app_arguments_invalid")
             return _open_app(args["app"]), False
         if name == "computer_screenshot":
+            approved = extract_user_computer_approvals(user_messages or [])
+            if "computer_screenshot" not in approved:
+                return {"ok": False, "approval_required": True,
+                        "required_user_confirmation": "Напишите: «Разрешаю сделать снимок экрана и передать его ChatGPT для анализа»."}, True
             result = _screenshot()
             return result, not bool(result.get("ok"))
         if name == "computer_ui_windows":
