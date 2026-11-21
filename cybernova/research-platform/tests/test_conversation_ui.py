@@ -106,6 +106,13 @@ class GPTConversationTests(unittest.TestCase):
         self.assertIn('id="tokenUsageStatus"',html)
         self.assertIn("tool_groups:state.toolGroups",app)
         self.assertIn("recordUsage(result.usage",app)
+        self.assertIn("id=\\"toolPickerToggle\\"",html)
+        self.assertIn("id=\\"tokenUsageStatus\\"",html)
+        self.assertIn("async function watchUsageProgress(runId)",app)
+        self.assertIn("/api/usage-progress?run_id=",app)
+        self.assertIn("run_id:runId",app)
+        self.assertIn("ВКЛАДКИ · НАВИГАЦИЯ · NETWORK",app)
+        self.assertIn("ПОИСК · СТРАНИЦЫ · ИСТОЧНИКИ",app)
 
 
 @unittest.skipUnless(shutil.which("node"),"Node runtime unavailable")
