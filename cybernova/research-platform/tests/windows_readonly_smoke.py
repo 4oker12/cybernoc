@@ -144,18 +144,21 @@ def run():
             warnings.append("computer_file_hash_no_safe_fixture")
             print('{"test":"computer_file_hash","status":"SKIP","reason":"win_ini_missing"}')
 
-        browser = call("browser_navigate", {"url": "https://example.com/"}, important=True)
+        browser = call("browser_navigate", {"url": "https://playwright.dev/python/docs/intro"}, important=True)
         if browser.get("ok"):
             snapshot = call("browser_snapshot", important=True, detail=lambda x: {
+                "title": x.get("title"),
                 "page_type": x.get("page_type"),
                 "heading_count": len(x.get("headings", [])),
+                "heading_sample": [h.get("text") for h in x.get("headings", [])[:4]],
                 "link_count": x.get("content_stats", {}).get("link_count"),
                 "text_chars": len(x.get("visible_text") or ""),
+                "text_sample": (x.get("visible_text") or "")[:160],
             })
             if snapshot.get("ok") and (not snapshot.get("headings") or not snapshot.get("page_type")):
                 failures.append("browser_snapshot_semantic_map_incomplete")
             found = call("browser_find_text", {
-                "query": "Example Domain", "max_matches": 3,
+                "query": "Getting started", "max_matches": 3,
             }, important=True, detail=lambda x: {
                 "matches": len(x.get("matches", [])),
                 "total_matches": x.get("total_matches"),
@@ -167,7 +170,7 @@ def run():
                 "events_recorded": len(x.get("events", x.get("network_events", []))),
             })
             links = snapshot.get("links", [])
-            first = next((x for x in links if "iana.org" in str(x.get("url", ""))), None)
+            first = next((x for x in links if x.get("kind") in {"external", "document"} and x.get("name")), None)
             if first and first.get("name"):
                 call("browser_follow_link", {"name": first["name"]})
             else:
