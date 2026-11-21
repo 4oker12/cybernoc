@@ -273,7 +273,17 @@ def _performance_snapshot() -> dict:
     if psutil is None:
         return {"ok": False, "error": "psutil_dependency_missing"}
     _windows_only()
-    cpu = psutil.cpu_percent(interval=0.6)
+    net_before = psutil.net_io_counters(pernic=True)
+    disk_before = psutil.disk_io_counters()
+    process_objects = []
+    for proc in psutil.process_iter(["pid", "name", "memory_info"]):
+        try:
+            proc.cpu_percent(None)
+            process_objects.append(proc)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    sample_seconds = 0.6
+    cpu = psutil.cpu_percent(interval=sample_seconds)
     vm = psutil.virtual_memory()
     swap = psutil.swap_memory()
     disk_io = psutil.disk_io_counters()
@@ -292,20 +302,37 @@ def _performance_snapshot() -> dict:
             except OSError:
                 pass
     processes = []
-    for proc in psutil.process_iter(["pid", "name", "memory_info"]):
+    for proc in process_objects:
         try:
-            info = proc.info
+            info = proc.as_dict(attrs=["pid", "name", "memory_info"])
             memory = info.get("memory_info")
             processes.append({
                 "pid": info.get("pid"),
                 "name": (info.get("name") or "unknown")[:100],
                 "rss_bytes": memory.rss if memory else 0,
+                "cpu_percent": proc.cpu_percent(None),
             })
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
     top_memory = sorted(processes, key=lambda x: x["rss_bytes"], reverse=True)[:8]
+    top_cpu = sorted(processes, key=lambda x: x["cpu_percent"], reverse=True)[:8]
+    network_rates = {}
+    for name, value in net_io.items():
+        before = net_before.get(name)
+        if before is not None:
+            network_rates[name] = {
+                "sent_bytes_per_second": round(max(0, value.bytes_sent - before.bytes_sent) / sample_seconds, 1),
+                "received_bytes_per_second": round(max(0, value.bytes_recv - before.bytes_recv) / sample_seconds, 1),
+            }
+    disk_rates = None
+    if disk_io and disk_before:
+        disk_rates = {
+            "read_bytes_per_second": round(max(0, disk_io.read_bytes - disk_before.read_bytes) / sample_seconds, 1),
+            "write_bytes_per_second": round(max(0, disk_io.write_bytes - disk_before.write_bytes) / sample_seconds, 1),
+        }
     return {
         "ok": True,
+        "sample_seconds": sample_seconds,
         "cpu_percent_sample": cpu,
         "memory": {
             "total_bytes": vm.total, "available_bytes": vm.available,
@@ -319,6 +346,7 @@ def _performance_snapshot() -> dict:
         "disk_io": ({
             "read_bytes": disk_io.read_bytes, "write_bytes": disk_io.write_bytes,
             "read_count": disk_io.read_count, "write_count": disk_io.write_count,
+            "rates": disk_rates,
         } if disk_io else None),
         "network_io": {
             name: {"bytes_sent": value.bytes_sent, "bytes_recv": value.bytes_recv,
@@ -327,7 +355,9 @@ def _performance_snapshot() -> dict:
                    "drops_in": value.dropin, "drops_out": value.dropout}
             for name, value in net_io.items()
         },
+        "network_rates": network_rates,
         "top_processes_by_memory": top_memory,
+        "top_processes_by_cpu": top_cpu,
     }
 
 
