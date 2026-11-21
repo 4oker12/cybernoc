@@ -64,7 +64,7 @@ TOOL_GROUPS = (
     },
     {
         "id": "terminal", "label": "Терминал Windows", "icon": "terminal",
-        "description": "CMD и PowerShell для системной диагностики; команды и операции ограничиваются политикой безопасности.",
+        "description": "Полноценные CMD, Windows PowerShell 5.1 и PowerShell 7: многострочные команды, скрипты, конвейеры, перенаправления, файловые операции и диагностика. Выполнение с правами текущего процесса Cybernova, без скрытого повышения привилегий.",
     },
     {
         "id": "web", "label": "Интернет / Research", "icon": "search",
@@ -261,12 +261,6 @@ def _decode_cmd_output(value: bytes) -> str:
         return value.decode("utf-8", errors="replace")
 
 
-def _redact_output(value: str) -> str:
-    value = _SECRET.sub("[REDACTED]", value)
-    value = _EMAIL.sub("[REDACTED EMAIL]", value)
-    return value[:MAX_TOOL_OUTPUT_CHARS]
-
-
 def _redact_output(value: str, limit: int = MAX_TOOL_OUTPUT_CHARS) -> str:
     value = _SECRET.sub("[REDACTED]", value)
     value = _EMAIL.sub("[REDACTED EMAIL]", value)
@@ -400,7 +394,7 @@ def _run_terminal(command: str, shell: str = "cmd", cwd: str = "",
     truncated = len(combined) > output_limit
     return {
         "ok": process.returncode == 0 and not timed_out,
-        "command": command[:500],
+        "command": _SECRET.sub("[REDACTED]", _EMAIL.sub("[REDACTED EMAIL]", command))[:500],
         "shell": {"cmd": "Windows CMD", "powershell": "Windows PowerShell", "pwsh": "PowerShell 7"}[shell],
         "shell_id": shell,
         "cwd": str(working_dir),
@@ -417,7 +411,7 @@ def _run_terminal(command: str, shell: str = "cmd", cwd: str = "",
 
 
 class GPTToolRuntime:
-    """One isolated Chromium session and bounded terminal for Account GPT."""
+    """One isolated Chromium session and full local shell for Account GPT."""
     def __init__(self):
         self._lock = RLock()
         self._browser: BrowserSession | None = None
