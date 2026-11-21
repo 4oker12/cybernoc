@@ -42,7 +42,23 @@ REVIEWED_SCOPED = frozenset({
     # Public read-only web research: Google SERP and one public HTTPS source page.
     "google_search", "research_source_open",
 })
-REVIEWED_TOOLS = REVIEWED_OFFLINE | REVIEWED_SCOPED
+try:
+    from .computer_control import COMPUTER_TOOL_NAMES
+    from .browser_control import BROWSER_CONTROL_TOOLS
+except ImportError:
+    from computer_control import COMPUTER_TOOL_NAMES
+    from browser_control import BROWSER_CONTROL_TOOLS
+
+# Shared local tools are safe-by-default or enforce their own exact-action
+# authorization inside the controller (Defender scan, package install,
+# archive extraction and file moves). They therefore do not need a second,
+# model-specific generic approval layer.
+SHARED_LOCAL_TOOLS = (
+    COMPUTER_TOOL_NAMES
+    | frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS)
+    | frozenset({"terminal_run", "terminal_status"})
+)
+REVIEWED_TOOLS = REVIEWED_OFFLINE | REVIEWED_SCOPED | SHARED_LOCAL_TOOLS
 
 
 class ToolPolicyError(ValueError):
