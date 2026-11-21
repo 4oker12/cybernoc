@@ -114,15 +114,16 @@ class ResearchWebTests(unittest.TestCase):
             requested.append((url, hosts))
             return {
                 "http_status": 200, "source_sha256": "a" * 64,
-                "headings": ["Playwright Python Docs"],
-                "text_excerpt": "Playwright Python Docs Official documentation for browser automation.",
-                "links": [{"title": "Playwright Python Docs", "url": redirect}],
+                "headings": ["Fast and reliable end-to-end testing for modern web apps |", "Playwright"],
+                "text_excerpt": "Fast and reliable end-to-end testing for modern web apps | Playwright Official documentation for browser automation.",
+                "links": [{"title": "Fast and reliable end-to-end testing for modern web apps | Playwright", "url": redirect}],
             }
         result = _bing_html_fallback("Playwright Python docs", 2, reader=reader)
         self.assertEqual(parse_qs(urlsplit(requested[0][0]).query)["first"], ["11"])
         self.assertEqual(result["provider"], "Bing Search HTML fallback")
         self.assertEqual(result["results"][0]["url"], target)
         self.assertEqual(result["results"][0]["domain"], "playwright.dev")
+        self.assertIn("Fast and reliable", result["results"][0]["title"])
 
     def test_bing_rss_parses_normalized_public_https_results(self):
         blob = (
