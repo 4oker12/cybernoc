@@ -456,6 +456,7 @@ async function send(){
     state.turns=result.turn||state.turns+1;
     pending.wrap.classList.remove("working");
     setFormatted(pending.body,result.answer||"Ответ модели пуст.");
+    recordUsage(result.usage,"qwen",pending);
     showEvents(result.events,result.tool_calls,result.selected_by,pending);
     // Generate contextual next questions independently; do not delay the model reply.
     // A pending approval is the next user decision, not a generic follow-up.
@@ -594,6 +595,7 @@ async function sendGPT(){
     state.gptThreadId=result.thread_id;
     pending.wrap.classList.remove("working");
     setFormatted(pending.body,result.answer||"Ответ модели пуст.");
+    recordUsage(result.usage,"gpt",pending);
     if(Array.isArray(result.tool_events)&&result.tool_events.length){
       const details=node("div","inline-tools");
       for(const event of result.tool_events){
