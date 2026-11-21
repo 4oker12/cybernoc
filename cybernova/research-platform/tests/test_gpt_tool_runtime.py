@@ -11,6 +11,10 @@ from console.gpt_tool_runtime import (
     GPTToolRuntime, _run_terminal, _validate_terminal_command, build_tool_catalog,
     extract_user_targets,
 )
+from console.computer_control import (
+    COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, extract_user_computer_approvals,
+    _ui_click,
+)
 
 
 class GPTToolRuntimeTests(unittest.TestCase):
@@ -26,6 +30,15 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("google_search", names)
         self.assertIn("research_source_open", names)
         self.assertNotIn("browser_submit", names)
+        self.assertTrue({
+            "computer_system_overview", "computer_performance_snapshot",
+            "computer_process_list", "computer_disk_overview",
+            "computer_list_directory", "computer_open_folder",
+            "computer_open_app", "computer_screenshot",
+            "computer_ui_windows", "computer_ui_controls", "computer_ui_click",
+            "computer_defender_status", "computer_defender_events",
+            "computer_defender_scan", "computer_defender_scan_status",
+        }.issubset(names))
 
     def test_all_account_gpt_function_schemas_are_strict_and_closed(self):
         for tool in build_tool_catalog():
@@ -199,6 +212,60 @@ class GPTToolRuntimeTests(unittest.TestCase):
             )
         self.assertTrue(is_error)
         self.assertEqual(result["error"], "local_windows_terminal_unavailable")
+
+    def test_computer_tool_schemas_are_strict_and_closed(self):
+        from console.gpt_tool_runtime import _convert_mcp_tool
+        for item in COMPUTER_TOOLS:
+            with self.subTest(tool=item["name"]):
+                schema = _convert_mcp_tool(item)["parameters"]
+                self.assertEqual(schema["type"], "object")
+                self.assertFalse(schema["additionalProperties"])
+                self.assertEqual(set(schema["properties"]), set(schema["required"]))
+
+    def test_defender_scan_requires_explicit_latest_user_authorization(self):
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Можешь проверить ноут на вирусы?"},
+            ]),
+            set(),
+        )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Разрешаю быструю проверку Microsoft Defender."},
+            ]),
+            {"defender_quick_scan"},
+        )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Разрешаю полную проверку Microsoft Defender."},
+            ]),
+            {"defender_full_scan"},
+        )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "assistant", "content": "Разрешить полную проверку Microsoft Defender?"},
+                {"role": "user", "content": "Да."},
+            ]),
+            {"defender_full_scan"},
+        )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Разрешаю полную проверку Microsoft Defender."},
+                {"role": "assistant", "content": "Проверка завершена."},
+                {"role": "user", "content": "Покажи загрузку CPU."},
+            ]),
+            set(),
+        )
+
+    def test_destructive_desktop_controls_are_blocked_before_ui_access(self):
+        for label in ("Delete", "Uninstall", "Quick scan", "Apply", "Disable protection"):
+            with self.subTest(label=label):
+                with self.assertRaises(ValueError):
+                    _ui_click("Windows Security", label, "Button")
+
+    def test_computer_tool_names_are_registered(self):
+        self.assertIn("computer_open_folder", COMPUTER_TOOL_NAMES)
+        self.assertIn("computer_defender_scan", COMPUTER_TOOL_NAMES)
 
     def test_unknown_or_unapproved_tools_are_rejected(self):
         runtime = GPTToolRuntime()
