@@ -83,9 +83,11 @@ def _key_path(data: Path, values: dict[str, str]) -> Path:
 
 
 def _read_key(path: Path) -> str:
+    if path.is_symlink():
+        raise ModelSettingsError("api_key_file_invalid")
     if not path.exists():
         return ""
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 10000:
+    if not path.is_file() or path.stat().st_size > 10000:
         raise ModelSettingsError("api_key_file_invalid")
     try:
         return path.read_text(encoding="utf-8").strip()
@@ -178,7 +180,7 @@ def apply_model_settings(payload: dict):
             client = OpenAICompatibleClient(
                 base_url=base_url.strip(), model=model, api_key=next_key,
             )
-        except ModelConfigError as exc:
+        except (ModelConfigError, ValueError) as exc:
             raise ModelSettingsError(str(exc)) from None
         base_url = base_url.strip()
     else:
