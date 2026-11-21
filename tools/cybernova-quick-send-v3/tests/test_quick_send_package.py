@@ -14,12 +14,24 @@ class QuickSendPackageTests(unittest.TestCase):
         self.assertIn("contextMenus", manifest["permissions"])
         self.assertIn("clipboardRead", manifest["permissions"])
         self.assertNotIn("offscreen", manifest["permissions"])
+        self.assertIn("http://127.0.0.1/*", manifest["host_permissions"])
         self.assertEqual(set(manifest["host_permissions"]), {
-            "https://chatgpt.com/*", "https://chat.openai.com/*"
+            "https://chatgpt.com/*", "https://chat.openai.com/*", "http://127.0.0.1/*"
         })
         self.assertEqual(set(manifest["content_scripts"][0]["matches"]), {
             "https://chatgpt.com/*", "https://chat.openai.com/*"
         })
+
+    def test_local_port_range_is_enforced_before_injection(self):
+        source = (EXT / "service-worker.js").read_text(encoding="utf-8")
+        content = (EXT / "content.js").read_text(encoding="utf-8")
+        self.assertIn("const LOCAL_PORT_MIN = 18785", source)
+        self.assertIn("const LOCAL_PORT_MAX = 18805", source)
+        self.assertIn("isAllowedLocalUrl(tab.url)", source)
+        self.assertIn("chrome.tabs.onUpdated.addListener", source)
+        self.assertIn("MENU_LOCAL_SELECTION", source)
+        self.assertIn("localPort >= 18785 && localPort <= 18805", content)
+        self.assertIn("http://127.0.0.1/*", (EXT / "manifest.json").read_text(encoding="utf-8"))
 
     def test_global_selection_and_chatgpt_clipboard_menus(self):
         source = (EXT / "service-worker.js").read_text(encoding="utf-8")
@@ -27,13 +39,13 @@ class QuickSendPackageTests(unittest.TestCase):
         self.assertIn("contexts: ['editable']", source)
         self.assertIn("documentUrlPatterns", source)
 
-    def test_no_old_vast_or_local_socket(self):
+    def test_no_old_bridge_or_socket(self):
         content = "\n".join(p.read_text(encoding="utf-8") for p in EXT.iterdir()
                             if p.is_file() and p.suffix in {".js",".json",".html",".css"}).lower()
-        for token in ("vast","18883","18884","websocket","127.0.0.1","offscreen"):
+        for token in ("vast","18883","18884","websocket","127.0.0.1:18795","chrome.offscreen","offscreen_path"):
             self.assertNotIn(token, content)
 
-    def test_clipboard_read_runs_in_focused_chatgpt_content_script(self):
+    def test_clipboard_read_runs_in_content_script(self):
         source = (EXT / "service-worker.js").read_text(encoding="utf-8")
         content = (EXT / "content.js").read_text(encoding="utf-8")
         self.assertIn("CYBERNOVA_READ_CLIPBOARD_AND_SEND", source)
