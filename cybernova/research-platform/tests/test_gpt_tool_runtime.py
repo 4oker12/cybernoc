@@ -264,6 +264,37 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("computer_open_folder", COMPUTER_TOOL_NAMES)
         self.assertIn("computer_defender_scan", COMPUTER_TOOL_NAMES)
 
+    def test_global_computer_search_paginates_until_complete(self):
+        from tempfile import TemporaryDirectory
+        from console.computer_control import _search_everywhere, _SEARCH_JOBS
+
+        with TemporaryDirectory() as root:
+            base = Path(root)
+            (base / "needle-one.txt").write_text("one", encoding="utf-8")
+            (base / "needle-two.log").write_text("two", encoding="utf-8")
+            nested = base / "needle-folder"
+            nested.mkdir()
+            (nested / "needle-three.py").write_text("three", encoding="utf-8")
+            _SEARCH_JOBS.clear()
+            with patch("console.computer_control._windows_only"), \
+                 patch("console.computer_control._search_roots", return_value=[base]):
+                page = _search_everywhere("needle", "name", "", 1, True)
+                self.assertFalse(page["complete"])
+                self.assertTrue(page["cursor"])
+                found = list(page["matches"])
+                cursor = page["cursor"]
+                for _ in range(10):
+                    page = _search_everywhere("needle", "name", cursor, 1, True)
+                    found.extend(page["matches"])
+                    if page["complete"]:
+                        break
+                    cursor = page["cursor"]
+                self.assertTrue(page["complete"])
+                self.assertEqual(len(found), 3)
+                self.assertEqual(page["cursor"], "")
+                self.assertGreaterEqual(page["visited_entries"], 4)
+            _SEARCH_JOBS.clear()
+
     def test_unknown_or_unapproved_tools_are_rejected(self):
         runtime = GPTToolRuntime()
         result, is_error = runtime.call("browser_submit", {"name": "Submit"})
