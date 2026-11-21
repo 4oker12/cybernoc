@@ -147,9 +147,12 @@ def run():
         ]:
             call("google_search", {"query": query, "page": page},
                  detail=lambda x: {"page": x.get("page"),
+                                   "provider": x.get("provider"),
+                                   "fallback_reason": x.get("fallback_reason"),
+                                   "fallback_error": x.get("fallback_error"),
                                    "result_count": x.get("result_count"),
                                    "source_status": x.get("source_status"),
-                                   "excerpt_sample": str(x.get("search_page_excerpt") or "")[:240]})
+                                   "excerpt_sample": str(x.get("search_page_excerpt") or "")[:180]})
         # Probe alternative read-only public search providers if Google's
         # JavaScript shell returns no results; never attempt a challenge bypass.
         from console.browser_tools import _read_page
