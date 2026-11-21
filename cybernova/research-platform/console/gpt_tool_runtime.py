@@ -41,15 +41,6 @@ _SECRET = re.compile(
 )
 _EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 
-_LOCAL_COMMANDS = {
-    "hostname", "whoami", "ver", "ipconfig", "ipconfig.exe",
-    "route", "route.exe", "netstat", "netstat.exe", "arp", "arp.exe",
-    "getmac", "getmac.exe", "netsh", "netsh.exe",
-}
-_TARGET_COMMANDS = {
-    "ping", "ping.exe", "tracert", "tracert.exe", "pathping", "pathping.exe",
-    "nslookup", "nslookup.exe", "curl", "curl.exe",
-}
 _TOOL_NAMES = frozenset(
     item["name"] for item in BROWSER_CONTROL_TOOLS
     if item["name"] != "browser_submit"
@@ -318,7 +309,7 @@ def _run_terminal(command: str, authorized_targets: set[str]) -> dict:
     env_names = (
         "PATH", "SystemRoot", "WINDIR", "USERPROFILE", "LOCALAPPDATA",
         "APPDATA", "TEMP", "TMP", "ProgramFiles", "ProgramFiles(x86)",
-        "HOMEDRIVE", "HOMEPATH", "ComSpec",
+        "HOMEDRIVE", "HOMEPATH", "ComSpec", "PATHEXT",
     )
     env = {key: os.environ[key] for key in env_names if key in os.environ}
     try:
