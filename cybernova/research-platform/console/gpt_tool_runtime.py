@@ -19,10 +19,12 @@ try:
     from .browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from .developer_tools import SOURCE
     from .research_web import RESEARCH_WEB_TOOLS, research_web_call
+    from .computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
 except ImportError:
     from browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from developer_tools import SOURCE
     from research_web import RESEARCH_WEB_TOOLS, research_web_call
+    from computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
 
 
 MAX_TOOL_ROUNDS = 12
@@ -46,7 +48,7 @@ _TOOL_NAMES = frozenset(
     if item["name"] != "browser_submit"
 ) | frozenset(item["name"] for item in RESEARCH_WEB_TOOLS) | {
     "terminal_run", "terminal_status",
-}
+} | COMPUTER_TOOL_NAMES
 
 
 def extract_user_targets(messages: list[dict]) -> set[str]:
@@ -139,6 +141,7 @@ def build_tool_catalog() -> list[dict]:
         if item["name"] != "browser_submit"
     )
     rows.extend(_convert_mcp_tool(item) for item in RESEARCH_WEB_TOOLS)
+    rows.extend(_convert_mcp_tool(item) for item in COMPUTER_TOOLS)
     return rows
 
 
@@ -344,7 +347,7 @@ class GPTToolRuntime:
         self.tools = build_tool_catalog()
         self.tool_map = {item["name"]: item for item in self.tools}
 
-    def call(self, name: str, args: dict, *, authorized_targets=None) -> tuple[dict, bool]:
+    def call(self, name: str, args: dict, *, authorized_targets=None, user_messages=None) -> tuple[dict, bool]:
         if name not in _TOOL_NAMES or name not in self.tool_map:
             return {"ok": False, "error": "gpt_tool_not_registered"}, True
         if not isinstance(args, dict):
@@ -370,6 +373,8 @@ class GPTToolRuntime:
                         raise ValueError("terminal_arguments_invalid")
                     result = _run_terminal(args["command"], set(authorized_targets or ()))
                     return result, not bool(result.get("ok"))
+                if name in COMPUTER_TOOL_NAMES:
+                    return computer_control_call(name, args, user_messages=user_messages)
                 if name in {"google_search", "research_source_open"}:
                     return research_web_call(name, args)
                 if name.startswith("browser_"):
