@@ -608,20 +608,21 @@ def _service_overview() -> dict:
         "MpsSvc", "wuauserv", "BITS", "Winmgmt", "EventLog",
         "Dnscache", "Dhcp", "NlaSvc", "LanmanWorkstation",
     }
-    rows = []
-    for service in psutil.win_service_iter():
+    rows, missing = [], []
+    # Enumerating every Windows service can race with transient services being
+    # removed while psutil queries their configuration. Query only known names.
+    for name in sorted(wanted):
         try:
-            info = service.as_dict()
-            if info.get("name") in wanted:
-                rows.append({
-                    "name": info.get("name"),
-                    "display_name": info.get("display_name"),
-                    "status": info.get("status"),
-                    "start_type": info.get("start_type"),
-                })
-        except (psutil.AccessDenied, psutil.NoSuchProcess):
-            continue
-    return {"ok": True, "services": sorted(rows, key=lambda x: x["name"] or "")}
+            info = psutil.win_service_get(name).as_dict()
+            rows.append({
+                "name": info.get("name") or name,
+                "display_name": info.get("display_name"),
+                "status": info.get("status"),
+                "start_type": info.get("start_type"),
+            })
+        except (psutil.AccessDenied, psutil.NoSuchProcess, OSError) as exc:
+            missing.append({"name": name, "reason": type(exc).__name__})
+    return {"ok": True, "services": rows, "unavailable": missing}
 
 
 def _find_mpcmdrun() -> Path | None:
@@ -1410,7 +1411,7 @@ def computer_control_call(name: str, args: dict, *, user_messages=None) -> tuple
         return {"ok": False, "error": "computer_tool_arguments_invalid"}, True
     try:
         if name in {"computer_system_overview", "computer_performance_snapshot",
-                    "computer_process_list", "computer_disk_overview",
+                    "computer_disk_overview",
                     "computer_service_overview", "computer_startup_items",
                     "computer_defender_status", "computer_defender_events",
                     "computer_defender_scan_status", "computer_screenshot",
@@ -1421,7 +1422,9 @@ def computer_control_call(name: str, args: dict, *, user_messages=None) -> tuple
         if name == "computer_performance_snapshot":
             return _performance_snapshot(), False
         if name == "computer_process_list":
-            return _process_list(args.get("limit", 25)), False
+            if set(args) != {"limit"}:
+                raise ValueError("computer_process_list_requires_limit")
+            return _process_list(args["limit"]), False
         if name == "computer_disk_overview":
             return _disk_overview(), False
         if name == "computer_service_overview":
