@@ -120,16 +120,40 @@
         <textarea id="messageInput" rows="2" maxlength="10000" placeholder="Спросите что-нибудь или задайте задачу…"></textarea>
         <div class="composer-bottom">
           <div class="composer-left">
-            <label for="artifactFile" id="qwenUploadLabel" class="upload-button" title="Импорт HAR, JS, OpenAPI, логов, конфигураций, Python, зависимостей, TLS или PCAP. Файл обрабатывается локально.">＋ Файл</label>
+            <label for="artifactFile" id="qwenUploadLabel" class="upload-button" title="Импорт HAR, JS, OpenAPI, логов, конфигураций, Python, зависимостей, TLS или PCAP. Файл обрабатывается локально.">📎 Файл</label>
             <input id="artifactFile" class="sr-only" type="file" accept=".har,.js,.py,.json,.log,.txt,.conf,.cfg,.ini,.yaml,.yml,.env,.pcap,.cap,.pem,.crt,.lock,.mod,.toml">
-            <div id="qwenAutoTools" class="auto-tools-label" title="Активная модель сама выбирает инструмент для текущей задачи; цель исследования выбираешь ты.">
-            <span class="auto-tools-dot" aria-hidden="true"></span> MCP автоматически
-          </div>
+            <button type="button" id="toolPickerToggle" class="tool-picker-toggle"
+                    aria-haspopup="dialog" aria-expanded="false" aria-controls="toolPicker"
+                    title="Выбрать инструменты, доступные модели в следующих сообщениях">
+              <span class="tool-picker-plus" aria-hidden="true">＋</span>
+              <span>Инструменты</span>
+              <span id="toolSelectionBadge" class="tool-selection-badge">Авто</span>
+            </button>
+            <div id="qwenAutoTools" class="auto-tools-label" title="Модель выбирает конкретные функции внутри разрешённых групп.">
+              <span class="auto-tools-dot" aria-hidden="true"></span> Модель выбирает
+            </div>
           </div>
           <button type="button" id="sendButton" class="send-button" aria-label="Отправить">↑</button>
         </div>
       </div>
-      <div class="composer-meta"><span id="uploadStatus">Импорт локальных артефактов · Enter — отправить</span><span id="sendStatus" role="status">Готов</span></div>
+      <div id="toolPicker" class="tool-picker" role="dialog" aria-label="Подключение инструментов" hidden>
+        <div class="tool-picker-heading">
+          <div><strong>Подключить инструменты</strong><p>Выбор ограничивает каталог функций, который увидит модель.</p></div>
+          <button type="button" id="toolPickerAuto" class="tool-picker-reset">Авто</button>
+        </div>
+        <div id="toolPickerGroups" class="tool-picker-groups">
+          <span class="muted">Загружаем доступные группы…</span>
+        </div>
+        <div class="tool-picker-footer">
+          <span id="toolPickerSummary" role="status">Автоматический выбор всех доступных групп</span>
+          <button type="button" id="toolPickerClose" class="tool-picker-done">Готово</button>
+        </div>
+      </div>
+      <div class="composer-meta">
+        <span id="uploadStatus">Импорт локальных артефактов · Enter — отправить</span>
+        <span id="tokenUsageStatus" title="Сумма фактических токенов, сообщённых провайдером">Токены: —</span>
+        <span id="sendStatus" role="status">Готов</span>
+      </div>
     </section>
   </main>
 
