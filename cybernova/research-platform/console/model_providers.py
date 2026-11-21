@@ -113,6 +113,7 @@ class OpenAICompatibleClient:
         base = base_url or os.environ.get("CYBERNOVA_LLM_BASE_URL", "")
         self.endpoint = _endpoint(base)
         self.model = model or os.environ.get("CYBERNOVA_MODEL", "")
+        self.provider = "OpenAI-compatible"
         if not self.model:
             raise ModelConfigError("llm_model_required")
         self.api_key = api_key if api_key is not None else _key()
@@ -209,6 +210,21 @@ class OpenAICompatibleClient:
             )
         response = {"content": content if isinstance(content, str) else "",
                     "tool_calls": calls}
+        raw_usage = result.get("usage")
+        if isinstance(raw_usage, dict):
+            prompt_tokens = raw_usage.get("prompt_tokens", raw_usage.get("input_tokens"))
+            output_tokens = raw_usage.get("completion_tokens", raw_usage.get("output_tokens"))
+            prompt_tokens = prompt_tokens if type(prompt_tokens) is int and prompt_tokens >= 0 else None
+            output_tokens = output_tokens if type(output_tokens) is int and output_tokens >= 0 else None
+            response["_usage"] = {
+                "input_tokens": prompt_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": raw_usage.get("total_tokens")
+                    if type(raw_usage.get("total_tokens")) is int and raw_usage.get("total_tokens") >= 0
+                    else (prompt_tokens + output_tokens
+                          if prompt_tokens is not None and output_tokens is not None else None),
+                "provider": self.provider,
+            }
         reasoning = message.get("reasoning_content")
         if isinstance(reasoning, str):
             response["reasoning_content"] = reasoning
