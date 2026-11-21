@@ -319,7 +319,7 @@ function busy(on){
     "Модель работает · можно готовить следующий вопрос":"Готов";
   $("modeQwen").disabled=false;
   $("modeChatGPT").disabled=false;
-  $("modeCollab").disabled=false;
+  $("modeCollab").disabled=on;
   $("gptTopModel").disabled=!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
 }
 function resetUsage(mode){
@@ -525,7 +525,7 @@ function gptWelcome(){
   $("gptMessages").replaceChildren(window.cybernovaGptWelcome.cloneNode(true));
 }
 function setMode(mode){
-  if(!["qwen","gpt","collab"].includes(mode))return;
+  if((state.running && mode==="collab") || !["qwen","gpt","collab"].includes(mode))return;
   state.mode=mode;
   const qwen=mode==="qwen", gpt=mode==="gpt", collab=mode==="collab";
   for(const [id,isActive] of [
