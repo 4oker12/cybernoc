@@ -5,7 +5,9 @@ mcp>=1.13,<2
 cryptography>=44,<49
 PyJWT>=2.9,<3
 
-playwright>=1.49,<2
+# Pin Playwright: its Python package bundles the Node driver and browser revision.
+# Upgrade only after reviewing the matching signed upstream release.
+playwright==1.65.2
 psutil>=5.9,<8
 pyautogui>=0.9.54,<1; sys_platform == 'win32'
 pywinauto>=0.6.8,<1; sys_platform == 'win32'
