@@ -104,10 +104,13 @@ def build_tool_catalog() -> list[dict]:
                 "type": "string",
                 "description": (
                     "One read-only Windows CMD command. Supported diagnostics: "
-                    "hostname, whoami, ver, ipconfig /all, route print -4, "
-                    "netstat -ano, netstat -e, arp -a, getmac /v, "
+                    "hostname, whoami, whoami /groups, whoami /priv, ver, systeminfo, "
+                    "ipconfig /all, ipconfig /displaydns, route print -4, "
+                    "netstat -ano, netstat -e, netstat -s, arp -a, getmac /v, "
+                    "tasklist /fo csv, driverquery /fo csv, sc query [service], "
+                    "powercfg /getactivescheme, where.exe <allowlisted-program>, "
                     "netsh interface show interface, netsh interface ipv4 show config, "
-                    "netsh advfirewall show allprofiles, ping -n <count> <host>, "
+                    "netsh wlan show interfaces, netsh advfirewall show allprofiles, ping -n <count> <host>, "
                     "tracert -d -h <hops> -w <ms> <host>, pathping, nslookup <host>, "
                     "curl.exe -I --connect-timeout <seconds> --max-time <seconds> https://<host>/, "
                     "git status, git log, git diff --stat, python --version. "
@@ -198,9 +201,33 @@ def _validate_terminal_command(command: object, authorized_targets: set[str]) ->
             raise ValueError("terminal_python_command_not_allowlisted")
         return command
 
-    if base in {"hostname", "whoami", "ver"}:
+    if base in {"hostname", "ver", "systeminfo"}:
         if len(command.split()) != 1:
             raise ValueError("terminal_local_command_arguments_forbidden")
+        return command
+    if base == "whoami":
+        if not re.fullmatch(r"(?i)whoami(?:\.exe)?(?:\s+/(?:groups|priv))?", command):
+            raise ValueError("terminal_whoami_argument_not_allowlisted")
+        return command
+    if base == "tasklist":
+        if not re.fullmatch(r"(?i)tasklist(?:\.exe)?\s+/fo\s+(?:csv|table)", command):
+            raise ValueError("terminal_tasklist_argument_not_allowlisted")
+        return command
+    if base == "driverquery":
+        if not re.fullmatch(r"(?i)driverquery(?:\.exe)?\s+/fo\s+csv", command):
+            raise ValueError("terminal_driverquery_argument_not_allowlisted")
+        return command
+    if base == "sc":
+        if not re.fullmatch(r"(?i)sc(?:\.exe)?\s+query(?:\s+[A-Za-z0-9_.-]{1,80})?", command):
+            raise ValueError("terminal_sc_query_only")
+        return command
+    if base == "powercfg":
+        if not re.fullmatch(r"(?i)powercfg(?:\.exe)?\s+/getactivescheme", command):
+            raise ValueError("terminal_powercfg_readonly_only")
+        return command
+    if base == "where":
+        if not re.fullmatch(r"(?i)where(?:\.exe)?\s+(?:winget|python|cmd|chrome|msedge)", command):
+            raise ValueError("terminal_where_program_not_allowlisted")
         return command
     if base == "ipconfig":
         if not re.fullmatch(r"(?i)ipconfig(?:\.exe)?\s+/(?:all|displaydns)", command):
