@@ -219,7 +219,7 @@ _SEARCH_BLOCKED_COMPONENTS = {
     "vault", "wallet", "wallets", "secrets", "secret", "tokens", "token",
     "sam", "security", "system", "crypto", "cryptography", "protect",
     "gpt-chromium-profile", "model_api_key",
-} {}
+}
 
 
 def _redact(value: str) -> str:
