@@ -147,7 +147,9 @@ def run():
         ]:
             call("google_search", {"query": query, "page": page},
                  detail=lambda x: {"page": x.get("page"),
-                                   "result_count": x.get("result_count")})
+                                   "result_count": x.get("result_count"),
+                                   "source_status": x.get("source_status"),
+                                   "excerpt_sample": str(x.get("search_page_excerpt") or "")[:240]})
         call("research_source_open", {"url": "https://playwright.dev/python/docs/intro"})
         call("research_source_open", {"url": "https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-antivirus-windows"})
 
