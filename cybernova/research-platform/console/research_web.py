@@ -7,6 +7,7 @@ validated public HTTPS connections. No cookies, JS, credentials or form posts.
 from __future__ import annotations
 
 from collections import deque
+import base64
 from html import unescape
 import hashlib
 import xml.etree.ElementTree as ET
@@ -23,6 +24,7 @@ except ImportError:
 
 
 GOOGLE_HOST = "www.google.com"
+BING_HOST = "www.bing.com"
 MAX_QUERY = 500
 MAX_RESULTS = 10
 MAX_OPEN_TEXT = 9000
@@ -103,6 +105,21 @@ def _unwrap_result_url(raw: str) -> str | None:
                 return None
             params = parse_qs(u.query)
             raw = (params.get("q") or params.get("url") or [""])[0]
+            u = urlsplit(raw)
+            host = (u.hostname or "").lower().rstrip(".")
+        elif host in {BING_HOST, "bing.com"}:
+            if u.path != "/ck/a":
+                return None
+            params = parse_qs(u.query)
+            encoded = (params.get("u") or [""])[0]
+            if not encoded.startswith("a1") or len(encoded) > 6000:
+                return None
+            payload = encoded[2:]
+            payload += "=" * ((4 - len(payload) % 4) % 4)
+            try:
+                raw = base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8")
+            except (ValueError, UnicodeError):
+                return None
             u = urlsplit(raw)
             host = (u.hostname or "").lower().rstrip(".")
         if u.scheme != "https" or not host:
@@ -197,6 +214,27 @@ def _parse_bing_rss(blob: bytes) -> list[dict]:
     return results
 
 
+def _bing_html_fallback(query: str, page: int, *, reader=None) -> dict:
+    """Read public Bing HTML and unwrap its outbound result links without JS."""
+    host = BING_HOST
+    url = "https://" + host + "/search?" + urlencode({
+        "q": query, "count": str(MAX_RESULTS),
+        "first": str((page - 1) * MAX_RESULTS + 1),
+    })
+    read = reader or _read_page
+    page_result = read(url, {host})
+    results = _extract_results(page_result)
+    if not results:
+        raise ResearchWebError("bing_html_no_results")
+    return {
+        "provider": "Bing Search HTML fallback",
+        "results": results, "result_count": len(results),
+        "source_status": page_result.get("http_status"),
+        "source_sha256": page_result.get("source_sha256"),
+        "pagination_verified": False,
+    }
+
+
 def _bing_rss_fallback(query: str, page: int) -> dict:
     """Use public no-key Bing RSS if Google serves a JS-only page, never a CAPTCHA."""
     host = "www.bing.com"
@@ -255,11 +293,18 @@ def google_search(query: str, *, page: int = 1, blocked_hosts=(), reader=None) -
     fallback = None
     google_js_shell = "if you're having trouble accessing google search" in excerpt.lower()
     if not results and google_js_shell and reader is None:
+        errors = []
         try:
-            fallback = _bing_rss_fallback(clean, page)
+            fallback = _bing_html_fallback(clean, page)
             results = fallback["results"]
         except (OSError, ValueError, ET.ParseError) as exc:
-            fallback = {"error": str(exc)[:180]}
+            errors.append("bing_html: " + str(exc)[:120])
+            try:
+                fallback = _bing_rss_fallback(clean, page)
+                results = fallback["results"]
+            except (OSError, ValueError, ET.ParseError) as rss_exc:
+                errors.append("bing_rss: " + str(rss_exc)[:120])
+                fallback = {"error": "; ".join(errors)[:240]}
     return {
         "ok": bool(results),
         "provider": fallback.get("provider", "Google Search HTML") if fallback else "Google Search HTML",
