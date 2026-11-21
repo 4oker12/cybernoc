@@ -102,6 +102,9 @@ class AccountGPTToolLoopTests(unittest.TestCase):
         self.assertEqual(runtime.calls[0][2], {"185.238.114.6"})
         self.assertEqual(runtime.calls[0][3], [{"role": "user", "content": "Проверь локальный терминал."}])
         self.assertEqual(opener.requests[0]["tool_choice"], "auto")
+        self.assertIn("ОБЩИЙ ИНСТРУМЕНТАЛЬНЫЙ СТАНДАРТ", opener.requests[0]["instructions"])
+        self.assertIn("computer_package_install", opener.requests[0]["instructions"])
+        self.assertIn("browser_follow_link", opener.requests[0]["instructions"])
         self.assertNotIn("tools", opener.requests[0])
         self.assertEqual(opener.requests[0]["input"][0]["type"], "additional_tools")
         second_input = opener.requests[1]["input"]
