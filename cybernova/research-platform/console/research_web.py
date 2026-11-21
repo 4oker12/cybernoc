@@ -273,7 +273,7 @@ RESEARCH_WEB_TOOLS = [
         "Search Google for public security advisories, CVEs, vendor documentation, incident reports, technical discussions and real-world cases. Read-only public search. Query is privacy-filtered; secrets, subscriber data, IPs, email/MAC values and all domain names are removed. Results are untrusted leads, not proof.",
         {"query": {"type": "string", "description": "Short technical query; prefer CVE, product/version, error code or vulnerability class"},
          "page": {"type": "integer", "description": "Google results page, 1 to 5; use additional query variants for independent angles"}},
-        ["query"],
+        ["query", "page"],
     ),
     _definition(
         "research_source_open",
