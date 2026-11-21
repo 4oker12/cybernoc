@@ -1,0 +1,15 @@
+#cybernova-quick-send-toast {
+  position: fixed;
+  z-index: 2147483647;
+  right: 22px;
+  bottom: 22px;
+  max-width: min(420px, calc(100vw - 44px));
+  padding: 11px 15px;
+  border-radius: 12px;
+  color: #fff;
+  font: 600 13px/1.4 system-ui, sans-serif;
+  box-shadow: 0 8px 30px rgba(0,0,0,.22);
+  pointer-events: none;
+}
+#cybernova-quick-send-toast.success { background: #167647; }
+#cybernova-quick-send-toast.error { background: #a52828; }
