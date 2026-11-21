@@ -306,7 +306,9 @@ async function importArtifact(file){
 function busy(on){
   state.running=on;
   $("sendButton").disabled=on;
-  $("messageInput").disabled=on;
+  // The user may prepare the next prompt and inspect other panels while a
+  // model request is in flight. send() still blocks concurrent turns.
+  $("messageInput").disabled=false;
   $("newSession").disabled=on;
   $("artifactFile").disabled=on;
   $("toolPickerToggle").disabled=on;
@@ -314,11 +316,11 @@ function busy(on){
     input.disabled=on||input.dataset.available==="false";
   });
   $("sendStatus").textContent=on?
-    "Модель работает · фактический расход появится после ответа провайдера":"Готов";
-  $("modeQwen").disabled=on;
-  $("modeChatGPT").disabled=on;
-  $("modeCollab").disabled=on;
-  $("gptTopModel").disabled=on||!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
+    "Модель работает · можно готовить следующий вопрос":"Готов";
+  $("modeQwen").disabled=false;
+  $("modeChatGPT").disabled=false;
+  $("modeCollab").disabled=false;
+  $("gptTopModel").disabled=!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
 }
 function resetUsage(mode){
   state.usageTotals[mode]={input:0,output:0,total:0,measuredTurns:0};
@@ -523,7 +525,7 @@ function gptWelcome(){
   $("gptMessages").replaceChildren(window.cybernovaGptWelcome.cloneNode(true));
 }
 function setMode(mode){
-  if(state.running || !["qwen","gpt","collab"].includes(mode))return;
+  if(!["qwen","gpt","collab"].includes(mode))return;
   state.mode=mode;
   const qwen=mode==="qwen", gpt=mode==="gpt", collab=mode==="collab";
   for(const [id,isActive] of [
@@ -1572,4 +1574,8 @@ function init(){
   window.setInterval(()=>{void refreshTaskList();},15000);
   window.setInterval(()=>{if(state.mode==="collab")void refreshCollabRuns();},15000);
 }
+window.addEventListener("cybernova:model-config-applied",event=>{
+  state.qwenModel=displayModelName(event.detail?.model||state.qwenModel);
+  if(state.mode==="qwen")$("modelName").textContent=state.qwenModel;
+});
 document.addEventListener("DOMContentLoaded",init);
