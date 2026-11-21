@@ -389,12 +389,11 @@ class Agent:
                         r"(?i)(?:открой|исследуй|изучи|проверь|проанализируй|собери|network|devtools|браузер|сайт)",
                         text))
                     if selected_url and browser_intent and round_no == 0:
-                        wants_network = bool(re.search(
-                            r"(?i)(?:network|devtools|сетевы[хе]|запрос[ыов])", text
-                        ))
+                        # First navigate to the requested page. The model can
+                        # then call browser_snapshot/browser_network with their
+                        # exact no-argument schemas in the next tool round.
                         chosen = (
-                            "browser_network" if wants_network and "browser_network" in descriptors
-                            else "browser_navigate" if "browser_navigate" in descriptors
+                            "browser_navigate" if "browser_navigate" in descriptors
                             else "browser_open"
                         )
                         if chosen in descriptors:
