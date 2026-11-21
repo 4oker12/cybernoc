@@ -80,9 +80,9 @@ class AgentTests(unittest.TestCase):
     def test_shared_profile_is_provider_neutral_and_contains_project_background(self):
         self.assertIn("ChatGPT в основном проектном чате пользователя", BASE_SYSTEM)
         self.assertIn("локальный исполнитель Cybernova", BASE_SYSTEM)
-        self.assertIn("локальная Qwen Heretic", BASE_SYSTEM)
-        self.assertIn("облачный DeepSeek", BASE_SYSTEM)
-        self.assertIn("разработчик самой Cybernova", BASE_SYSTEM)
+        self.assertIn("Qwen3-Coder Heretic 30B", BASE_SYSTEM)
+        self.assertIn("DeepSeek API", BASE_SYSTEM)
+        self.assertIn("разработчиком самой", BASE_SYSTEM)
         self.assertIn("Chromium/Playwright", BASE_SYSTEM)
         self.assertIn("Первоначальный исполнитель проекта", BASE_SYSTEM)
         self.assertIn("передаёшь отчёт координатору", BASE_SYSTEM)
