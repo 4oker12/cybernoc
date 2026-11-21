@@ -20,6 +20,10 @@ except ImportError:
         validate_dynamic_arguments, safe_preview, action_description,
         ToolPolicyError,
     )
+try:
+    from .gpt_tool_runtime import extract_user_targets
+except ImportError:
+    from gpt_tool_runtime import extract_user_targets
 
 try:
     from .agent_profile import AGENT_PROFILE
