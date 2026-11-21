@@ -138,7 +138,7 @@ class AgentTests(unittest.TestCase):
         )
         self.assertEqual(out["tool_calls"], 1)
         self.assertEqual(local.calls[0][0], "computer_system_overview")
-        self.assertEqual(local.calls[0][4], {"computer"})
+        self.assertEqual(local.calls[0][4], set())
         self.assertIn("example.com", local.calls[0][2])
         self.assertIn("scope.example", local.calls[0][2])
         self.assertEqual(
@@ -162,6 +162,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(advertised, ["computer_system_overview"])
         self.assertEqual(out["tool_calls"], 1)
         self.assertEqual(local.calls[0][0], "computer_system_overview")
+        self.assertEqual(local.calls[0][4], {"computer"})
 
     def test_ollama_client_captures_provider_token_counters(self):
         client = OllamaClient(transport=lambda *_: {
