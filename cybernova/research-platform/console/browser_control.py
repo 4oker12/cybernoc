@@ -477,7 +477,7 @@ class BrowserSession:
             raise ValueError("browser_no_open_page")
         page = self._page
         payload = page.evaluate(
-            """() => {
+            r"""() => {
                 const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
                 const visible = el => {
                     if (!el || !el.isConnected ||
@@ -845,7 +845,7 @@ class BrowserSession:
 
     def _find_text(self, query: str, limit: int = 8) -> dict:
         return self._page.evaluate(
-            """({query, limit}) => {
+            r"""({query, limit}) => {
                 const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
                 const visible = el => {
                     if (!el || !el.isConnected ||

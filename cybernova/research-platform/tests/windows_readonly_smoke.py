@@ -144,7 +144,7 @@ def run():
             warnings.append("computer_file_hash_no_safe_fixture")
             print('{"test":"computer_file_hash","status":"SKIP","reason":"win_ini_missing"}')
 
-        browser = call("browser_navigate", {"url": "https://example.com/"})
+        browser = call("browser_navigate", {"url": "https://example.com/"}, important=True)
         if browser.get("ok"):
             snapshot = call("browser_snapshot", important=True, detail=lambda x: {
                 "page_type": x.get("page_type"),
