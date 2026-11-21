@@ -1,18 +1,20 @@
 """Tests for privacy-filtered Google research and public source reading."""
 from __future__ import annotations
 
+import base64
 import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from console import research_web
 from console.research_web import (
     ResearchWebError, google_search, research_source_open,
-    sanitize_search_query, _parse_bing_rss,
+    sanitize_search_query, _parse_bing_rss, _bing_html_fallback,
+    _unwrap_result_url,
 )
 from console.traffic_tools import TrafficToolClient
 from console.tool_policy import REVIEWED_TOOLS
@@ -91,6 +93,36 @@ class ResearchWebTests(unittest.TestCase):
         self.assertEqual(result["start_index"], 10)
         with self.assertRaisesRegex(ResearchWebError, "page_out_of_range"):
             google_search("vendor advisory", page=6, reader=reader)
+
+    def test_bing_html_redirects_are_unwrapped_to_public_sources(self):
+        target = "https://playwright.dev/python/docs/intro"
+        encoded = "a1" + base64.urlsafe_b64encode(
+            target.encode("utf-8")
+        ).decode("ascii").rstrip("=")
+        redirect = "https://www.bing.com/ck/a?" + urlencode({"u": encoded})
+        self.assertEqual(_unwrap_result_url(redirect), target)
+        self.assertIsNone(_unwrap_result_url("https://www.bing.com/search?q=internal"))
+
+    def test_bing_html_fallback_uses_first_offset_and_extracts_external_results(self):
+        target = "https://playwright.dev/python/docs/intro"
+        encoded = "a1" + base64.urlsafe_b64encode(
+            target.encode("utf-8")
+        ).decode("ascii").rstrip("=")
+        redirect = "https://www.bing.com/ck/a?" + urlencode({"u": encoded})
+        requested = []
+        def reader(url, hosts):
+            requested.append((url, hosts))
+            return {
+                "http_status": 200, "source_sha256": "a" * 64,
+                "headings": ["Playwright Python Docs"],
+                "text_excerpt": "Playwright Python Docs Official documentation for browser automation.",
+                "links": [{"title": "Playwright Python Docs", "url": redirect}],
+            }
+        result = _bing_html_fallback("Playwright Python docs", 2, reader=reader)
+        self.assertEqual(parse_qs(urlsplit(requested[0][0]).query)["first"], ["11"])
+        self.assertEqual(result["provider"], "Bing Search HTML fallback")
+        self.assertEqual(result["results"][0]["url"], target)
+        self.assertEqual(result["results"][0]["domain"], "playwright.dev")
 
     def test_bing_rss_parses_normalized_public_https_results(self):
         blob = (
