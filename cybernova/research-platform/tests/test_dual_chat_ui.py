@@ -87,14 +87,18 @@ class DualChatTests(unittest.TestCase):
     def test_routes_and_simple_ui(self):
         for path,method in (("/api/siwc/chat","POST"),("/api/siwc/chat?thread_id=one","GET"),
                             ("/api/siwc/chats","GET"),("/api/profile-settings","GET"),
-                            ("/api/profile-settings","POST"),("/static/markdown.js","GET")):
+                            ("/api/profile-settings","POST"),("/api/model-config","GET"),
+                            ("/api/model-config","POST"),("/static/markdown.js","GET"),
+                            ("/static/ux.css","GET"),("/static/ux.js","GET"),
+                            ("/static/model-settings.js","GET")):
             self.assertTrue(allowed_path(path,method))
         self.assertFalse(allowed_path("/api/siwc/tokens","GET"))
         html=(ROOT/"console/static/index.html").read_text()
         js=(ROOT/"console/static/app.js").read_text()
         for marker in ('id="modeQwen"','id="modeChatGPT"','id="gptThreadList"',
                        'id="gptTopModel"','id="navProfile"','id="profileDialog"',
-                       'data-profile-tab="chatgpt"','/static/markdown.js'):
+                       'data-profile-tab="chatgpt"','/static/markdown.js','/static/ux.css',
+                       '/static/model-settings.js','/static/ux.js'):
             self.assertIn(marker,html)
         self.assertEqual(html.count('src="/static/markdown.js"'),1)
         self.assertIn('async function sendGPT()',js)
