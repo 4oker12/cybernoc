@@ -347,6 +347,17 @@ class GPTToolRuntime:
         self.tools = build_tool_catalog()
         self.tool_map = {item["name"]: item for item in self.tools}
 
+    def mcp_tools(self) -> list[dict]:
+        """Expose the exact same local tool catalog to MCP/Ollama-style agents."""
+        return [
+            {
+                "name": item["name"],
+                "description": item["description"],
+                "inputSchema": item["parameters"],
+            }
+            for item in self.tools
+        ]
+
     def call(self, name: str, args: dict, *, authorized_targets=None, user_messages=None) -> tuple[dict, bool]:
         if name not in _TOOL_NAMES or name not in self.tool_map:
             return {"ok": False, "error": "gpt_tool_not_registered"}, True
