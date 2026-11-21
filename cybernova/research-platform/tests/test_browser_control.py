@@ -161,12 +161,12 @@ class BrowserControlTests(unittest.TestCase):
         browser = BrowserSession()
         browser._page = FakePage()
         try:
-            short = browser._dispatch("browser_find_text", {"query": "x"})
-            bad_limit = browser._dispatch("browser_find_text", {"query": "install", "max_matches": 99})
+            with self.assertRaisesRegex(ValueError, "browser_search_query_invalid"):
+                browser._dispatch("browser_find_text", {"query": "x"})
+            with self.assertRaisesRegex(ValueError, "browser_search_limit_invalid"):
+                browser._dispatch("browser_find_text", {"query": "install", "max_matches": 99})
         finally:
             browser._executor.shutdown(wait=False, cancel_futures=True)
-        self.assertIn("browser_search_query_invalid", short["error"])
-        self.assertIn("browser_search_limit_invalid", bad_limit["error"])
 
     def test_browser_text_redacts_credentials_and_jwts(self):
         value = "api_key=abc12345 Bearer abcdefghijklmnop eyJabcdefghijk.abcdefghijk.abcdefghijk"
