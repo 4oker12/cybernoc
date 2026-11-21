@@ -21,9 +21,13 @@ except ImportError:
         ToolPolicyError,
     )
 try:
-    from .gpt_tool_runtime import extract_user_targets
+    from .gpt_tool_runtime import (
+        extract_user_targets, filter_tool_rows, normalize_tool_groups,
+    )
 except ImportError:
-    from gpt_tool_runtime import extract_user_targets
+    from gpt_tool_runtime import (
+        extract_user_targets, filter_tool_rows, normalize_tool_groups,
+    )
 
 try:
     from .agent_profile import AGENT_PROFILE
@@ -139,6 +143,18 @@ class OllamaClient:
         msg = response.get("message")
         if not isinstance(msg, dict):
             raise BackendError("ollama_message_missing")
+        msg = dict(msg)
+        prompt_tokens = response.get("prompt_eval_count")
+        output_tokens = response.get("eval_count")
+        prompt_tokens = prompt_tokens if type(prompt_tokens) is int and prompt_tokens >= 0 else None
+        output_tokens = output_tokens if type(output_tokens) is int and output_tokens >= 0 else None
+        msg["_usage"] = {
+            "input_tokens": prompt_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": (prompt_tokens + output_tokens)
+                if prompt_tokens is not None and output_tokens is not None else None,
+            "provider": "Ollama",
+        }
         return msg
 
 
@@ -217,11 +233,12 @@ class Agent:
         self.local_tool_runtime = local_tool_runtime
 
     def _call_registered_tool(self, name: str, args: dict, *, mcp=None,
-                              authorized_targets=None, user_messages=None):
+                              authorized_targets=None, user_messages=None,
+                              enabled_groups=None):
         if self.local_tool_runtime is not None and name in self.local_tool_runtime.tool_map:
             result, is_error = self.local_tool_runtime.call(
                 name, args, authorized_targets=authorized_targets,
-                user_messages=user_messages,
+                user_messages=user_messages, enabled_groups=enabled_groups,
             )
             if isinstance(result, dict) and isinstance(result.get("image_data_url"), str):
                 # The current DeepSeek/Ollama chat adapter is text-only. Do not
@@ -238,9 +255,50 @@ class Agent:
             return {"ok": False, "error": "mcp_backend_unavailable"}, True
         return mcp.call(name, args)
 
-    def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True, scope: dict | None = None, user_context: str = "", profile_instructions: str = "") -> dict:
+    def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True,
+            scope: dict | None = None, user_context: str = "",
+            profile_instructions: str = "", tool_groups: list[str] | None = None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
+        selected_groups = normalize_tool_groups(tool_groups or [])
+        usage_totals = {
+            "input_tokens": 0, "output_tokens": 0, "requests": 0,
+            "measured_requests": 0,
+        }
+
+        def record_usage(response):
+            usage_totals["requests"] += 1
+            raw = response.get("_usage") or response.get("usage") if isinstance(response, dict) else None
+            if not isinstance(raw, dict):
+                return
+            measured = False
+            for target, keys in (
+                ("input_tokens", ("input_tokens", "prompt_tokens", "prompt_eval_count")),
+                ("output_tokens", ("output_tokens", "completion_tokens", "eval_count")),
+            ):
+                value = next((raw.get(key) for key in keys
+                              if type(raw.get(key)) is int and raw.get(key) >= 0), None)
+                if value is not None:
+                    usage_totals[target] += value
+                    measured = True
+            if measured:
+                usage_totals["measured_requests"] += 1
+
+        def usage_report():
+            measured = usage_totals["measured_requests"] > 0
+            complete = (measured and
+                        usage_totals["measured_requests"] == usage_totals["requests"])
+            return {
+                "available": measured,
+                "input_tokens": usage_totals["input_tokens"] if measured else None,
+                "output_tokens": usage_totals["output_tokens"] if measured else None,
+                "total_tokens": (usage_totals["input_tokens"] + usage_totals["output_tokens"])
+                    if measured else None,
+                "requests": usage_totals["requests"],
+                "measured_requests": usage_totals["measured_requests"],
+                "complete": complete,
+                "provider": getattr(self.ollama, "provider", "Ollama / configured LLM"),
+            }
         # Only client-visible role/content history enters the model; never forward
         # hidden arguments or previous tool outputs as executable instructions.
         context = [{"role": "system", "content": BASE_SYSTEM}]
@@ -290,9 +348,11 @@ class Agent:
         except (BackendError, ToolPolicyError) as exc:
             events.append({"type": "mcp_error", "message": str(exc)[:240]})
         local_rows = (
-            self.local_tool_runtime.mcp_tools()
+            self.local_tool_runtime.mcp_tools(selected_groups)
             if self.local_tool_runtime is not None else []
         )
+        if selected_groups:
+            remote_rows = filter_tool_rows(remote_rows, selected_groups)
         local_names = {row["name"] for row in local_rows}
         combined_rows = local_rows + [
             row for row in remote_rows
@@ -312,6 +372,7 @@ class Agent:
         try:
             for round_no in range(MAX_ROUNDS):
                 result = self.ollama.chat(context, tools if tools and round_no < MAX_ROUNDS - 1 else [])
+                record_usage(result)
                 calls = result.get("tool_calls") or []
                 if (not calls and round_no == 0 and force_tools and tools):
                     # Some derivative models ignore native tool_calls. The
@@ -331,6 +392,7 @@ class Agent:
                         *[{"role": item["role"], "content": str(item.get("content") or "")[:1500]}
                           for item in context[-6:] if item["role"] in ("user", "assistant", "tool")],
                     ], json_mode=True)
+                    record_usage(candidate)
                     try:
                         suggested = json.loads(candidate.get("content", "{}")).get("calls", [])
                         if isinstance(suggested, list):
@@ -404,6 +466,7 @@ class Agent:
                                 chosen, chosen_args, mcp=mcp,
                                 authorized_targets=authorized_targets,
                                 user_messages=task_messages,
+                                enabled_groups=selected_groups or None,
                             )
                             executed += 1
                             selected_by = "evidence_first_fallback"
@@ -460,6 +523,7 @@ class Agent:
                         "approval_requests": pending_requests,
                         "selected_by": selected_by if count or executed else "none",
                         "model": self.ollama.model,
+                        "usage": usage_report(),
                     }
                 if not isinstance(calls, list):
                     raise BackendError("invalid_tool_calls")
@@ -569,13 +633,15 @@ class Agent:
                     context.append({"role": "system",
                                     "content": "Лимит инструментов достигнут. Сформируй итог только из наблюдений."})
                     final = self.ollama.chat(context, [])
+                    record_usage(final)
                     answer = str(final.get("content") or "")
                     if pending_requests:
                         answer += "\n\nДля продолжения нужны отдельные разрешения. "
                         answer += "Запрошенные действия ещё не выполнены."
                     return {"answer": answer, "events": events, "tool_calls": executed,
                             "approval_requests": pending_requests,
-                            "selected_by": selected_by, "model": self.ollama.model}
+                            "selected_by": selected_by, "model": self.ollama.model,
+                            "usage": usage_report()}
             raise BackendError("agent_round_limit")
         except (BackendError, ValueError, TypeError) as exc:
             events.append({"type": "agent_error", "message": str(exc)[:200]})
@@ -584,6 +650,7 @@ class Agent:
                 "events": events, "tool_calls": executed,
                 "approval_requests": pending_requests,
                 "selected_by": selected_by if count or executed else "none", "model": self.ollama.model,
+                "usage": usage_report(),
             }
 
     def execute_approved(self, approval: dict, history: list[dict]) -> dict:
