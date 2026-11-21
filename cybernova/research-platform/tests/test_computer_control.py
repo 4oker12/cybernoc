@@ -45,8 +45,8 @@ class ComputerControlTests(unittest.TestCase):
                 if name == "WinDefend":
                     return FakeService()
                 raise FileNotFoundError("missing from test Windows")
-        with patch("console.computer_control.platform.system", return_value="Windows"), \\
-             patch("console.computer_control.psutil", FakePsutil):
+        with (patch("console.computer_control.platform.system", return_value="Windows"),
+              patch("console.computer_control.psutil", FakePsutil)):
             result = _service_overview()
         self.assertTrue(result["ok"])
         self.assertEqual(
