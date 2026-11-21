@@ -20,6 +20,10 @@ except ImportError:
     from local_tools_profile import LOCAL_TOOLS_PROFILE
 
 
+MAX_TOOL_ROUNDS = 24
+MAX_TOOL_CALLS = 64
+
+
 def models() -> list[dict]:
     token = connection.access()
     req = request.Request(RESOURCE + "/models",
@@ -285,7 +289,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
         "а не только через терминал. Используй computer_system_overview, "
         "computer_performance_snapshot, computer_process_list, computer_disk_overview, "
         "computer_service_overview и computer_startup_items для диагностики системы; "
-        "computer_list_directory, computer_search_files, computer_read_text_file и "
+        "computer_list_directory, computer_search_files, computer_search_everywhere, computer_read_text_file и "
         "computer_open_folder — для безопасной работы с папками, файлами и журналами; "
         "computer_open_app — для запуска Проводника, Диспетчера задач, Монитора ресурсов, "
         "Просмотра событий, Диспетчера устройств и Безопасности Windows. "
@@ -304,8 +308,8 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
         "будет запущено, и запроси его. Не отключай защиту, не меняй исключения и не "
         "удаляй/карантинируй файлы самостоятельно. "
         "Используй computer_* инструменты для управления и диагностики Windows; "
-        "terminal_run — только когда действительно нужен CMD. Терминал работает через "
-        "Windows CMD, не PowerShell 7, и принимает только ограниченные read-only команды. "
+        "terminal_run — используй CMD, Windows PowerShell 5.1 или PowerShell 7 по задаче. Терминал поддерживает многострочные команды и скрипты, конвейеры, перенаправления и файловые операции. Выполняй с правами процесса Cybernova без скрытого повышения привилегий. "
+        "Не используй терминал для извлечения секретов, обхода защиты или несанкционированных разрушительных действий. "
         "Не обходи ограничения Runtime и не запускай произвольные скрипты. "
         "Устанавливай ПО только через computer_package_install, после проверки точного "
         "Package ID и отдельного явного разрешения; не удаляй ПО. Не завершай процессы, "
@@ -373,7 +377,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
             "provider": "OpenAI Responses",
         }
 
-    max_rounds = 16 if tools else 1
+    max_rounds = MAX_TOOL_ROUNDS if tools else 1
 
     for round_index in range(max_rounds):
         response = _response_once(
@@ -399,9 +403,9 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
             }
 
         for call in calls:
-            if total_calls >= 32:
+            if total_calls >= MAX_TOOL_CALLS:
                 return {
-                    "answer": "Достигнут лимит инструментальных вызовов за один ход. "
+                    "answer": "Достигнут лимит 64 инструментальных вызовов за один ход. "
                               "Собранные результаты сохранены в журнале ниже; "
                               "можно продолжить исследование следующим сообщением.",
                     "model": model, "source": "chatgpt_plan_responses",

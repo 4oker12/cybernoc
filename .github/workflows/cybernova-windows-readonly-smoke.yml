@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feature/account-gpt-local-tools
+      - feature/full-shell-computer-discovery
     paths:
       - cybernova/research-platform/**
       - .github/workflows/cybernova-windows-readonly-smoke.yml

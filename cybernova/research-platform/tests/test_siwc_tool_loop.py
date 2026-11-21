@@ -125,6 +125,8 @@ class AccountGPTToolLoopTests(unittest.TestCase):
         self.assertEqual(opener.requests[0]["tool_choice"], "auto")
         self.assertIn("ОБЩИЙ ИНСТРУМЕНТАЛЬНЫЙ СТАНДАРТ", opener.requests[0]["instructions"])
         self.assertIn("computer_package_install", opener.requests[0]["instructions"])
+        self.assertIn("computer_search_everywhere", opener.requests[0]["instructions"])
+        self.assertIn("PowerShell 7", opener.requests[0]["instructions"])
         self.assertIn("browser_follow_link", opener.requests[0]["instructions"])
         self.assertNotIn("tools", opener.requests[0])
         self.assertEqual(opener.requests[0]["input"][0]["type"], "additional_tools")
@@ -177,6 +179,78 @@ class AccountGPTToolLoopTests(unittest.TestCase):
         self.assertNotIn("image_data_url", result["tool_events"][0]["result"])
         self.assertEqual(result["tool_events"][0]["result"]["screenshot"],
                          "captured and sent to the model")
+
+    def test_chatgpt_tool_loop_allows_24_rounds(self):
+        class RepeatedCallOpener:
+            def __init__(self):
+                self.requests = []
+
+            def open(self, req, **_):
+                self.requests.append(json.loads(req.data))
+                index = len(self.requests)
+                return FakeStream(sse({
+                    "output": [{
+                        "type": "function_call",
+                        "call_id": f"call_{index}",
+                        "name": "terminal_status",
+                        "arguments": "{}",
+                    }],
+                    "usage": {"input_tokens": 10, "output_tokens": 2},
+                }))
+
+        opener = RepeatedCallOpener()
+        runtime = FakeRuntime()
+        with patch.object(siwc_inference, "models", return_value=[
+                 {"slug": "gpt-6.2-sol", "display_name": "GPT"},
+             ]), \
+             patch.object(siwc_inference.connection, "access", return_value="test-token"), \
+             patch.object(siwc_inference.request, "build_opener", return_value=opener):
+            result = siwc_inference.chat(
+                "gpt-6.2-sol",
+                [{"role": "user", "content": "Выполни последовательную диагностику."}],
+                tool_runtime=runtime,
+            )
+
+        self.assertEqual(siwc_inference.MAX_TOOL_ROUNDS, 24)
+        self.assertEqual(len(opener.requests), 24)
+        self.assertEqual(result["tool_calls"], 24)
+        self.assertIn("лимиту циклов", result["answer"])
+
+    def test_chatgpt_tool_loop_caps_one_turn_at_64_calls(self):
+        class BatchCallOpener:
+            def __init__(self):
+                self.requests = []
+
+            def open(self, req, **_):
+                self.requests.append(json.loads(req.data))
+                calls = [{
+                    "type": "function_call",
+                    "call_id": f"call_{index}",
+                    "name": "terminal_status",
+                    "arguments": "{}",
+                } for index in range(70)]
+                return FakeStream(sse({
+                    "output": calls,
+                    "usage": {"input_tokens": 10, "output_tokens": 2},
+                }))
+
+        opener = BatchCallOpener()
+        runtime = FakeRuntime()
+        with patch.object(siwc_inference, "models", return_value=[
+                 {"slug": "gpt-6.2-sol", "display_name": "GPT"},
+             ]), \
+             patch.object(siwc_inference.connection, "access", return_value="test-token"), \
+             patch.object(siwc_inference.request, "build_opener", return_value=opener):
+            result = siwc_inference.chat(
+                "gpt-6.2-sol",
+                [{"role": "user", "content": "Выполни много независимых проверок."}],
+                tool_runtime=runtime,
+            )
+
+        self.assertEqual(siwc_inference.MAX_TOOL_CALLS, 64)
+        self.assertEqual(result["tool_calls"], 64)
+        self.assertEqual(len(runtime.calls), 64)
+        self.assertIn("лимит 64", result["answer"])
 
     def test_text_only_mode_does_not_send_tools(self):
         opener = FakeOpener()
