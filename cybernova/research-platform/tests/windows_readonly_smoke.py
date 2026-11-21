@@ -59,7 +59,7 @@ def run():
         "computer_defender_status", "computer_defender_events",
         "computer_file_hash", "computer_list_directory",
         "computer_search_files", "computer_search_everywhere", "computer_ui_windows",
-        "browser_navigate", "browser_snapshot", "browser_follow_link",
+        "browser_navigate", "browser_snapshot", "browser_find_text", "browser_follow_link",
         "browser_network", "google_search", "research_source_open",
     }
     assert required.issubset(catalog), sorted(required - catalog)
@@ -146,7 +146,23 @@ def run():
 
         browser = call("browser_navigate", {"url": "https://example.com/"})
         if browser.get("ok"):
-            snapshot = call("browser_snapshot")
+            snapshot = call("browser_snapshot", important=True, detail=lambda x: {
+                "page_type": x.get("page_type"),
+                "heading_count": len(x.get("headings", [])),
+                "link_count": x.get("content_stats", {}).get("link_count"),
+                "text_chars": len(x.get("visible_text") or ""),
+            })
+            if snapshot.get("ok") and (not snapshot.get("headings") or not snapshot.get("page_type")):
+                failures.append("browser_snapshot_semantic_map_incomplete")
+            found = call("browser_find_text", {
+                "query": "Example Domain", "max_matches": 3,
+            }, important=True, detail=lambda x: {
+                "matches": len(x.get("matches", [])),
+                "total_matches": x.get("total_matches"),
+                "scanned_blocks": x.get("scanned_blocks"),
+            })
+            if found.get("ok") and not found.get("matches"):
+                failures.append("browser_find_text_expected_phrase_missing")
             call("browser_network", detail=lambda x: {
                 "events_recorded": len(x.get("events", x.get("network_events", []))),
             })

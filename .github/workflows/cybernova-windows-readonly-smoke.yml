@@ -4,6 +4,7 @@ on:
     branches:
       - feature/account-gpt-local-tools
       - feature/full-shell-computer-discovery
+      - chatgpt/browser-intelligence
     paths:
       - cybernova/research-platform/**
       - .github/workflows/cybernova-windows-readonly-smoke.yml

@@ -69,6 +69,7 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("browser_navigate", names)
         self.assertIn("browser_tabs", names)
         self.assertIn("browser_switch_tab", names)
+        self.assertIn("browser_find_text", names)
         self.assertNotIn("computer_system_overview", names)
         self.assertNotIn("terminal_run", names)
         self.assertEqual(
