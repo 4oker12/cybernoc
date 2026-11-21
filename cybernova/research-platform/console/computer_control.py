@@ -882,7 +882,7 @@ def _latest_user_and_previous_assistant(messages):
 def _explicit_action_approved(messages, action_pattern: str, identifiers: list[str]) -> bool:
     latest, previous = _latest_user_and_previous_assistant(messages)
     # Fail closed on explicit negation, even if the sentence also contains an approval verb.
-    if re.search(r"(?i)(?:\\bне\\b|\\bнет\\b|\\bнельзя\\b|\\bзапрещаю\\b|\\bотказываюсь\\b|\\bотмена\\b|\\bdo\\s+not\\b|\\bdon't\\b|\\bnever\\b|\\bdeny\\b|\\brefuse\\b)", latest):
+    if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
         return False
     simple_yes = bool(re.fullmatch(
         r"\s*(да|yes|подтверждаю|разрешаю|выполняй)[!. ]*\s*",
@@ -1195,7 +1195,7 @@ def _apply_organization(source_raw: str, destination_raw: str, group_by: str,
 def extract_user_computer_approvals(messages) -> set[str]:
     """Only the latest user turn can authorize a Defender scan."""
     if not isinstance(messages, list):
-        return approvals
+        return set()
     latest_user_index = None
     for index in range(len(messages) - 1, -1, -1):
         item = messages[index]
@@ -1206,11 +1206,11 @@ def extract_user_computer_approvals(messages) -> set[str]:
         return set()
     latest = str(messages[latest_user_index].get("content") or "").casefold()
     # Fail closed: a negated instruction is never authorization.
-    if re.search(r"(?i)(?:\\bне\\b|\\bнет\\b|\\bнельзя\\b|\\bзапрещаю\\b|\\bотказываюсь\\b|\\bотмена\\b|\\bdo\\s+not\\b|\\bdon't\\b|\\bnever\\b|\\bdeny\\b|\\brefuse\\b)", latest):
+    if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
         return set()
     approvals = set()
     if re.fullmatch(
-        r"\\s*разрешаю\\s+(?:сделать|снять)\\s+(?:скриншот|снимок)\\s+экрана\\s+и\\s+передать\\s+(?:его\\s+)?chatgpt\\s+для\\s+анализа[.! ]*\\s*",
+        r"\s*разрешаю\s+(?:сделать|снять)\s+(?:скриншот|снимок)\s+экрана\s+и\s+передать\s+(?:его\s+)?chatgpt\s+для\s+анализа[.! ]*\s*",
         latest, flags=re.I,
     ):
         approvals.add("computer_screenshot")
@@ -1247,7 +1247,7 @@ def extract_user_computer_approvals(messages) -> set[str]:
     if re.search(r"(провер|скан|scan)", latest):
         approvals.add("defender_quick_scan")
         return approvals
-    return set()
+    return approvals
 
 
 def _start_defender_scan(scan_type: str, approved_actions: set[str]) -> dict:
