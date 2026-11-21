@@ -28,6 +28,9 @@ class AgentOperatingContractTests(unittest.TestCase):
         self.assertIn("PORT", contract.upper())
         self.assertIn("CMD", contract)
         self.assertIn("Vast", contract)
+        self.assertIn("ChatGPT", contract)
+        self.assertIn("координатор", contract)
+        self.assertIn("DeepSeek", contract)
         self.assertLessEqual(len(contract), 8500)
 
     def test_deepseek_and_gpt_both_load_contract(self):
@@ -37,6 +40,8 @@ class AgentOperatingContractTests(unittest.TestCase):
         self.assertIn("from .operational_contract import OPERATIONAL_CONTRACT", gpt)
         self.assertIn("    OPERATIONAL_CONTRACT,", agent)
         self.assertIn(' + OPERATIONAL_CONTRACT', gpt)
+        self.assertIn("ChatGPT в основном проектном чате", agent)
+        self.assertIn("локальный исполнитель Cybernova", agent)
 
     def test_safe_update_scripts_keep_no_auto_kill(self):
         cmd = ROOT / "tools" / "windows" / "Update_Cybernova_Safe.cmd"
