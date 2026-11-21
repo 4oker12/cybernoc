@@ -88,7 +88,7 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_scroll", "Scroll the current page up or down by a bounded number of pixels.",
           {"direction": {"type": "string", "enum": ["up", "down"]},
            "pixels": {"type": "integer", "description": "100 to 1200 pixels"}}, ["direction", "pixels"]),
-    _tool("browser_screenshot", "Capture the visible viewport of the current Chromium tab as an image for visual inspection. The image is sent to the Account GPT model; use only when DOM inspection is insufficient."),
+    _tool("browser_screenshot", "Capture the visible viewport of the current Chromium tab as an image for a vision-capable model. Text-only models should use browser_snapshot and browser_network instead."),
     _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers."),
     _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
