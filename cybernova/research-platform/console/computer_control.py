@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import fnmatch
+import hashlib
 import io
 import os
 import platform
@@ -16,8 +17,10 @@ import re
 import shutil
 import subprocess
 import time
+import tarfile
+import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 try:
     import psutil
@@ -152,6 +155,39 @@ COMPUTER_TOOLS = [
           {"scan_type": {"type": "string", "enum": ["quick", "full"]}}, ["scan_type"]),
     _tool("computer_defender_scan_status",
           "Check the locally started Defender scan process and recent Defender operational events. Read-only."),
+    _tool("computer_installed_programs",
+          "Inventory installed Windows applications from uninstall registry entries. Read-only; never returns uninstall commands.",
+          {"limit": {**INTEGER, "description": "Maximum rows, 1 to 100"}}, ["limit"]),
+    _tool("computer_power_overview",
+          "Inspect active Windows power plan, battery status and available CPU temperature sensors. Read-only."),
+    _tool("computer_file_hash",
+          "Calculate SHA-256 for one approved local file, up to 1 GiB. Does not execute the file.",
+          {"path": STRING}, ["path"]),
+    _tool("computer_package_search",
+          "Search the configured official Windows Package Manager (winget) community source. Search only; no install.",
+          {"query": STRING}, ["query"]),
+    _tool("computer_package_details",
+          "Show metadata for one exact winget package ID from the configured winget source. Read-only.",
+          {"package_id": STRING}, ["package_id"]),
+    _tool("computer_package_install",
+          "Install one exact winget package ID in user scope only. Requires explicit approval of the exact package ID in the current or immediately preceding user turn. No elevation is requested.",
+          {"package_id": STRING}, ["package_id"]),
+    _tool("computer_archive_inspect",
+          "Inspect ZIP or TAR archive members without extracting. Rejects unsafe paths, links and oversized archives.",
+          {"path": STRING}, ["path"]),
+    _tool("computer_archive_extract",
+          "Safely extract a ZIP or TAR archive into an existing approved destination. Rejects traversal, links, overwrites and oversized archives. Requires explicit approval of the exact source and destination paths.",
+          {"path": STRING, "destination": STRING}, ["path", "destination"]),
+    _tool("computer_plan_file_organization",
+          "Create a dry-run plan for sorting direct files from one approved folder into an existing destination by extension, file type or year-month. No files are moved.",
+          {"source": STRING, "destination": STRING,
+           "group_by": {"type": "string", "enum": ["extension", "file_type", "year_month"]}},
+          ["source", "destination", "group_by"]),
+    _tool("computer_apply_file_organization",
+          "Move files according to a previously previewed organization plan. Never overwrites. Requires explicit approval of exact source, destination and grouping.",
+          {"source": STRING, "destination": STRING,
+           "group_by": {"type": "string", "enum": ["extension", "file_type", "year_month"]}},
+          ["source", "destination", "group_by"]),
 ]
 COMPUTER_TOOL_NAMES = frozenset(item["name"] for item in COMPUTER_TOOLS)
 
@@ -667,6 +703,450 @@ def _defender_events() -> dict:
                 "details": result.get("output", "")[:1500]}
     return {"ok": True, "events": result.get("output", "")[:10000],
             "event_ids": [1000, 1001, 1116, 1117, 5007]}
+
+
+def _installed_programs(limit: int) -> dict:
+    _windows_only()
+    import winreg
+    locations = [
+        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ]
+    rows, seen = [], set()
+    for hive, base in locations:
+        try:
+            with winreg.OpenKey(hive, base, 0, winreg.KEY_READ) as root:
+                count = winreg.QueryInfoKey(root)[0]
+                for index in range(min(count, 1200)):
+                    try:
+                        subkey_name = winreg.EnumKey(root, index)
+                        with winreg.OpenKey(root, subkey_name, 0, winreg.KEY_READ) as item:
+                            def read_value(key):
+                                try:
+                                    return winreg.QueryValueEx(item, key)[0]
+                                except OSError:
+                                    return ""
+                            name = str(read_value("DisplayName") or "").strip()
+                            if not name or name.casefold() in seen:
+                                continue
+                            if int(read_value("SystemComponent") or 0) == 1:
+                                continue
+                            seen.add(name.casefold())
+                            rows.append({
+                                "name": _redact(name)[:180],
+                                "version": str(read_value("DisplayVersion") or "")[:80],
+                                "publisher": _redact(str(read_value("Publisher") or ""))[:140],
+                                "install_date": str(read_value("InstallDate") or "")[:16],
+                                "registry_view": "HKCU" if hive == winreg.HKEY_CURRENT_USER else "HKLM",
+                            })
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    rows.sort(key=lambda x: x["name"].casefold())
+    limit = max(1, min(int(limit), 100))
+    return {"ok": True, "count": len(rows), "programs": rows[:limit],
+            "truncated": len(rows) > limit}
+
+
+def _power_overview() -> dict:
+    _windows_only()
+    power = _fixed_command([_system32("powercfg.exe"), "/getactivescheme"])
+    battery = None
+    if psutil is not None:
+        try:
+            item = psutil.sensors_battery()
+            if item is not None:
+                battery = {
+                    "percent": item.percent,
+                    "plugged": item.power_plugged,
+                    "seconds_left": item.secsleft if item.secsleft >= 0 else None,
+                }
+        except (AttributeError, OSError):
+            battery = {"available": False}
+    temperatures = []
+    if psutil is not None:
+        try:
+            for sensor, entries in (psutil.sensors_temperatures() or {}).items():
+                for entry in entries[:8]:
+                    temperatures.append({
+                        "sensor": str(sensor)[:80],
+                        "label": str(entry.label or "")[:80],
+                        "celsius": entry.current,
+                        "high_celsius": entry.high,
+                        "critical_celsius": entry.critical,
+                    })
+        except (AttributeError, OSError):
+            pass
+    return {
+        "ok": True, "active_power_plan": power.get("output", "")[:1200],
+        "battery": battery, "temperature_sensors": temperatures,
+        "temperature_note": "Windows laptops may expose no temperature sensors through psutil; an empty list is not a zero-degree reading.",
+    }
+
+
+def _file_hash(path_raw: str) -> dict:
+    path = _resolve_local_path(path_raw)
+    if not path.is_file():
+        raise ValueError("computer_hash_path_not_file")
+    size = path.stat().st_size
+    if size > 1024 * 1024 * 1024:
+        raise ValueError("computer_hash_file_too_large")
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {"ok": True, "path": str(path), "size_bytes": size,
+            "algorithm": "SHA-256", "sha256": digest.hexdigest()}
+
+
+def _winget_path() -> str | None:
+    found = shutil.which("winget.exe") or shutil.which("winget")
+    if found:
+        return found
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        candidate = Path(local) / "Microsoft" / "WindowsApps" / "winget.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _winget_run(args: list[str], timeout=45) -> dict:
+    executable = _winget_path()
+    if not executable:
+        return {"ok": False, "error": "winget_not_available"}
+    result = _fixed_command([executable, *args], timeout=timeout)
+    result["manager"] = "Windows Package Manager (winget)"
+    result["source"] = "winget"
+    result["output"] = result.get("output", "")[:7000]
+    return result
+
+
+def _package_search(query: str) -> dict:
+    _windows_only()
+    if not isinstance(query, str) or not 2 <= len(query.strip()) <= 100:
+        raise ValueError("winget_search_query_invalid")
+    return _winget_run([
+        "search", "--query", query.strip(), "--source", "winget",
+        "--accept-source-agreements", "--disable-interactivity",
+    ], timeout=60)
+
+
+def _valid_package_id(package_id: str) -> str:
+    if not isinstance(package_id, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._+-]{1,119}", package_id.strip()
+    ):
+        raise ValueError("winget_package_id_invalid")
+    return package_id.strip()
+
+
+def _package_details(package_id: str) -> dict:
+    _windows_only()
+    package_id = _valid_package_id(package_id)
+    result = _winget_run([
+        "show", "--id", package_id, "--exact", "--source", "winget",
+        "--accept-source-agreements", "--disable-interactivity",
+    ], timeout=60)
+    result["package_id"] = package_id
+    return result
+
+
+def _latest_user_and_previous_assistant(messages):
+    if not isinstance(messages, list):
+        return "", ""
+    user_index = None
+    for index in range(len(messages) - 1, -1, -1):
+        row = messages[index]
+        if isinstance(row, dict) and row.get("role") == "user":
+            user_index = index
+            break
+    if user_index is None:
+        return "", ""
+    latest = str(messages[user_index].get("content") or "")
+    previous = ""
+    for index in range(user_index - 1, -1, -1):
+        row = messages[index]
+        if isinstance(row, dict) and row.get("role") == "assistant":
+            previous = str(row.get("content") or "")
+            break
+    return latest, previous
+
+
+def _explicit_action_approved(messages, action_pattern: str, identifiers: list[str]) -> bool:
+    latest, previous = _latest_user_and_previous_assistant(messages)
+    simple_yes = bool(re.fullmatch(
+        r"\s*(да|yes|подтверждаю|разрешаю|выполняй)[!. ]*\s*",
+        latest, flags=re.I,
+    ))
+    context = latest + (" " + previous if simple_yes else "")
+    if not re.search(action_pattern, context, flags=re.I):
+        return False
+    if not re.search(
+        r"(?i)(разрешаю|подтверждаю|выполняй|запускай|установи|распакуй|"
+        r"перемести|организуй|install|extract|move|organize|yes|да)",
+        latest,
+    ):
+        return False
+    normalized = context.casefold().replace("/", "\\")
+    return all(
+        isinstance(value, str) and value.strip()
+        and value.casefold().replace("/", "\\") in normalized
+        for value in identifiers
+    )
+
+
+def _package_install(package_id: str, user_messages) -> dict:
+    _windows_only()
+    package_id = _valid_package_id(package_id)
+    if not _explicit_action_approved(
+        user_messages, r"(установ|install)", [package_id]
+    ):
+        return {
+            "ok": False, "approval_required": True,
+            "package_id": package_id,
+            "required_user_confirmation": f"Напишите: «Разрешаю установить пакет {package_id} из источника winget в область текущего пользователя».",
+        }
+    # Resolve the exact package from the selected source immediately before install.
+    details = _package_details(package_id)
+    if not details.get("ok"):
+        return {"ok": False, "error": "winget_package_preflight_failed",
+                "package_id": package_id, "details": details.get("output", "")[:2500]}
+    result = _winget_run([
+        "install", "--id", package_id, "--exact", "--source", "winget",
+        "--scope", "user", "--silent", "--accept-package-agreements",
+        "--accept-source-agreements", "--disable-interactivity",
+    ], timeout=600)
+    result["package_id"] = package_id
+    result["elevation_requested"] = False
+    result["preflight_verified"] = True
+    return result
+
+
+def _archive_member_path(destination: Path, name: str) -> Path:
+    if not isinstance(name, str) or not name or "\x00" in name:
+        raise ValueError("archive_member_name_invalid")
+    normalized = name.replace("\\", "/")
+    posix = PurePosixPath(normalized)
+    windows = PureWindowsPath(name)
+    if posix.is_absolute() or windows.is_absolute() or windows.drive or any(
+        part in {"..", ""} for part in posix.parts
+    ):
+        raise ValueError("archive_path_traversal_blocked")
+    if any(_sensitive_component(part) for part in posix.parts):
+        raise ValueError("archive_sensitive_member_blocked")
+    target = destination.joinpath(*posix.parts)
+    resolved = Path(os.path.abspath(target))
+    if not resolved.is_relative_to(destination.resolve()):
+        raise ValueError("archive_path_traversal_blocked")
+    return resolved
+
+
+def _archive_inspect(path_raw: str) -> dict:
+    path = _resolve_local_path(path_raw)
+    if not path.is_file() or path.suffix.casefold() not in {
+        ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz",
+    }:
+        raise ValueError("archive_format_not_supported")
+    rows, total = [], 0
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as archive:
+            items = archive.infolist()
+            if len(items) > 500:
+                raise ValueError("archive_entry_limit_exceeded")
+            for item in items:
+                target = _archive_member_path(Path("C:\\CybernovaArchivePreview"), item.filename)
+                mode = item.external_attr >> 16
+                if __import__("stat").S_ISLNK(mode):
+                    raise ValueError("archive_links_not_supported")
+                total += item.file_size
+                rows.append({"name": item.filename[:240], "size_bytes": item.file_size,
+                             "directory": item.is_dir()})
+    else:
+        with tarfile.open(path, "r:*") as archive:
+            items = archive.getmembers()
+            if len(items) > 500:
+                raise ValueError("archive_entry_limit_exceeded")
+            for item in items:
+                _archive_member_path(Path("C:\\CybernovaArchivePreview"), item.name)
+                if not (item.isfile() or item.isdir()):
+                    raise ValueError("archive_links_or_special_files_not_supported")
+                total += item.size
+                rows.append({"name": item.name[:240], "size_bytes": item.size,
+                             "directory": item.isdir()})
+    if total > 1024 * 1024 * 1024:
+        raise ValueError("archive_uncompressed_size_limit_exceeded")
+    return {"ok": True, "archive": str(path), "entries": rows[:100],
+            "entry_count": len(rows), "uncompressed_bytes": total,
+            "truncated": len(rows) > 100}
+
+
+def _archive_extract(path_raw: str, destination_raw: str, user_messages) -> dict:
+    path = _resolve_local_path(path_raw)
+    destination = _resolve_local_path(destination_raw)
+    if not path.is_file() or not destination.is_dir():
+        raise ValueError("archive_source_or_destination_invalid")
+    if not _explicit_action_approved(
+        user_messages, r"(распак|извлеч|extract|unpack)",
+        [str(path), str(destination)],
+    ):
+        return {
+            "ok": False, "approval_required": True,
+            "source": str(path), "destination": str(destination),
+            "required_user_confirmation": f"Напишите: «Разрешаю распаковать {path} в {destination}».",
+        }
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as archive:
+            items = archive.infolist()
+            total = sum(item.file_size for item in items)
+            if len(items) > 500 or total > 1024 * 1024 * 1024:
+                raise ValueError("archive_size_limit_exceeded")
+            plan = []
+            for item in items:
+                target = _archive_member_path(destination, item.filename)
+                mode = item.external_attr >> 16
+                if __import__("stat").S_ISLNK(mode):
+                    raise ValueError("archive_links_not_supported")
+                if item.file_size > 256 * 1024 * 1024:
+                    raise ValueError("archive_member_size_limit_exceeded")
+                if item.file_size and item.compress_size and item.file_size / item.compress_size > 1000:
+                    raise ValueError("archive_compression_ratio_limit_exceeded")
+                if target.exists():
+                    raise ValueError("archive_extraction_would_overwrite")
+                plan.append((item, target))
+            extracted = []
+            for item, target in plan:
+                if item.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    raise ValueError("archive_extraction_would_overwrite")
+                with archive.open(item, "r") as source, target.open("xb") as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+                extracted.append(str(target))
+    else:
+        with tarfile.open(path, "r:*") as archive:
+            items = archive.getmembers()
+            total = sum(item.size for item in items)
+            if len(items) > 500 or total > 1024 * 1024 * 1024:
+                raise ValueError("archive_size_limit_exceeded")
+            plan = []
+            for item in items:
+                target = _archive_member_path(destination, item.name)
+                if not (item.isfile() or item.isdir()):
+                    raise ValueError("archive_links_or_special_files_not_supported")
+                if item.size > 256 * 1024 * 1024:
+                    raise ValueError("archive_member_size_limit_exceeded")
+                if target.exists():
+                    raise ValueError("archive_extraction_would_overwrite")
+                plan.append((item, target))
+            extracted = []
+            for item, target in plan:
+                if item.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    raise ValueError("archive_extraction_would_overwrite")
+                source = archive.extractfile(item)
+                if source is None:
+                    raise ValueError("archive_member_read_failed")
+                with source, target.open("xb") as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+                extracted.append(str(target))
+    return {"ok": True, "archive": str(path), "destination": str(destination),
+            "files_extracted": len(extracted), "paths": extracted[:100],
+            "truncated": len(extracted) > 100}
+
+
+def _organization_category(path: Path, group_by: str) -> str:
+    suffix = path.suffix.casefold().lstrip(".") or "no_extension"
+    if group_by == "extension":
+        return suffix[:32]
+    if group_by == "year_month":
+        stamp = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).astimezone()
+        return stamp.strftime("%Y-%m")
+    groups = {
+        "images": {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg", ".heic"},
+        "documents": {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".rtf", ".odt"},
+        "archives": {".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz"},
+        "audio": {".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"},
+        "video": {".mp4", ".mkv", ".avi", ".mov", ".webm"},
+        "code": {".py", ".js", ".ts", ".html", ".css", ".json", ".xml", ".yml", ".yaml", ".ps1", ".bat", ".cmd"},
+        "installers": {".exe", ".msi", ".msix", ".appx"},
+    }
+    for category, suffixes in groups.items():
+        if path.suffix.casefold() in suffixes:
+            return category
+    return "other"
+
+
+def _organization_plan(source_raw: str, destination_raw: str, group_by: str) -> dict:
+    source = _resolve_local_path(source_raw)
+    destination = _resolve_local_path(destination_raw)
+    if not source.is_dir() or not destination.is_dir():
+        raise ValueError("organization_source_or_destination_invalid")
+    if source == destination or source in destination.parents or destination in source.parents:
+        raise ValueError("organization_overlapping_directories")
+    if group_by not in {"extension", "file_type", "year_month"}:
+        raise ValueError("organization_grouping_invalid")
+    moves = []
+    for item in sorted(source.iterdir(), key=lambda x: x.name.casefold()):
+        if item.is_symlink() or not item.is_file() or _sensitive_component(item.name):
+            continue
+        category = _organization_category(item, group_by)
+        target_dir = destination / category
+        target = target_dir / item.name
+        if target.exists():
+            moves.append({"source": str(item), "destination": str(target),
+                          "category": category, "status": "skipped_collision"})
+        else:
+            moves.append({"source": str(item), "destination": str(target),
+                          "category": category, "status": "planned"})
+        if len(moves) >= 100:
+            break
+    return {"ok": True, "source": str(source), "destination": str(destination),
+            "group_by": group_by, "planned_count": sum(x["status"] == "planned" for x in moves),
+            "moves": moves, "truncated": len(moves) >= 100}
+
+
+def _apply_organization(source_raw: str, destination_raw: str, group_by: str,
+                        user_messages) -> dict:
+    plan = _organization_plan(source_raw, destination_raw, group_by)
+    source, destination = plan["source"], plan["destination"]
+    if not _explicit_action_approved(
+        user_messages, r"(сортир|организ|перемест|move|organize)",
+        [source, destination, group_by],
+    ):
+        return {
+            "ok": False, "approval_required": True,
+            "source": source, "destination": destination, "group_by": group_by,
+            "preview": plan["moves"][:30],
+            "required_user_confirmation": (
+                f"Напишите: «Разрешаю переместить файлы из {source} в {destination} "
+                f"с группировкой {group_by}»."
+            ),
+        }
+    completed, failed, skipped = [], [], []
+    for item in plan["moves"]:
+        if item["status"] != "planned":
+            skipped.append(item)
+            continue
+        src, dst = Path(item["source"]), Path(item["destination"])
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if dst.exists() or src.is_symlink():
+                skipped.append({**item, "status": "skipped_changed_since_preview"})
+                continue
+            shutil.move(str(src), str(dst))
+            completed.append(str(dst))
+        except OSError as exc:
+            failed.append({"source": str(src), "error": type(exc).__name__})
+    return {"ok": not failed, "moved": len(completed), "skipped": len(skipped),
+            "failed": failed[:20], "destination": destination,
+            "moved_paths": completed[:100], "truncated": len(completed) > 100}
 
 
 def extract_user_computer_approvals(messages) -> set[str]:
