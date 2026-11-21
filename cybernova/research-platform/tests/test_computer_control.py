@@ -2,6 +2,7 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -11,10 +12,48 @@ from console.computer_control import (
     HIGH_IMPACT_UI, SAFE_UI_CONTROL_TYPES,
     _archive_member_path, _explicit_action_approved,
     _sensitive_component, _ui_click, extract_user_computer_approvals,
+    computer_control_call, _service_overview,
 )
 
 
 class ComputerControlTests(unittest.TestCase):
+    def test_process_list_accepts_required_limit_argument(self):
+        with patch("console.computer_control._process_list",
+                   return_value={"ok": True, "count_returned": 3, "processes": []}) as fake:
+            result, failed = computer_control_call(
+                "computer_process_list", {"limit": 3}
+            )
+        self.assertFalse(failed)
+        self.assertEqual(result["count_returned"], 3)
+        fake.assert_called_once_with(3)
+        result, failed = computer_control_call("computer_process_list", {})
+        self.assertTrue(failed)
+        self.assertIn("requires_limit", result["error"])
+
+    def test_service_overview_skips_missing_windows_services(self):
+        class FakeService:
+            def as_dict(self):
+                return {
+                    "name": "WinDefend", "display_name": "Microsoft Defender",
+                    "status": "running", "start_type": "auto",
+                }
+        class FakePsutil:
+            NoSuchProcess = LookupError
+            AccessDenied = PermissionError
+            @staticmethod
+            def win_service_get(name):
+                if name == "WinDefend":
+                    return FakeService()
+                raise FileNotFoundError("missing from test Windows")
+        with patch("console.computer_control.platform.system", return_value="Windows"), \\
+             patch("console.computer_control.psutil", FakePsutil):
+            result = _service_overview()
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            [row["name"] for row in result["services"]], ["WinDefend"]
+        )
+        self.assertGreater(len(result["unavailable"]), 0)
+
     def test_computer_tool_catalog_covers_local_management_domains(self):
         names = {item["name"] for item in COMPUTER_TOOLS}
         self.assertTrue({
