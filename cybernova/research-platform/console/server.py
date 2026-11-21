@@ -36,7 +36,10 @@ try:
     from .safe_terminal import TERMINAL_TOOLS, safe_terminal
     from .research_web import research_web_call
     from .collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
-    from .shared_tool_support import preflight as gpt_tool_preflight
+    from .gpt_tool_runtime import (
+        runtime as gpt_tool_runtime, extract_user_targets,
+        normalize_tool_groups, tool_group_summary,
+    )
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -49,6 +52,7 @@ try:
     from .siwc_chat_store import GPTChatStore, GPTChatError
     from .research_scope import ResearchScopeStore, scope_profile
     from .profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
+    from .model_settings import ModelSettingsError, apply_model_settings, get_model_settings
 except ImportError:
     from agent import Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS
     from followups import generate_followups
@@ -64,7 +68,10 @@ except ImportError:
     from safe_terminal import TERMINAL_TOOLS, safe_terminal
     from research_web import research_web_call
     from collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
-    from shared_tool_support import preflight as gpt_tool_preflight
+    from gpt_tool_runtime import (
+        runtime as gpt_tool_runtime, extract_user_targets,
+        normalize_tool_groups, tool_group_summary,
+    )
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
@@ -77,6 +84,7 @@ except ImportError:
     from siwc_chat_store import GPTChatStore, GPTChatError
     from research_scope import ResearchScopeStore, scope_profile
     from profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
+    from model_settings import ModelSettingsError, apply_model_settings, get_model_settings
 
 ROOT = Path(__file__).resolve().parent
 MAX_SESSIONS = 24
@@ -84,7 +92,60 @@ SESSION_TTL_SECONDS = 7200
 MAX_HISTORY = 16
 sessions: OrderedDict[str, dict] = OrderedDict()
 sessions_lock = RLock()
-agent = Agent()
+run_usage_progress: OrderedDict[str, dict] = OrderedDict()
+run_usage_lock = RLock()
+agent = Agent(local_tool_runtime=gpt_tool_runtime)
+
+
+def _begin_usage_progress(run_id: str) -> None:
+    if (not isinstance(run_id, str) or len(run_id) != 32 or
+            any(char not in "0123456789abcdef" for char in run_id)):
+        raise HTTPException(status_code=422, detail="invalid_run_id")
+    with run_usage_lock:
+        while len(run_usage_progress) >= 128:
+            run_usage_progress.popitem(last=False)
+        run_usage_progress[run_id] = {
+            "status": "running",
+            "usage": {
+                "available": False, "input_tokens": None, "output_tokens": None,
+                "total_tokens": None, "requests": 0, "measured_requests": 0,
+                "complete": False, "provider": None,
+            },
+            "updated_at": time.time(),
+        }
+
+
+def _update_usage_progress(run_id: str, usage: dict) -> None:
+    if not isinstance(usage, dict):
+        return
+    with run_usage_lock:
+        item = run_usage_progress.get(run_id)
+        if item is None or item["status"] != "running":
+            return
+        item["usage"] = dict(usage)
+        item["updated_at"] = time.time()
+        run_usage_progress.move_to_end(run_id)
+
+
+def _finish_usage_progress(run_id: str, status: str, usage: dict | None = None) -> None:
+    with run_usage_lock:
+        item = run_usage_progress.get(run_id)
+        if item is None:
+            return
+        if isinstance(usage, dict):
+            item["usage"] = dict(usage)
+        item["status"] = status
+        item["updated_at"] = time.time()
+        run_usage_progress.move_to_end(run_id)
+
+
+def _read_usage_progress(run_id: str) -> dict | None:
+    with run_usage_lock:
+        item = run_usage_progress.get(run_id)
+        if item is None:
+            return None
+        return {"status": item["status"], "usage": dict(item["usage"]),
+                "updated_at": item["updated_at"]}
 
 
 @lru_cache(maxsize=1)
@@ -126,6 +187,7 @@ async def lifespan(app):
     finally:
         if worker is not None:
             worker.stop()
+        gpt_tool_runtime.close()
 
 
 app = FastAPI(title="Cybernova Console", version="0.2.0",
@@ -165,6 +227,9 @@ async def localhost_only(request: Request, call_next):
 class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
     message: str = Field(min_length=1, max_length=10000)
+    tool_groups: list[str] = Field(default_factory=list, max_length=9)
+    run_id: str = Field(default_factory=lambda: secrets.token_hex(16),
+                        min_length=32, max_length=32, pattern="^[0-9a-f]{32}$")
 
 
 class ResearchScopeRequest(BaseModel):
@@ -259,10 +324,21 @@ class ChatGPTMessageRequest(BaseModel):
     thread_id: str | None = Field(default=None, min_length=20, max_length=100)
     model: str = Field(min_length=1, max_length=160)
     message: str = Field(min_length=1, max_length=10000)
+    tool_groups: list[str] = Field(default_factory=list, max_length=9)
+    run_id: str = Field(default_factory=lambda: secrets.token_hex(16),
+                        min_length=32, max_length=32, pattern="^[0-9a-f]{32}$")
 
 
 class ProfileSettingsRequest(BaseModel):
     settings: dict
+
+
+class ModelSettingsRequest(BaseModel):
+    provider: str = Field(pattern="^(ollama|openai_compatible)$")
+    model: str = Field(min_length=1, max_length=160)
+    base_url: str = Field(default="", max_length=500)
+    api_key: str | None = Field(default=None, max_length=10000)
+    clear_api_key: bool = False
 
 
 class CollaborationStartRequest(BaseModel):
@@ -362,17 +438,25 @@ def collaboration_step(payload: CollaborationActionRequest):
             blocked = False
             if role == "chatgpt":
                 history = mentor_messages(run)
-                # Only the first mentor turn performs an automatic knowledge
-                # lookup; subsequent turns evaluate DeepSeek's actual evidence.
-                tool_evidence = gpt_tool_preflight(run["goal"], enabled=run["step"] == 0)
-                if tool_evidence["context"] and len(history[-1]["content"]) + len(tool_evidence["context"]) <= 12000:
-                    history[-1] = {**history[-1], "content":
-                                   history[-1]["content"] + tool_evidence["context"]}
                 outcome = chatgpt_chat(
                     run["model"], history,
                     user_context=user_context_for(profile, "chatgpt"),
                     profile_instructions=MENTOR_PROFILE + "\n\n" +
                                          mode_instructions_for(profile, "chatgpt"),
+                    tool_runtime=gpt_tool_runtime,
+                    authorized_targets=extract_user_targets([
+                        {"role": "user", "content": run["goal"]}
+                    ]),
+                )
+                tool_count = int(outcome.get("tool_calls", 0))
+                EvidenceJournal(communication_store()).record_tool_events(
+                    payload.task_id, [{
+                        "type": "tool_result" if event.get("ok") else "tool_error",
+                        "name": event.get("name", ""),
+                        "is_error": not bool(event.get("ok")),
+                        "arguments": event.get("arguments") or {},
+                        "result": event.get("result") or {},
+                    } for event in outcome.get("tool_events", [])],
                 )
             else:
                 history, prompt = researcher_messages(run)
@@ -383,6 +467,7 @@ def collaboration_step(payload: CollaborationActionRequest):
                         TrafficToolClient(MCPClient(), {}, scope=scope),
                         communication_store(), payload.task_id,
                     ),
+                    local_tool_runtime=gpt_tool_runtime,
                 )
                 outcome = engine.run(
                     history, prompt, scope=scope, public_get=True, force_tools=True,
@@ -438,6 +523,26 @@ def run_shared_utility(payload: SharedToolRequest):
         raise HTTPException(status_code=422, detail=str(exc)[:160]) from None
 
 
+@app.get("/api/model-config")
+def get_model_config():
+    try:
+        return {"settings": get_model_settings()}
+    except ModelSettingsError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from None
+
+
+@app.post("/api/model-config")
+def save_model_config(payload: ModelSettingsRequest):
+    try:
+        client, settings = apply_model_settings(payload.dict())
+        # Current requests keep their existing client object; subsequent turns
+        # and background continuations receive the newly selected provider.
+        agent.ollama = client
+        return {"settings": settings, "applied": True}
+    except ModelSettingsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
 @app.get("/api/profile-settings")
 def get_profile_settings():
     try:
@@ -473,35 +578,93 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
     """Explicit user turn, no implicit Qwen history/tools or external fetch.
 
     Lock ensures two browser tabs cannot interleave turns in the same
-    conversation. Commit the user+assistant pair only after a complete reply.
+    conversation. Tool receipts are committed as soon as each local action ends;
+    the final assistant message is stored after inference completes.
     """
+    _begin_usage_progress(payload.run_id)
+    run_status = "failed"
+    outcome = None
     with gpt_turn_lock:
         store = gpt_chat_store()
+        thread_id = payload.thread_id
+        user_message_seq = None
+        persisted_tool_events = []
+
+        def persist_tool_event(event):
+            nonlocal thread_id, user_message_seq
+            if user_message_seq is None:
+                thread_id, user_message_seq = store.begin_exchange(
+                    payload.thread_id, payload.model, payload.message
+                )
+            store.save_tool_events(
+                thread_id, [event], message_seq=user_message_seq,
+            )
+            persisted_tool_events.append(event)
+
         try:
             history = store.context(payload.thread_id) if payload.thread_id else []
-            preflight = gpt_tool_preflight(payload.message.strip())
-            message_for_model = payload.message.strip()
-            if len(message_for_model) + len(preflight["context"]) <= 12000:
-                message_for_model += preflight["context"]
-            outgoing = history + [{"role": "user", "content": message_for_model}]
+            outgoing = history + [{"role": "user", "content": payload.message.strip()}]
             profile = profile_settings_store().load()
+            try:
+                selected_tool_groups = normalize_tool_groups(payload.tool_groups)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
             outcome = chatgpt_chat(
                 payload.model, outgoing,
                 user_context=user_context_for(profile, "chatgpt"),
                 profile_instructions=mode_instructions_for(profile, "chatgpt"),
+                tool_runtime=gpt_tool_runtime,
+                authorized_targets=extract_user_targets(outgoing),
+                on_tool_event=persist_tool_event,
+                enabled_tool_groups=selected_tool_groups,
+                on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
             )
-            thread_id = store.save_exchange(
-                payload.thread_id, payload.model, payload.message, outcome["answer"]
-            )
+            run_status = "completed"
+            if user_message_seq is None:
+                thread_id = store.save_exchange(
+                    payload.thread_id, payload.model, payload.message, outcome["answer"]
+                )
+                # Compatibility for mocked/legacy inference adapters that return
+                # events but do not invoke the incremental receipt callback.
+                store.save_tool_events(thread_id, outcome.get("tool_events", []))
+            else:
+                store.finish_exchange(thread_id, outcome["answer"])
         except GPTChatError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         except ProfileSettingsError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from None
         except SIWCError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from None
-    return {"thread_id": thread_id, "model": payload.model,
+            if user_message_seq is None:
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+            partial_answer = (
+                "Цикл ChatGPT прерван: " + str(exc) +
+                ". Уже выполненные вызовы инструментов сохранены в истории этого диалога."
+            )
+            store.finish_exchange(thread_id, partial_answer)
+            outcome = {
+                "answer": partial_answer, "source": "chatgpt_plan_responses_partial",
+                "tool_events": persisted_tool_events,
+                "tool_calls": len(persisted_tool_events),
+            }
+            run_status = "partial"
+        finally:
+            _finish_usage_progress(payload.run_id, run_status,
+                                   outcome.get("usage") if isinstance(outcome, dict) else None)
+    return {"thread_id": thread_id, "model": payload.model, "run_id": payload.run_id,
             "answer": outcome["answer"], "source": outcome["source"],
-            "tool_events": preflight["events"]}
+            "tool_events": outcome.get("tool_events", []),
+            "usage": outcome.get("usage")}
+
+
+@app.get("/api/usage-progress")
+def usage_progress(run_id: str):
+    if (len(run_id) != 32 or
+            any(char not in "0123456789abcdef" for char in run_id)):
+        raise HTTPException(status_code=422, detail="invalid_run_id")
+    progress = _read_usage_progress(run_id)
+    if progress is None:
+        raise HTTPException(status_code=404, detail="run_not_found")
+    return {"run_id": run_id, **progress}
 
 
 @app.get("/api/siwc/status")
@@ -588,18 +751,25 @@ def status():
         mcp_ok = True
     except Exception:
         remote_tools, mcp_ok = [], False
-    tools = remote_tools + [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS + SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + RESEARCH_WEB_TOOLS + TERMINAL_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS]
+    tools = list(dict.fromkeys(
+        remote_tools +
+        [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS +
+         SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + RESEARCH_WEB_TOOLS +
+         TERMINAL_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS] +
+        [t["name"] for t in gpt_tool_runtime.mcp_tools()]
+    ))
     return {
-        "model": MODEL,
+        "model": getattr(agent.ollama, "model", MODEL),
         "source_commit": os.environ.get("CYBERNOVA_SOURCE_COMMIT","unknown"),
         "ollama_ready": _ollama_health() if os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama") == "ollama" else False,
         "model_provider": os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama"),
         "model_remote_configured": os.environ.get("CYBERNOVA_LLM_PROVIDER") == "openai_compatible",
         "mcp_ready": mcp_ok,
         "tools": tools,
+        "tool_groups": tool_group_summary(tools),
         "auto_executable": sorted(set(tools) & REVIEWED_TOOLS),
         "others_require_approval": sorted(set(tools) - REVIEWED_TOOLS),
-        "tools_selection": "automatic_model",
+        "tools_selection": "user_selected_groups_then_automatic_model",
         "developer": {"mode": "task_isolated_git_worktree", "self_modification": True,
                       "code_edit": True, "unprivileged_tests": True,
                       "push_and_pr": "require_approval_and_write_credentials"},
@@ -607,9 +777,9 @@ def status():
         "traffic_intelligence": "offline_multi_domain_analysis",
         "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
         "browser_network": "isolated_chromium_readonly_metadata",
-        "web_research": {"provider": "Google Search HTML", "tools": ["google_search", "research_source_open"], "mode": "public_read_only", "requires_api_key": False},
+        "web_research": {"provider": "Google HTML with Bing RSS fallback", "tools": ["google_search", "research_source_open"], "mode": "public_read_only", "requires_api_key": False},
         "research_scope": {"type": "owner_selected_per_task", "active_actions": "propose_and_confirm"},
-        "browser": {"mode": "readonly_https_html", "configured_hosts": [x.strip() for x in os.environ.get("CYBERNOVA_BROWSER_HOSTS", "").split(",") if x.strip()], "live_javascript": False},
+        "browser": {"mode": "isolated_chromium", "configured_hosts": [x.strip() for x in os.environ.get("CYBERNOVA_BROWSER_HOSTS", "").split(",") if x.strip()], "live_javascript": True, "tabs": True, "personal_profile_access": False},
         "lab_scanners": inventory(),
         "import_kinds": ["har", "javascript"] + sorted(PARSERS),
         "upload_limit_bytes": MAX_UPLOAD_FILE_BYTES,
@@ -737,12 +907,20 @@ def chat(payload: ChatRequest):
         store.append(task_id, "human", "instruction", payload.message,
                      status="running")
         try:
+            selected_tool_groups = normalize_tool_groups(payload.tool_groups)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        _begin_usage_progress(payload.run_id)
+        outcome = None
+        run_status = "failed"
+        try:
             current_agent = Agent(
                 ollama=agent.ollama,
                 mcp_factory=lambda: CommunicationToolClient(
                     TrafficToolClient(MCPClient(), state["traffic_artifacts"], scope=state["scope"]),
                     store, task_id,
                 ),
+                local_tool_runtime=gpt_tool_runtime,
             )
             profile = profile_settings_store().load()
             outcome = current_agent.run(
@@ -752,12 +930,18 @@ def chat(payload: ChatRequest):
                 scope=state["scope"],
                 user_context=user_context_for(profile, "researcher"),
                 profile_instructions=mode_instructions_for(profile, "researcher"),
+                tool_groups=selected_tool_groups,
+                on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
             )
+            run_status = "completed"
         except Exception as exc:
             store.append(task_id, "controller", "system",
                          "Agent failed: " + type(exc).__name__, status="blocked")
             raise HTTPException(status_code=502, detail="agent_failed: " +
                                 type(exc).__name__) from exc
+        finally:
+            _finish_usage_progress(payload.run_id, run_status,
+                                   outcome.get("usage") if isinstance(outcome, dict) else None)
         # Raw arguments are never exposed in the chat response.
         requests = outcome.pop("approval_requests", [])
         EvidenceJournal(store).record_tool_events(
@@ -778,7 +962,7 @@ def chat(payload: ChatRequest):
         event = store.append(task_id, "qwen", "result",
                              outcome["answer"][:12000], status=final_status)
     return {"session_id": sid, "task_id": task_id, "event_seq": event["seq"],
-            "turn": state["turns"], **outcome}
+            "turn": state["turns"], "run_id": payload.run_id, **outcome}
 
 
 @app.post("/api/approve")
@@ -810,6 +994,7 @@ def approve(payload: ApprovalRequest):
                 mcp_factory=lambda: CommunicationToolClient(
                     TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
                     communication_store(), state["task_id"]),
+                local_tool_runtime=gpt_tool_runtime,
             )
             result = current_agent.execute_approved(item, state["history"])
         except Exception as exc:

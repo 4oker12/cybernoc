@@ -45,6 +45,20 @@ class NativeInstallerTests(unittest.TestCase):
         self.assertEqual(native._load(self.data)["CYBERNOVA_LLM_PROVIDER"],
                          "openai_compatible")
 
+    def test_install_browser_uses_native_venv_and_only_installs_chromium(self):
+        native.init(self.data,"ollama","test:latest")
+        python=self.data/"venv"/"Scripts"/"python.exe"
+        python.parent.mkdir(parents=True,exist_ok=True)
+        python.write_bytes(b"test")
+        with patch.object(native,"_python",return_value=python), \
+             patch.object(native.subprocess,"run",return_value=type(
+                 "Completed",(),{"returncode":0}
+             )()) as run:
+            result=native.install_browser(self.data)
+        self.assertTrue(result["chromium_installed"])
+        self.assertEqual(run.call_args.args[0],
+                         [str(python),"-m","playwright","install","chromium"])
+
     def test_backups_are_never_activated_implicitly(self):
         native.init(self.data,"ollama","test:latest")
         # The unit test must not probe a real Cybernova UI on the test host.

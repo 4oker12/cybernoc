@@ -20,6 +20,14 @@ except ImportError:
         validate_dynamic_arguments, safe_preview, action_description,
         ToolPolicyError,
     )
+try:
+    from .gpt_tool_runtime import (
+        extract_user_targets, filter_tool_rows, normalize_tool_groups,
+    )
+except ImportError:
+    from gpt_tool_runtime import (
+        extract_user_targets, filter_tool_rows, normalize_tool_groups,
+    )
 
 try:
     from .agent_profile import AGENT_PROFILE
@@ -29,11 +37,11 @@ except ImportError:
 OLLAMA_URL = os.environ.get("CYBERNOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MCP_URL = os.environ.get("CYBERNOVA_MCP_URL", "http://127.0.0.1:18792/mcp")
 MODEL = os.environ.get("CYBERNOVA_MODEL", "cybernova-security:30b")
-MAX_ROUNDS = 5
-MAX_CALLS = 12
+MAX_ROUNDS = 16
+MAX_CALLS = 32
 MAX_HTTP_GETS = 3
 MAX_PROMPT = 10000
-MAX_RESULT = 6000
+MAX_RESULT = 12000
 APPROVAL_TTL_SECONDS = 3600
 OFFLINE_TOOLS = frozenset({
     "gateway_status", "python_static_review", "http_header_review",
@@ -120,6 +128,7 @@ class OllamaClient:
     def __init__(self, endpoint: str = OLLAMA_URL, model: str = MODEL, transport=None):
         self.endpoint = endpoint
         self.model = model
+        self.provider = "Ollama"
         self.transport = transport or post_json
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None, *, json_mode=False) -> dict:
@@ -135,6 +144,18 @@ class OllamaClient:
         msg = response.get("message")
         if not isinstance(msg, dict):
             raise BackendError("ollama_message_missing")
+        msg = dict(msg)
+        prompt_tokens = response.get("prompt_eval_count")
+        output_tokens = response.get("eval_count")
+        prompt_tokens = prompt_tokens if type(prompt_tokens) is int and prompt_tokens >= 0 else None
+        output_tokens = output_tokens if type(output_tokens) is int and output_tokens >= 0 else None
+        msg["_usage"] = {
+            "input_tokens": prompt_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": (prompt_tokens + output_tokens)
+                if prompt_tokens is not None and output_tokens is not None else None,
+            "provider": "Ollama",
+        }
         return msg
 
 
@@ -201,7 +222,7 @@ def _allowed_http(url: str, hosts: set[str]) -> bool:
 
 
 class Agent:
-    def __init__(self, ollama=None, mcp_factory=None):
+    def __init__(self, ollama=None, mcp_factory=None, local_tool_runtime=None):
         if ollama is None:
             try:
                 from .model_providers import build_model_client
@@ -210,10 +231,83 @@ class Agent:
             ollama = build_model_client()
         self.ollama = ollama
         self.mcp_factory = mcp_factory or (lambda: MCPClient())
+        self.local_tool_runtime = local_tool_runtime
 
-    def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True, scope: dict | None = None, user_context: str = "", profile_instructions: str = "") -> dict:
+    def _call_registered_tool(self, name: str, args: dict, *, mcp=None,
+                              authorized_targets=None, user_messages=None,
+                              enabled_groups=None):
+        if self.local_tool_runtime is not None and name in self.local_tool_runtime.tool_map:
+            result, is_error = self.local_tool_runtime.call(
+                name, args, authorized_targets=authorized_targets,
+                user_messages=user_messages, enabled_groups=enabled_groups,
+            )
+            if isinstance(result, dict) and isinstance(result.get("image_data_url"), str):
+                # The current DeepSeek/Ollama chat adapter is text-only. Do not
+                # serialize megabytes of base64 into its prompt; use DOM/UIA data.
+                result = dict(result)
+                result.pop("image_data_url", None)
+                result["visual_input"] = {
+                    "captured": True, "forwarded_to_model": False,
+                    "reason": "current_agent_model_adapter_is_text_only",
+                    "alternative": "Use browser_snapshot/browser_network or computer_ui_windows/computer_ui_controls.",
+                }
+            return result, is_error
+        if mcp is None:
+            return {"ok": False, "error": "mcp_backend_unavailable"}, True
+        return mcp.call(name, args)
+
+    def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True,
+            scope: dict | None = None, user_context: str = "",
+            profile_instructions: str = "", tool_groups: list[str] | None = None,
+            on_usage=None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
+        selected_groups = normalize_tool_groups(tool_groups or [])
+        usage_totals = {
+            "input_tokens": 0, "output_tokens": 0, "requests": 0,
+            "measured_requests": 0,
+        }
+
+        def record_usage(response):
+            usage_totals["requests"] += 1
+            raw = response.get("_usage") or response.get("usage") if isinstance(response, dict) else None
+            if not isinstance(raw, dict):
+                return
+            measured = False
+            for target, keys in (
+                ("input_tokens", ("input_tokens", "prompt_tokens", "prompt_eval_count")),
+                ("output_tokens", ("output_tokens", "completion_tokens", "eval_count")),
+            ):
+                value = next((raw.get(key) for key in keys
+                              if type(raw.get(key)) is int and raw.get(key) >= 0), None)
+                if value is not None:
+                    usage_totals[target] += value
+                    measured = True
+            if measured:
+                usage_totals["measured_requests"] += 1
+
+        def publish_usage():
+            if callable(on_usage):
+                try:
+                    on_usage(usage_report())
+                except Exception:
+                    pass
+
+        def usage_report():
+            measured = usage_totals["measured_requests"] > 0
+            complete = (measured and
+                        usage_totals["measured_requests"] == usage_totals["requests"])
+            return {
+                "available": measured,
+                "input_tokens": usage_totals["input_tokens"] if measured else None,
+                "output_tokens": usage_totals["output_tokens"] if measured else None,
+                "total_tokens": (usage_totals["input_tokens"] + usage_totals["output_tokens"])
+                    if measured else None,
+                "requests": usage_totals["requests"],
+                "measured_requests": usage_totals["measured_requests"],
+                "complete": complete,
+                "provider": getattr(self.ollama, "provider", "Ollama / configured LLM"),
+            }
         # Only client-visible role/content history enters the model; never forward
         # hidden arguments or previous tool outputs as executable instructions.
         context = [{"role": "system", "content": BASE_SYSTEM}]
@@ -229,7 +323,8 @@ class Agent:
             context.append({"role": "system", "content":
                 "Владелец выбрал объект(ы) этой задачи: " +
                 ", ".join(scope_hosts[:20]) +
-                ". Это применимо к пассивному browser_open/browser_network. " +
+                ". Это применимо к пассивной навигации browser_navigate, browser_snapshot, " +
+                "browser_follow_link и browser_network. " +
                 "Если пользователь упомянул сайт без URL, можно читать " +
                 "https://" + scope_hosts[0] + "/. " +
                 "Уровень доказательств Network: " +
@@ -243,21 +338,53 @@ class Agent:
         context.append({"role": "user", "content": text})
         events = []
         pending_requests = []
+        task_messages = [
+            {"role": item["role"], "content": item["content"]}
+            for item in history[-16:]
+            if isinstance(item, dict) and item.get("role") in {"user", "assistant"}
+            and isinstance(item.get("content"), str)
+        ] + [{"role": "user", "content": text}]
+        authorized_targets = extract_user_targets(task_messages)
+        authorized_targets.update(
+            str(host).lower().rstrip(".") for host in scope_hosts
+            if isinstance(host, str) and host.strip()
+        )
+        mcp = None
+        remote_rows = []
         try:
             mcp = self.mcp_factory()
-            registered = discovered_tools(mcp.initialize())
-            descriptors = {t["name"]: t for t in registered}
-            tools = _tool_schema(registered)
+            remote_rows = mcp.initialize()
         except (BackendError, ToolPolicyError) as exc:
             events.append({"type": "mcp_error", "message": str(exc)[:240]})
-            tools, descriptors, mcp = [], {}, None
+        local_rows = (
+            self.local_tool_runtime.mcp_tools(selected_groups)
+            if self.local_tool_runtime is not None else []
+        )
+        if selected_groups:
+            remote_rows = filter_tool_rows(remote_rows, selected_groups)
+        local_names = {row["name"] for row in local_rows}
+        combined_rows = local_rows + [
+            row for row in remote_rows
+            if isinstance(row, dict)
+            and row.get("name") not in local_names
+            and not (self.local_tool_runtime is not None and row.get("name") == "browser_open")
+        ]
+        try:
+            registered = discovered_tools(combined_rows)
+            descriptors = {t["name"]: t for t in registered}
+            tools = _tool_schema(registered)
+        except ToolPolicyError as exc:
+            events.append({"type": "tool_catalog_error", "message": str(exc)[:240]})
+            descriptors, tools = {}, []
         count, gets, executed = 0, 0, 0
         selected_by = "native"
         try:
             for round_no in range(MAX_ROUNDS):
                 result = self.ollama.chat(context, tools if tools and round_no < MAX_ROUNDS - 1 else [])
+                record_usage(result)
+                publish_usage()
                 calls = result.get("tool_calls") or []
-                if (not calls and round_no == 0 and force_tools and tools and mcp):
+                if (not calls and round_no == 0 and force_tools and tools):
                     # Some derivative models ignore native tool_calls. The
                     # fallback still asks the active model to SELECT tools, and every tool
                     # goes through exactly the same strict validation.
@@ -275,6 +402,8 @@ class Agent:
                         *[{"role": item["role"], "content": str(item.get("content") or "")[:1500]}
                           for item in context[-6:] if item["role"] in ("user", "assistant", "tool")],
                     ], json_mode=True)
+                    record_usage(candidate)
+                    publish_usage()
                     try:
                         suggested = json.loads(candidate.get("content", "{}")).get("calls", [])
                         if isinstance(suggested, list):
@@ -284,7 +413,7 @@ class Agent:
                                 selected_by = "model_json_fallback"
                     except (ValueError, TypeError, AttributeError):
                         events.append({"type": "tool_selection_error", "message": "Active model did not return valid JSON"})
-                if not executed and not pending_requests and mcp and tools and round_no == 0:
+                if not executed and not pending_requests and tools and round_no == 0:
                     # Security cases should be grounded in public advisories and
                     # real incidents. Ensure one privacy-filtered search is part
                     # of the first tool batch, even if the model selected another
@@ -313,12 +442,16 @@ class Agent:
                         if query:
                             if not isinstance(calls, list):
                                 calls = []
+                            search_args = {"query": query}
+                            search_schema = descriptors["google_search"].get("inputSchema", {})
+                            if "page" in (search_schema.get("properties") or {}):
+                                search_args["page"] = 1
                             calls.append({"function": {
                                 "name": "google_search",
-                                "arguments": {"query": query},
+                                "arguments": search_args,
                             }})
                             selected_by = "google_research_fallback"
-                if not calls and not executed and not pending_requests and mcp and tools:
+                if not calls and not executed and not pending_requests and tools:
                     # On unambiguous, scoped website research tasks a weak local
                     # model may ignore native tool calls AND JSON fallback.
                     # Try exactly one browser evidence call instead of claiming
@@ -330,13 +463,22 @@ class Agent:
                         r"(?i)(?:открой|исследуй|изучи|проверь|проанализируй|собери|network|devtools|браузер|сайт)",
                         text))
                     if selected_url and browser_intent and round_no == 0:
-                        chosen = "browser_network" if re.search(
-                            r"(?i)(?:network|devtools|сетевы[хе]|запрос[ыов])", text
-                        ) else "browser_open"
+                        # Prefer the shared Playwright navigator when present.
+                        # Legacy MCP-only agents retain their browser_network/open
+                        # fallback and its existing URL argument contract.
+                        if self.local_tool_runtime is not None and "browser_navigate" in descriptors:
+                            chosen, chosen_args = "browser_navigate", {"url": selected_url}
+                        elif "browser_network" in descriptors:
+                            chosen, chosen_args = "browser_network", {"url": selected_url}
+                        else:
+                            chosen, chosen_args = "browser_open", {"url": selected_url}
                         if chosen in descriptors:
-                            observed, error_flag = mcp.call(chosen, {
-                                "url": selected_url
-                            })
+                            observed, error_flag = self._call_registered_tool(
+                                chosen, chosen_args, mcp=mcp,
+                                authorized_targets=authorized_targets,
+                                user_messages=task_messages,
+                                enabled_groups=selected_groups or None,
+                            )
                             executed += 1
                             selected_by = "evidence_first_fallback"
                             serialized = json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]
@@ -392,6 +534,7 @@ class Agent:
                         "approval_requests": pending_requests,
                         "selected_by": selected_by if count or executed else "none",
                         "model": self.ollama.model,
+                        "usage": usage_report(),
                     }
                 if not isinstance(calls, list):
                     raise BackendError("invalid_tool_calls")
@@ -446,7 +589,17 @@ class Agent:
                                 gets += 1
                                 safe_result, failed = mcp.call(name, args)
                                 executed += 1
+                        elif name in local_names:
+                            safe_result, failed = self._call_registered_tool(
+                                name, args, mcp=mcp,
+                                authorized_targets=authorized_targets,
+                                user_messages=task_messages,
+                                enabled_groups=selected_groups or None,
+                            )
+                            executed += 1
                         elif name in REVIEWED_TOOLS:
+                            if mcp is None:
+                                raise BackendError("mcp_backend_unavailable")
                             safe_result, failed = mcp.call(name, args)
                             executed += 1
                         else:
@@ -492,13 +645,16 @@ class Agent:
                     context.append({"role": "system",
                                     "content": "Лимит инструментов достигнут. Сформируй итог только из наблюдений."})
                     final = self.ollama.chat(context, [])
+                    record_usage(final)
+                    publish_usage()
                     answer = str(final.get("content") or "")
                     if pending_requests:
                         answer += "\n\nДля продолжения нужны отдельные разрешения. "
                         answer += "Запрошенные действия ещё не выполнены."
                     return {"answer": answer, "events": events, "tool_calls": executed,
                             "approval_requests": pending_requests,
-                            "selected_by": selected_by, "model": self.ollama.model}
+                            "selected_by": selected_by, "model": self.ollama.model,
+                            "usage": usage_report()}
             raise BackendError("agent_round_limit")
         except (BackendError, ValueError, TypeError) as exc:
             events.append({"type": "agent_error", "message": str(exc)[:200]})
@@ -507,6 +663,7 @@ class Agent:
                 "events": events, "tool_calls": executed,
                 "approval_requests": pending_requests,
                 "selected_by": selected_by if count or executed else "none", "model": self.ollama.model,
+                "usage": usage_report(),
             }
 
     def execute_approved(self, approval: dict, history: list[dict]) -> dict:
@@ -541,11 +698,29 @@ class Agent:
              "Результат: " + json.dumps(result, ensure_ascii=False)[:MAX_RESULT]},
         ]
         message = self.ollama.chat(prompt, [])
+        raw_usage = message.get("_usage") or {}
+        input_tokens = raw_usage.get("input_tokens")
+        output_tokens = raw_usage.get("output_tokens")
+        measured = (type(input_tokens) is int and input_tokens >= 0) or (
+            type(output_tokens) is int and output_tokens >= 0
+        )
+        usage = {
+            "available": measured,
+            "input_tokens": input_tokens if type(input_tokens) is int and input_tokens >= 0 else None,
+            "output_tokens": output_tokens if type(output_tokens) is int and output_tokens >= 0 else None,
+            "total_tokens": (
+                (input_tokens if type(input_tokens) is int and input_tokens >= 0 else 0) +
+                (output_tokens if type(output_tokens) is int and output_tokens >= 0 else 0)
+            ) if measured else None,
+            "requests": 1, "measured_requests": 1 if measured else 0,
+            "complete": measured, "provider": getattr(self.ollama, "provider", "Configured LLM"),
+        }
         return {
             "answer": str(message.get("content") or "Результат получен, пояснение отсутствует."),
             "tool_calls": 1,
             "selected_by": "user_approved",
             "model": self.ollama.model,
+            "usage": usage,
             "events": [{
                 "type": "approved_tool_result", "name": name,
                 "arguments": safe_preview(args),

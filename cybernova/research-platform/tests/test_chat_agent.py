@@ -11,6 +11,7 @@ from console.agent import (
     Agent, _arguments, _allowed_http, _safe_args, _tool_schema,
     BackendError, MCPClient, OllamaClient, BASE_SYSTEM,
 )
+from console.model_providers import OpenAICompatibleClient
 
 TOOLS = [
     {"name": "gateway_status", "description": "Status", "inputSchema": {"type": "object", "properties": {}}},
@@ -45,6 +46,36 @@ class FakeOllama:
         if not self.messages:raise AssertionError("Unexpected LLM call")
         return self.messages.pop(0)
 
+class FakeLocalToolRuntime:
+    def __init__(self, *, image=False):
+        self.calls = []
+        self.image = image
+        schema = {
+            "type": "object", "properties": {}, "required": [],
+            "additionalProperties": False,
+        }
+        self.tools = [{
+            "type": "function", "name": "computer_system_overview",
+            "description": "Inspect local Windows system.",
+            "parameters": schema,
+        }]
+        self.tool_map = {item["name"]: item for item in self.tools}
+
+    def mcp_tools(self, groups=None):
+        return [{
+            "name": item["name"], "description": item["description"],
+            "inputSchema": item["parameters"],
+        } for item in self.tools
+            if not groups or "computer" in groups]
+
+    def call(self, name, args, *, authorized_targets=None, user_messages=None,
+             enabled_groups=None):
+        self.calls.append((name, args, set(authorized_targets or ()), user_messages, set(enabled_groups or ())))
+        if self.image:
+            return {"ok": True, "image_data_url": "data:image/png;base64,AAAA"}, False
+        return {"ok": True, "os": "Windows", "cpu_count": 8}, False
+
+
 class AgentTests(unittest.TestCase):
     def test_shared_profile_is_provider_neutral_and_contains_project_background(self):
         self.assertIn("единственной активной моделью", BASE_SYSTEM)
@@ -56,6 +87,11 @@ class AgentTests(unittest.TestCase):
         self.assertIn("отдельным посредником", BASE_SYSTEM)
         self.assertIn("ИССЛЕДОВАТЕЛЬСКАЯ МИССИЯ CYBERNOVA", BASE_SYSTEM)
         self.assertIn("РАЗБОР НЕЧЁТКОГО ЗАПРОСА", BASE_SYSTEM)
+        self.assertIn("ОБЩИЙ ИНСТРУМЕНТАЛЬНЫЙ СТАНДАРТ", BASE_SYSTEM)
+        self.assertIn("computer_package_install", BASE_SYSTEM)
+        self.assertIn("computer_archive_extract", BASE_SYSTEM)
+        self.assertIn("browser_follow_link", BASE_SYSTEM)
+        self.assertIn("google_search", BASE_SYSTEM)
         self.assertNotIn("Рекомендация Qwen", BASE_SYSTEM)
 
     def test_user_and_mode_profiles_are_added_as_system_context(self):
@@ -88,6 +124,110 @@ class AgentTests(unittest.TestCase):
                                  "arbitrary_shell"])
         self.assertIn("Requires user approval",
                       _tool_schema(TOOLS)[-1]["function"]["description"])
+
+    def test_deepseek_agent_receives_the_same_local_computer_tool_catalog(self):
+        mcp = FakeMCP()
+        local = FakeLocalToolRuntime()
+        lm = FakeOllama([
+            calls(("computer_system_overview", {})),
+            {"role": "assistant", "content": "Windows: 8 logical CPUs."},
+        ])
+        out = Agent(lm, lambda: mcp, local_tool_runtime=local).run(
+            [], "Проверь локальный компьютер и example.com", force_tools=False,
+            scope={"hosts": ["scope.example"]},
+        )
+        self.assertEqual(out["tool_calls"], 1)
+        self.assertEqual(local.calls[0][0], "computer_system_overview")
+        self.assertEqual(local.calls[0][4], set())
+        self.assertIn("example.com", local.calls[0][2])
+        self.assertIn("scope.example", local.calls[0][2])
+        self.assertEqual(
+            local.calls[0][3],
+            [{"role": "user", "content": "Проверь локальный компьютер и example.com"}],
+        )
+        self.assertEqual(mcp.calls, [])
+        advertised = [tool["function"]["name"] for tool in lm.prompts[0][1]]
+        self.assertIn("computer_system_overview", advertised)
+
+    def test_selected_tool_bundle_limits_advertised_tools_and_runtime(self):
+        local = FakeLocalToolRuntime()
+        lm = FakeOllama([
+            calls(("computer_system_overview", {})),
+            {"role": "assistant", "content": "Windows доступна."},
+        ])
+        out = Agent(lm, lambda: FakeMCP(), local_tool_runtime=local).run(
+            [], "Проверь компьютер", force_tools=False, tool_groups=["computer"],
+        )
+        advertised = [tool["function"]["name"] for tool in lm.prompts[0][1]]
+        self.assertEqual(advertised, ["computer_system_overview"])
+        self.assertEqual(out["tool_calls"], 1)
+        self.assertEqual(local.calls[0][0], "computer_system_overview")
+        self.assertEqual(local.calls[0][4], {"computer"})
+
+    def test_ollama_client_captures_provider_token_counters(self):
+        client = OllamaClient(transport=lambda *_: {
+            "message": {"role": "assistant", "content": "ok"},
+            "prompt_eval_count": 41, "eval_count": 9,
+        })
+        result = client.chat([{"role": "user", "content": "test"}])
+        self.assertEqual(result["_usage"]["input_tokens"], 41)
+        self.assertEqual(result["_usage"]["output_tokens"], 9)
+        self.assertEqual(result["_usage"]["total_tokens"], 50)
+        self.assertEqual(result["_usage"]["provider"], "Ollama")
+
+    def test_openai_compatible_client_captures_usage_fields(self):
+        client = OpenAICompatibleClient(
+            base_url="http://127.0.0.1:12345/v1/chat/completions",
+            model="test-model", api_key="",
+            transport=lambda *_: {
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 77, "completion_tokens": 13, "total_tokens": 90},
+            },
+        )
+        result = client.chat([{"role": "user", "content": "test"}])
+        self.assertEqual(result["_usage"]["input_tokens"], 77)
+        self.assertEqual(result["_usage"]["output_tokens"], 13)
+        self.assertEqual(result["_usage"]["total_tokens"], 90)
+        self.assertEqual(result["_usage"]["provider"], "OpenAI-compatible")
+
+    def test_agent_reports_actual_token_usage_across_model_rounds(self):
+        first = calls(("ip_network_summary", {"cidr": "192.0.2.7/24"}))
+        first["_usage"] = {"input_tokens": 120, "output_tokens": 15}
+        final = {"role": "assistant", "content": "Сеть 192.0.2.0/24.",
+                 "_usage": {"input_tokens": 180, "output_tokens": 25}}
+        out = Agent(FakeOllama([first, final]), lambda: FakeMCP()).run(
+            [], "Проверь подсеть", force_tools=False,
+        )
+        self.assertEqual(out["usage"]["input_tokens"], 300)
+        self.assertEqual(out["usage"]["output_tokens"], 40)
+        self.assertEqual(out["usage"]["total_tokens"], 340)
+        self.assertEqual(out["usage"]["requests"], 2)
+        self.assertTrue(out["usage"]["complete"])
+
+    def test_shared_local_tools_remain_available_when_remote_mcp_is_down(self):
+        local = FakeLocalToolRuntime()
+        lm = FakeOllama([
+            calls(("computer_system_overview", {})),
+            {"role": "assistant", "content": "Windows доступна."},
+        ])
+        def broken_mcp():
+            raise BackendError("mcp_offline")
+        out = Agent(lm, broken_mcp, local_tool_runtime=local).run(
+            [], "Проверь компьютер", force_tools=False,
+        )
+        self.assertEqual(out["tool_calls"], 1)
+        self.assertEqual(local.calls[0][0], "computer_system_overview")
+        self.assertIn("mcp_error", [event["type"] for event in out["events"]])
+
+    def test_text_only_deepseek_adapter_does_not_receive_base64_screenshots(self):
+        local = FakeLocalToolRuntime(image=True)
+        agent = Agent(FakeOllama([]), lambda: FakeMCP(), local_tool_runtime=local)
+        result, failed = agent._call_registered_tool(
+            "computer_system_overview", {}, mcp=None,
+        )
+        self.assertFalse(failed)
+        self.assertNotIn("image_data_url", result)
+        self.assertFalse(result["visual_input"]["forwarded_to_model"])
 
     def test_one_native_tool_call_then_reasoned_answer(self):
         mcp=FakeMCP();lm=FakeOllama([calls(("ip_network_summary",{"cidr":"192.0.2.7/24"})),

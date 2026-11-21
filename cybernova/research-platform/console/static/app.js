@@ -6,6 +6,12 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
   uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Активная модель",
   gptThreadId:null,gptConnected:false,gptPlanUsage:false,
   researchScope:{hosts:[],capture_detail:"evidence"},profileSettings:null,
+  toolGroups:[],toolGroupCatalog:[],
+  usageTotals:{
+    qwen:{input:0,output:0,total:0,measuredTurns:0},
+    gpt:{input:0,output:0,total:0,measuredTurns:0}
+  },
+  lastUsage:{qwen:null,gpt:null},
   collabRun:null,collabLooping:false,collabStopRequested:false};
 const descriptions={
   gateway_status:"Шлюз MCP",
@@ -15,6 +21,21 @@ const descriptions={
   ip_network_summary:"Расчёт подсети",
   python_static_review:"Анализ Python",
 };
+const TOOL_GROUP_GLYPHS={
+  browser:"◎",computer:"▣",terminal:">_",web:"⌕",network:"⇄",
+  security:"⛨",traffic:"≋",developer:"⌘",mcp:"⧉"
+};
+const TOOL_GROUP_FALLBACK=[
+  {id:"browser",label:"Chrome / браузер",icon:"globe",description:"Открывать сайты, читать DOM, переходить по ссылкам, создавать вкладки, переключаться между ними, назад/вперёд, обновлять страницы, смотреть Console и DevTools Network."},
+  {id:"computer",label:"Компьютер Windows",icon:"monitor",description:"Состояние ПК: CPU/RAM/диски, процессы и службы, автозагрузка, установленные программы, окна, Defender и локальные файлы."},
+  {id:"terminal",label:"Терминал Windows",icon:"terminal",description:"CMD и PowerShell для ограниченной системной диагностики; команды и операции контролируются политикой безопасности."},
+  {id:"web",label:"Интернет / Research",icon:"search",description:"Искать в интернете, получать выдачу с пагинацией, открывать найденные страницы, читать первоисточники и сопоставлять источники."},
+  {id:"network",label:"Сеть / NOC",icon:"network",description:"DNS, TLS, IP, HTTP и сетевые проверки."},
+  {id:"security",label:"Security",icon:"shield",description:"Проверки безопасности и лабораторные сканеры."},
+  {id:"traffic",label:"Traffic / HAR",icon:"activity",description:"HAR, JavaScript, сессии и сетевые гипотезы."},
+  {id:"developer",label:"Разработка",icon:"code",description:"Workspace, Git, файлы проекта и тесты."},
+  {id:"mcp",label:"MCP / прочее",icon:"plug",description:"Подключённые MCP-сервисы и координация."}
+];
 function displayModelName(modelId){
   const names={
     "deepseek-flash":"DeepSeek Flash",
@@ -131,6 +152,7 @@ async function decideAction(requestId,decision,card){
     if(decision==="approve"){
       state.turns=reply.turn||state.turns+1;
       const result=renderMessage("assistant",reply.answer||"Вызов завершён.");
+      recordUsage(reply.usage,"qwen",result);
       showEvents(reply.events,reply.tool_calls,reply.selected_by,result);
       void loadFollowups(state.sessionId,state.turns,result);
     }else{
@@ -281,17 +303,216 @@ async function importArtifact(file){
     $("messageInput").focus();
   }
 }
+async function pasteTerminalOutput(){
+  const button=$("pasteOutputButton");
+  const input=$("messageInput");
+  const status=$("uploadStatus");
+  if(!navigator.clipboard||typeof navigator.clipboard.readText!=="function"){
+    status.textContent="Нет доступа к буферу · используй Ctrl+V в поле сообщения";
+    input.focus();
+    return;
+  }
+  button.disabled=true;
+  try{
+    const clipboardText=await navigator.clipboard.readText();
+    if(!clipboardText||!clipboardText.trim()){
+      status.textContent="Буфер обмена пуст";
+      return;
+    }
+    const existing=input.value||"";
+    const separator=existing.trim()?"\\n\\n---\\n\\n":"";
+    const header="Вывод из терминала:\\n";
+    const prefix=existing+separator+header;
+    const limit=Number(input.maxLength)>0?input.maxLength:10000;
+    const available=limit-prefix.length;
+    if(available<1){
+      status.textContent="Поле заполнено · отправь или очисти черновик";
+      input.focus();
+      return;
+    }
+    let payload=clipboardText;
+    let truncated=false;
+    if(payload.length>available){
+      const marker="\\n[ВЫВОД ОБРЕЗАН: превышен лимит поля]";
+      const room=Math.max(0,available-marker.length);
+      payload=payload.slice(0,room)+(available>=marker.length?marker:"");
+      truncated=true;
+    }
+    input.value=prefix+payload;
+    input.focus();
+    if(typeof input.setSelectionRange==="function"){
+      input.setSelectionRange(input.value.length,input.value.length);
+    }
+    status.textContent="Вставлено "+clipboardText.length+" символов"+
+      (truncated?" · обрезано по лимиту":"")+" · проверь и нажми Enter";
+  }catch(error){
+    status.textContent="Не удалось прочитать буфер · используй Ctrl+V в поле сообщения";
+  }finally{
+    button.disabled=false;
+  }
+}
+
 function busy(on){
   state.running=on;
   $("sendButton").disabled=on;
-  $("messageInput").disabled=on;
+  // The user may prepare the next prompt and inspect other panels while a
+  // model request is in flight. send() still blocks concurrent turns.
+  $("messageInput").disabled=false;
   $("newSession").disabled=on;
   $("artifactFile").disabled=on;
-  $("sendStatus").textContent=on?(state.mode==="gpt"?"ChatGPT отвечает…":"Модель выполняет запрос…"):"Готов";
-  $("modeQwen").disabled=on;
-  $("modeChatGPT").disabled=on;
+  $("toolPickerToggle").disabled=on;
+  $("toolPickerGroups").querySelectorAll("input").forEach(input=>{
+    input.disabled=on||input.dataset.available==="false";
+  });
+  $("sendStatus").textContent=on?
+    "Модель работает · можно готовить следующий вопрос":"Готов";
+  $("modeQwen").disabled=false;
+  $("modeChatGPT").disabled=false;
   $("modeCollab").disabled=on;
-  $("gptTopModel").disabled=on||!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
+  $("gptTopModel").disabled=!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
+}
+function resetUsage(mode){
+  state.usageTotals[mode]={input:0,output:0,total:0,measuredTurns:0};
+  state.lastUsage[mode]=null;
+  if(state.mode===mode)$("tokenUsageStatus").textContent="Токены: —";
+}
+function formatTokens(value){
+  return Number.isSafeInteger(value)&&value>=0?new Intl.NumberFormat("ru-RU").format(value):"—";
+}
+function recordUsage(usage,mode,reply){
+  const available=!!usage&&usage.available===true;
+  const receipt=node("div","token-usage-receipt");
+  if(!available){
+    receipt.append(node("strong","","Учёт токенов недоступен"),
+      node("span","",usage?.provider?("· "+usage.provider):"· провайдер не передал usage"));
+    if(usage?.requests)receipt.append(node("span","", "· запросов модели: "+usage.requests));
+    reply?.wrap?.append(receipt);
+    state.lastUsage[mode]={available:false};
+    updateTokenUsageStatus(mode);
+    return;
+  }
+  const input=Number.isSafeInteger(usage.input_tokens)?usage.input_tokens:null;
+  const output=Number.isSafeInteger(usage.output_tokens)?usage.output_tokens:null;
+  const total=Number.isSafeInteger(usage.total_tokens)?usage.total_tokens:
+    (input!==null&&output!==null?input+output:null);
+  receipt.append(
+    node("strong","","Токены"),
+    node("span","","Вход: "+formatTokens(input)),
+    node("span","","Выход: "+formatTokens(output)),
+    node("strong","","Всего: "+formatTokens(total))
+  );
+  if(usage.complete===false)receipt.append(node("span","","· частичный учёт"));
+  if(Number.isSafeInteger(usage.requests))receipt.append(node("span","","· запросов модели: "+usage.requests));
+  if(usage.provider)receipt.append(node("span","","· "+usage.provider));
+  reply?.wrap?.append(receipt);
+  const totals=state.usageTotals[mode];
+  if(input!==null)totals.input+=input;
+  if(output!==null)totals.output+=output;
+  if(total!==null)totals.total+=total;
+  totals.measuredTurns+=1;
+  state.lastUsage[mode]={available:true,input,output,total,complete:usage.complete!==false};
+  updateTokenUsageStatus(mode);
+}
+function updateTokenUsageStatus(mode){
+  const last=state.lastUsage[mode],totals=state.usageTotals[mode];
+  if(!last){$("tokenUsageStatus").textContent="Токены: —";return;}
+  if(!last.available){$("tokenUsageStatus").textContent="Токены: нет usage от провайдера";return;}
+  const lastText=last.total===null?"частично":formatTokens(last.total);
+  $("tokenUsageStatus").textContent=
+    "Последний ход: "+lastText+" · сеанс: "+formatTokens(totals.total);
+  $("tokenUsageStatus").title=
+    "Фактический учёт по usage провайдера. Вход: "+formatTokens(totals.input)+
+    "; выход: "+formatTokens(totals.output)+
+    "; суммарно по сеансу: "+formatTokens(totals.total)+
+    "; учтённых ходов: "+totals.measuredTurns;
+}
+function toolPickerOpen(open){
+  const panel=$("toolPicker"),toggle=$("toolPickerToggle");
+  panel.hidden=!open;
+  toggle.setAttribute("aria-expanded",String(!!open));
+  if(open)$("toolPickerClose").focus();
+}
+function updateToolPickerSummary(){
+  const selected=state.toolGroups;
+  if(!selected.length){
+    $("toolSelectionBadge").textContent="Авто";
+    $("toolPickerSummary").textContent="Автовыбор: модель видит все доступные группы инструментов.";
+    return;
+  }
+  const labels=state.toolGroupCatalog.filter(x=>selected.includes(x.id)).map(x=>x.label);
+  $("toolSelectionBadge").textContent=String(selected.length);
+  $("toolPickerSummary").textContent="Ограничено выбранным: "+labels.join(" · ");
+}
+function persistToolGroups(){
+  try{window.localStorage.setItem("cybernova_tool_groups",JSON.stringify(state.toolGroups));}catch(_){}
+}
+function renderToolPicker(groups){
+  const catalog=Array.isArray(groups)&&groups.length?groups:TOOL_GROUP_FALLBACK;
+  state.toolGroupCatalog=catalog;
+  const container=$("toolPickerGroups");
+  container.replaceChildren();
+  for(const group of catalog){
+    const count=Number.isSafeInteger(group.count)?group.count:null;
+    const available=group.available!==false&&count!==0;
+    const selected=state.toolGroups.includes(group.id);
+    const label=node("label","tool-group-option"+(selected?" selected":""));
+    const input=node("input");
+    input.type="checkbox";input.checked=selected;
+    input.dataset.toolGroup=group.id;
+    input.dataset.available=String(available);
+    input.disabled=!available||state.running;
+    input.addEventListener("change",()=>{
+      const next=new Set(state.toolGroups);
+      if(input.checked)next.add(group.id);else next.delete(group.id);
+      state.toolGroups=catalog.map(item=>item.id).filter(id=>next.has(id));
+      persistToolGroups();
+      renderToolPicker(catalog);
+    });
+    const icon=node("span","tool-group-icon",TOOL_GROUP_GLYPHS[group.id]||"＋");
+    icon.setAttribute("aria-hidden","true");
+    const copy=node("span","tool-group-copy");
+    const title=node("span","tool-group-name",group.label||group.id);
+    title.append(node("span","tool-group-count",count===null?"":String(count)+" инструментов"));
+    const scope=node("span","tool-group-description",group.description||"Инструменты этой группы.");
+    const hint=node("span","tool-group-hint",group.id==="browser"?"ВКЛАДКИ · НАВИГАЦИЯ · NETWORK":
+      group.id==="computer"?"WINDOWS · ПРОЦЕССЫ · DEFENDER":
+      group.id==="web"?"ПОИСК · СТРАНИЦЫ · ИСТОЧНИКИ":
+      group.id==="terminal"?"CMD · POWERSHELL · ДИАГНОСТИКА":
+      group.id==="network"?"DNS · TLS · IP · HTTP":"ГРУППА ИНСТРУМЕНТОВ");
+    copy.append(title,scope,hint);
+    label.append(icon,copy,input);
+    if(!available)label.title="В этой конфигурации группа сейчас не обнаружена";
+    container.append(label);
+  }
+  updateToolPickerSummary();
+}
+function newRunId(){
+  if(window.crypto?.randomUUID)return window.crypto.randomUUID().replace(/-/g,"");
+  return Array.from({length:32},()=>Math.floor(Math.random()*16).toString(16)).join("");
+}
+async function watchUsageProgress(runId){
+  const started=Date.now();
+  while(state.running&&Date.now()-started<180000){
+    await new Promise(resolve=>setTimeout(resolve,650));
+    if(!state.running)break;
+    try{
+      const response=await fetch("/api/usage-progress?run_id="+encodeURIComponent(runId),
+        {cache:"no-store",headers:{"Accept":"application/json"}});
+      if(!response.ok)continue;
+      const progress=await response.json(),usage=progress.usage||{};
+      if(usage.available===true){
+        $("tokenUsageStatus").textContent=
+          (progress.status==="running"?"Сейчас: ":"Последний ход: ")+
+          "вход "+formatTokens(usage.input_tokens)+" · выход "+
+          formatTokens(usage.output_tokens)+" · всего "+formatTokens(usage.total_tokens);
+        $("tokenUsageStatus").title="Промежуточный usage от провайдера "+
+          (usage.provider||"")+". "+(usage.complete===false?"Учёт частичный.":"");
+      }else if(progress.status==="running"){
+        $("tokenUsageStatus").textContent="Модель работает · ждём usage провайдера";
+      }
+      if(progress.status!=="running")break;
+    }catch(_){}
+  }
 }
 async function requestJson(path,data){
   const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -309,10 +530,12 @@ async function send(){
   renderMessage("user",text);
   $("messageInput").value="";
   const pending=renderMessage("assistant",(state.qwenModel||"Модель")+" формирует ответ…",true);
+  const runId=newRunId();
   busy(true);
+  const usageWatch=watchUsageProgress(runId);
   try{
     const result=await requestJson("/api/chat",{
-      session_id:state.sessionId,message:text,
+      session_id:state.sessionId,message:text,tool_groups:state.toolGroups,run_id:runId,
     });
     state.sessionId=result.session_id;
     state.taskId=result.task_id||state.taskId;
@@ -320,6 +543,7 @@ async function send(){
     state.turns=result.turn||state.turns+1;
     pending.wrap.classList.remove("working");
     setFormatted(pending.body,result.answer||"Ответ модели пуст.");
+    recordUsage(result.usage,"qwen",pending);
     showEvents(result.events,result.tool_calls,result.selected_by,pending);
     // Generate contextual next questions independently; do not delay the model reply.
     // A pending approval is the next user decision, not a generic follow-up.
@@ -343,14 +567,14 @@ async function send(){
     pending.body.textContent="Ошибка: "+String(exc.message||exc);
     $("sendStatus").textContent="Ошибка подключения";
   }finally{
-    busy(false);$("messageInput").focus();toBottom();
+    busy(false);await usageWatch;$("messageInput").focus();toBottom();
   }
 }
 function gptWelcome(){
   $("gptMessages").replaceChildren(window.cybernovaGptWelcome.cloneNode(true));
 }
 function setMode(mode){
-  if(state.running || !["qwen","gpt","collab"].includes(mode))return;
+  if((state.running && mode==="collab") || !["qwen","gpt","collab"].includes(mode))return;
   state.mode=mode;
   const qwen=mode==="qwen", gpt=mode==="gpt", collab=mode==="collab";
   for(const [id,isActive] of [
@@ -377,12 +601,13 @@ function setMode(mode){
   $("messageInput").placeholder=qwen?"Сообщение исследовательской модели или задача…":"Сообщение ChatGPT…";
   $("uploadStatus").textContent=qwen?
     "Импорт файлов до "+Math.floor(state.uploadLimit/(1024*1024))+" МиБ · модель":
-    "ChatGPT · история сохраняется локально";
+    "GPT-диалог хранится локально; его сообщения и результаты локальных инструментов отправляются выбранной модели ChatGPT";
   $("sendStatus").textContent=!qwen&&!state.gptConnected?
     "Подключи ChatGPT через «Аккаунт GPT»":"Готов";
   $("sidebar").classList.remove("open");
   if(gpt)void refreshGPTThreads();
   if(collab)void refreshCollabRuns();
+  if(!collab)updateTokenUsageStatus(mode);
   toBottom();
 }
 async function refreshGPTThreads(){
@@ -412,9 +637,17 @@ async function openGPTThread(threadId){
     const data=await response.json();
     if(!response.ok)throw Error(data.detail||"Не удалось загрузить диалог");
     state.gptThreadId=threadId;
+    resetUsage("gpt");
     $("gptMessages").replaceChildren();
+    const savedToolEvents=data.tool_events||[];
     for(const m of data.messages||[]){
-      renderMessage(m.role==="user"?"user":"chatgpt",m.content,false,"gptMessages");
+      const rendered=renderMessage(m.role==="user"?"user":"chatgpt",m.content,false,"gptMessages");
+      const events=savedToolEvents.filter(event=>event.message_seq===m.seq);
+      if(events.length){
+        const details=node("div","inline-tools");
+        for(const event of events)details.append(makeToolDetails(event));
+        rendered.wrap.append(details);
+      }
     }
     const model=data.thread?.model;
     if(model&&[...$("gptTopModel").options].some(x=>x.value===model))
@@ -427,6 +660,7 @@ async function openGPTThread(threadId){
 async function sendGPT(){
   const message=$("messageInput").value.trim();
   if(!message||state.running)return;
+  if(!state.gptThreadId)resetUsage("gpt");
   if(!state.gptConnected||!state.gptPlanUsage){
     $("sendStatus").textContent="Открой «Аккаунт GPT» и подключи ChatGPT.";
     return;
@@ -437,35 +671,43 @@ async function sendGPT(){
     return;
   }
   $("gptWelcome")?.remove();
-  renderMessage("user",message,false,"gptMessages");
+  const userMessage=renderMessage("user",message,false,"gptMessages");
   $("messageInput").value="";
   const pending=renderMessage("chatgpt","ChatGPT формирует ответ…",true,"gptMessages");
+  const runId=newRunId();
   busy(true);
+  const usageWatch=watchUsageProgress(runId);
   try{
     const result=await requestJson("/api/siwc/chat",{
-      thread_id:state.gptThreadId,model,message
+      thread_id:state.gptThreadId,model,message,tool_groups:state.toolGroups,run_id:runId
     });
     state.gptThreadId=result.thread_id;
     pending.wrap.classList.remove("working");
     setFormatted(pending.body,result.answer||"Ответ модели пуст.");
+    recordUsage(result.usage,"gpt",pending);
     if(Array.isArray(result.tool_events)&&result.tool_events.length){
       const details=node("div","inline-tools");
       for(const event of result.tool_events){
         details.append(makeToolDetails({
-          name:event.name,arguments:{source:"Cybernova read-only tool"},
-          result:event.summary,is_error:!event.ok,
+          name:event.name,
+          arguments:event.arguments||{},
+          result:event.result||event.summary||{},
+          is_error:typeof event.is_error==="boolean"?event.is_error:!event.ok,
         }));
       }
-      pending.wrap.append(details);
+      userMessage.wrap.append(details);
     }
-    $("sendStatus").textContent="Ответ ChatGPT · диалог сохранён";
+    $("sendStatus").textContent=(result.source==="chatgpt_plan_responses_partial"?
+      "ChatGPT прервал цикл · частичные результаты сохранены":
+      "Ответ ChatGPT · диалог сохранён")+
+      (result.tool_events && result.tool_events.length ? " · инструментов: "+result.tool_events.length : "");
     void refreshGPTThreads();
   void refreshCollabRuns();
   }catch(err){
     pending.wrap.classList.remove("working");
     pending.body.textContent="Ошибка: "+String(err.message||err);
     $("sendStatus").textContent="Ошибка GPT";
-  }finally{busy(false);$("messageInput").focus();toBottom();}
+  }finally{busy(false);await usageWatch;$("messageInput").focus();toBottom();}
 }
 
 function showResearchScope(profile){
@@ -831,7 +1073,8 @@ async function reviewWithChatGPT(){
     }
     lastGptReview=answer.answer||null;
     state.lastSeq=Math.max(state.lastSeq,answer.event_seq||0);
-    renderMessage("chatgpt",answer.answer||"Ответ GPT пуст.");
+    const reviewReply=renderMessage("chatgpt",answer.answer||"Ответ GPT пуст.");
+    recordUsage(answer.usage,"gpt",reviewReply);
     $("chatgptToQwen").disabled=!lastGptReview;
     $("chatgptStatus").textContent="Рецензия GPT получена. Можно отправить её модели.";
   }catch(err){
@@ -879,6 +1122,7 @@ async function status(){
       ready?"Ollama и MCP подключены":
       info.ollama_ready?"Ollama подключена · MCP недоступен":"Проверь Ollama";
     renderTools(Array.isArray(info.tools)?info.tools:[],info.auto_executable||[],info.lab_scanners?.engines||[]);
+    renderToolPicker(Array.isArray(info.tool_groups)?info.tool_groups:[]);
     if(!state.taskId)showTaskStatus(info.communication?.enabled?"Общая очередь":"Шлюз недоступен");
   }catch(_){
     $("backendDot").className="dot bad";
@@ -886,6 +1130,7 @@ async function status(){
     $("ollamaState").textContent="Модель недоступна";
     $("mcpState").textContent="MCP недоступен";
     renderTools([]);
+    renderToolPicker([]);
   }
 }
 async function reset(){
@@ -896,6 +1141,7 @@ async function reset(){
   }
   if(state.mode==="gpt"){
     state.gptThreadId=null;
+    resetUsage("gpt");
     gptWelcome();
     $("messageInput").value="";
     $("sendStatus").textContent="Новый чат GPT";
@@ -910,6 +1156,7 @@ async function reset(){
   }
   state.sessionId=null;
   state.taskId=null;
+  resetUsage("qwen");
   showResearchScope({hosts:[],capture_detail:"evidence"});
   lastGptReview=null;
   $("chatgptReview").disabled=true;
@@ -1290,7 +1537,29 @@ function init(){
   window.cybernovaWelcome=$("welcome").cloneNode(true);
   window.cybernovaGptWelcome=$("gptWelcome").cloneNode(true);
   showResearchScope({hosts:[],capture_detail:"evidence"});
+  try{
+    const saved=JSON.parse(window.localStorage.getItem("cybernova_tool_groups")||"[]");
+    if(Array.isArray(saved))state.toolGroups=saved.filter(id=>
+      TOOL_GROUP_FALLBACK.some(group=>group.id===id));
+  }catch(_){state.toolGroups=[];}
+  renderToolPicker([]);
+  $("toolPickerToggle").addEventListener("click",()=>{
+    toolPickerOpen($("toolPicker").hidden);
+  });
+  $("toolPickerClose").addEventListener("click",()=>toolPickerOpen(false));
+  $("toolPickerAuto").addEventListener("click",()=>{
+    state.toolGroups=[];persistToolGroups();renderToolPicker(state.toolGroupCatalog);
+  });
+  document.addEventListener("click",event=>{
+    if(!$("toolPicker").hidden&&
+       !event.target.closest("#toolPicker")&&
+       !event.target.closest("#toolPickerToggle"))toolPickerOpen(false);
+  });
+  document.addEventListener("keydown",event=>{
+    if(event.key==="Escape"&&!$("toolPicker").hidden)toolPickerOpen(false);
+  });
   $("sendButton").addEventListener("click",send);
+  $("pasteOutputButton").addEventListener("click",pasteTerminalOutput);
   $("artifactFile").addEventListener("change",event=>importArtifact(event.target.files?.[0]));
   $("messageInput").addEventListener("keydown",e=>{
     if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}
@@ -1355,4 +1624,8 @@ function init(){
   window.setInterval(()=>{void refreshTaskList();},15000);
   window.setInterval(()=>{if(state.mode==="collab")void refreshCollabRuns();},15000);
 }
+window.addEventListener("cybernova:model-config-applied",event=>{
+  state.qwenModel=displayModelName(event.detail?.model||state.qwenModel);
+  if(state.mode==="qwen")$("modelName").textContent=state.qwenModel;
+});
 document.addEventListener("DOMContentLoaded",init);

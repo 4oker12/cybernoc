@@ -135,6 +135,41 @@ def install(data: Path) -> dict:
     return {"dependencies_installed":True,"python":str(python)}
 
 
+def install_browser(data: Path) -> dict:
+    _load(data)
+    python = _python(data)
+    if not python.exists():
+        raise NativeError("run_install_first")
+    proc = subprocess.run(
+        [str(python), "-m", "playwright", "install", "chromium"],
+        check=False,
+    )
+    if proc.returncode:
+        raise NativeError("playwright_chromium_install_failed")
+    return {"chromium_installed": True, "browser": "Chromium"}
+
+
+def _chromium_installed(data: Path) -> bool:
+    python = _python(data)
+    if not python.exists():
+        return False
+    probe = (
+        "from pathlib import Path; "
+        "from playwright.sync_api import sync_playwright; "
+        "p=sync_playwright().start(); "
+        "print(Path(p.chromium.executable_path).is_file()); "
+        "p.stop()"
+    )
+    try:
+        proc = subprocess.run(
+            [str(python), "-c", probe],
+            check=False, capture_output=True, text=True, timeout=20,
+        )
+        return proc.returncode == 0 and proc.stdout.strip().splitlines()[-1:] == ["True"]
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def set_key(data: Path):
     values=_load(data)
     if values["CYBERNOVA_LLM_PROVIDER"]!="openai_compatible":
@@ -159,6 +194,7 @@ def doctor(data: Path) -> dict:
             "mcp_ready":bool(value.get("mcp_ready")),
             "selected_model":value.get("model"),
             "provider":value.get("model_provider"),
+            "chromium_installed":_chromium_installed(data),
             "note":"Remote model API authentication is not tested here",
         }
     except (OSError,ValueError,TimeoutError):
@@ -176,6 +212,7 @@ def run(data: Path):
     # and point the coding tools at the actual checked-out Git repository.
     env.setdefault("CYBERNOVA_DEV_SOURCE", str(ROOT.parents[1]))
     env.setdefault("CYBERNOVA_DEV_WORKSPACES", str(data/"dev-workspaces"))
+    env.setdefault("CYBERNOVA_GPT_BROWSER_PROFILE", str(data/"gpt-chromium-profile"))
     env["PYTHONPATH"]=str(ROOT)+(os.pathsep+env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     return subprocess.call([str(python),"-u","-m","console.portable_runtime"],
                            cwd=ROOT,env=env)
@@ -328,7 +365,7 @@ def main():
     x.add_argument("--provider",required=True,choices=["ollama","openai_compatible"])
     x.add_argument("--model",required=True)
     x.add_argument("--base-url",default="")
-    for command in ("install","set-key","run","start","doctor","stop","init-backup-key"):
+    for command in ("install","install-browser","set-key","run","start","doctor","stop","init-backup-key"):
         sub.add_parser(command)
     x=sub.add_parser("export-backup-key")
     x.add_argument("--to",type=Path,required=True)
@@ -346,6 +383,8 @@ def main():
             value=init(data,args.provider,args.model,args.base_url)
         elif args.cmd=="install":
             value=install(data)
+        elif args.cmd=="install-browser":
+            value=install_browser(data)
         elif args.cmd=="set-key":
             value=set_key(data)
         elif args.cmd=="run":

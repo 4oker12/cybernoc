@@ -29,16 +29,17 @@ class Scripts(HTMLParser):
 
 
 class WebUIBootTests(unittest.TestCase):
-    def test_browser_receives_two_closed_external_scripts(self):
+    def test_browser_receives_closed_external_scripts(self):
         html=(STATIC/"index.html").read_text(encoding="utf-8")
         self.assertNotIn("</script\n",html)
         self.assertNotIn("<script defer src=\"/static/markdown.js\"></script\n",html)
         parsed=Scripts()
         parsed.feed(html)
         self.assertEqual([x.get("src") for x in parsed.starts],
-                         ["/static/markdown.js","/static/app.js"])
-        self.assertEqual(parsed.ends,2)
-        self.assertEqual(html.count("</script>"),2)
+                         ["/static/markdown.js","/static/app.js",
+                          "/static/model-settings.js","/static/ux.js"])
+        self.assertEqual(parsed.ends,4)
+        self.assertEqual(html.count("</script>"),4)
 
     @unittest.skipUnless(shutil.which("node"),"Node.js unavailable")
     def test_buttons_bind_and_qwen_chatgpt_switch_responds(self):
@@ -88,6 +89,8 @@ const document={
  createTextNode:t=>({textContent:t})
 };
 const window={
+ addEventListener:(name,fn)=>{(window.listeners||(window.listeners={}))[name]=fn;},
+ dispatchEvent:event=>{const fn=window.listeners?.[event.type];if(fn)fn(event);},
  location:{search:'',pathname:'/',hostname:'127.0.0.1',port:'18795'},
  history:{replaceState(){}},
  setInterval(){},
@@ -104,10 +107,13 @@ const fetch=async path=>({
    return {};
  }
 });
-const context={document,window,fetch,URLSearchParams,console};
+const context={document,window,fetch,URLSearchParams,console,
+  navigator:{clipboard:{readText:async()=>'PS> Get-Process\\npython 1234'}}};
 vm.runInNewContext(app,context);
 if(typeof callbacks.DOMContentLoaded!=='function')throw Error('Init handler missing');
 callbacks.DOMContentLoaded();
+if(typeof byId('pasteOutputButton').listeners.click!=='function')
+ throw Error('Clipboard paste button not bound');
 for(const id of ['sendButton','newSession','modeQwen','modeChatGPT','navChatGPT','navTools']){
  if(typeof byId(id).listeners.click!=='function')throw Error('Button not bound: '+id);
 }
@@ -148,6 +154,17 @@ if(!excerpt.endsWith('…') || excerpt.length>180)
 detail.open=true;detail.listeners.toggle();
 if(detail.children[1].textContent!==largeMessage)
  throw Error('Expansion lost the full original answer');
+
+Promise.resolve().then(async()=>{
+ await byId('pasteOutputButton').listeners.click();
+ const pasted=byId('messageInput').value;
+ if(!pasted.includes('Вывод из терминала:'))
+   throw Error('Clipboard output header was not inserted');
+ if(!pasted.includes('PS> Get-Process\\npython 1234'))
+   throw Error('Clipboard text was not preserved');
+ if(!byId('uploadStatus').textContent.includes('нажми Enter'))
+   throw Error('Paste action did not tell the user to review and press Enter');
+}).catch(error=>{console.error(error);process.exitCode=1;});
 """
         run=subprocess.run(["node","-e",script,html,app],
                            capture_output=True,text=True,timeout=20)

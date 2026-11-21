@@ -12,6 +12,10 @@ try:
 except ImportError:
     from research_mission import RESEARCH_MISSION
     from dialogue_strategy import DIALOGUE_STRATEGY
+try:
+    from .local_tools_profile import LOCAL_TOOLS_PROFILE
+except ImportError:
+    from local_tools_profile import LOCAL_TOOLS_PROFILE
 
 
 IDENTITY_AND_PROJECT = """
@@ -197,6 +201,7 @@ RESPONSE_STYLE = """
 AGENT_PROFILE = "\n\n".join((
     IDENTITY_AND_PROJECT,
     PROJECT_BACKGROUND,
+    LOCAL_TOOLS_PROFILE,
     RESEARCH_MISSION,
     DIALOGUE_STRATEGY,
     RESPONSE_STYLE,
