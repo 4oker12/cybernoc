@@ -2,13 +2,14 @@
 from pathlib import Path
 from unittest.mock import patch
 import importlib.util
-import json
+import sys
 import tempfile
 import unittest
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 from console.portable_runtime import MODULES
 
-ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("cybernova_native_local_test", ROOT / "portable" / "native.py")
 native = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(native)
