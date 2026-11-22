@@ -6,6 +6,7 @@ on:
       - feature/cybernova-chat-console
       - feature/account-gpt-local-tools
       - feature/full-shell-computer-discovery
+      - feature/unified-collaboration-orchestrator
     paths:
       - AGENTS.md
       - cybernova/research-platform/**
