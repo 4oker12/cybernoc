@@ -33,7 +33,8 @@ ALLOWED_POST = frozenset({
     "/api/reset", "/api/research/scope", "/api/comm/resume", "/api/comm/reviewer-feedback",
     "/api/siwc/start", "/api/siwc/disconnect", "/api/siwc/review", "/api/siwc/chat",
     "/api/profile-settings", "/api/model-config", "/api/collab/start", "/api/collab/step",
-    "/api/collab/stop", "/api/collab/resume", "/api/collab/finish", "/api/tools/run",
+    "/api/collab/stop", "/api/collab/resume", "/api/collab/finish",
+    "/api/collab/message", "/api/tools/run",
 })
 HOP_HEADERS = frozenset({
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
