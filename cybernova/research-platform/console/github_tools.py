@@ -34,8 +34,7 @@ _SECRET_ASSIGNMENT = re.compile(
     r"private[_-]?key|authorization|cookie)[\w.-]*\s*[:=]\s*)[^\r\n#]+"
 )
 _SECRET_JSON = re.compile(
-    r"""(?i)(["'][\w.-]*(?:token|secret|password|passwd|api[_-]?key|"
-    r"private[_-]?key|authorization|cookie)[\w.-]*["']\s*:\s*["'])([^"']*)(["'])"""
+    r"""(?i)(["'][\w.-]*(?:token|secret|password|passwd|api[_-]?key|private[_-]?key|authorization|cookie)[\w.-]*["']\s*:\s*["'])([^"']*)(["'])"""
 )
 
 
