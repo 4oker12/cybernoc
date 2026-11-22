@@ -265,3 +265,12 @@ The two branches were created from merge commit `3c29375`. If this handoff docum
 - ChatGPT: architecture, task boundaries, acceptance criteria, independent review and integration.
 - Local DeepSeek/Qwen or another coding agent: implementation within one assigned issue/branch.
 - Do not claim a coding agent has started unless a real execution session or commit is visible. The GitHub issues and branches are prepared handoffs; they are not proof that an external agent is currently running.
+
+## 15. Agent branch synchronization — 2026-11-22
+
+- `AGENTS.md` now defines the general parallel-agent contract: one issue/branch per workstream, explicit file ownership, no direct main commits, fast-forward-only branch sync, independent review and truthful execution status.
+- `docs/CHATGPT_PROJECT_INSTRUCTIONS.md` contains the matching concise project-level rules.
+- Both task branches were fast-forwarded (without force) to the latest `main` head `b70e28fff24af1a2a53da571ad70b9feffe494f9`:
+  - `agent/browser-session-isolation` — Issue #24.
+  - `agent/runtime-supervisor-health` — Issue #25.
+- The branches are prepared and clean at that base. No coding-agent execution has been launched or observed from this ChatGPT session yet. Do not mark either issue as in progress until a real executor starts and produces an observable session or commit.
