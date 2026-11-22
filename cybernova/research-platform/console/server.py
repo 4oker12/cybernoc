@@ -655,11 +655,12 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 selected_tool_groups = normalize_tool_groups(payload.tool_groups)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from None
-            thread_id, user_message_seq = store.begin_exchange(
-                thread_id, payload.model, payload.message
-            )
-
             def persist_tool_event(event):
+                nonlocal thread_id, user_message_seq
+                if user_message_seq is None:
+                    thread_id, user_message_seq = store.begin_exchange(
+                        thread_id, payload.model, payload.message
+                    )
                 store.save_tool_events(
                     thread_id, [event], message_seq=user_message_seq,
                 )
@@ -678,14 +679,15 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 session_id=thread_id,
             )
             run_status = "completed"
-            if not persisted_tool_events:
+            if user_message_seq is None:
+                thread_id = store.save_exchange(
+                    thread_id, payload.model, payload.message, outcome["answer"]
+                )
                 # Compatibility for mocked/legacy adapters that return events
                 # but do not invoke the incremental receipt callback.
-                store.save_tool_events(
-                    thread_id, outcome.get("tool_events", []),
-                    message_seq=user_message_seq,
-                )
-            store.finish_exchange(thread_id, outcome["answer"])
+                store.save_tool_events(thread_id, outcome.get("tool_events", []))
+            else:
+                store.finish_exchange(thread_id, outcome["answer"])
         except GPTChatError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         except ProfileSettingsError as exc:
