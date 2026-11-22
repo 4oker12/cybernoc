@@ -228,6 +228,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
     message: str = Field(min_length=1, max_length=10000)
     tool_groups: list[str] = Field(default_factory=list, max_length=9)
+    tools_enabled: bool = True
     run_id: str = Field(default_factory=lambda: secrets.token_hex(16),
                         min_length=32, max_length=32, pattern="^[0-9a-f]{32}$")
 
@@ -325,6 +326,7 @@ class ChatGPTMessageRequest(BaseModel):
     model: str = Field(min_length=1, max_length=160)
     message: str = Field(min_length=1, max_length=10000)
     tool_groups: list[str] = Field(default_factory=list, max_length=9)
+    tools_enabled: bool = True
     run_id: str = Field(default_factory=lambda: secrets.token_hex(16),
                         min_length=32, max_length=32, pattern="^[0-9a-f]{32}$")
 
@@ -617,6 +619,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 authorized_targets=extract_user_targets(outgoing),
                 on_tool_event=persist_tool_event,
                 enabled_tool_groups=selected_tool_groups,
+                tools_enabled=payload.tools_enabled,
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
             )
             run_status = "completed"
@@ -931,6 +934,7 @@ def chat(payload: ChatRequest):
                 user_context=user_context_for(profile, "researcher"),
                 profile_instructions=mode_instructions_for(profile, "researcher"),
                 tool_groups=selected_tool_groups,
+                tools_enabled=payload.tools_enabled,
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
             )
             run_status = "completed"
