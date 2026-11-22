@@ -14,6 +14,11 @@ import os
 from mcp.server.fastmcp import FastMCP
 
 try:
+    from .diagnostics import configure as configure_diagnostics
+except ImportError:
+    from diagnostics import configure as configure_diagnostics
+
+try:
     from .communication import CommunicationStore
     from .evidence import EvidenceJournal
 except ImportError:
@@ -127,4 +132,5 @@ if __name__ == "__main__":
     transport = os.environ.get("CYBERNOVA_COMM_TRANSPORT", "streamable-http")
     if transport not in {"streamable-http", "stdio"}:
         raise SystemExit("CYBERNOVA_COMM_TRANSPORT must be streamable-http or stdio")
+    configure_diagnostics("communication-mcp")
     mcp.run(transport=transport)
