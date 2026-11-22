@@ -314,6 +314,7 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertTrue(result["error"].startswith("RuntimeError:"))
         self.assertEqual(len(result["error_id"]), 12)
         self.assertNotIn("secret-value", str(result))
+        self.assertNotIn("secret-value", "\\n".join(captured.output))
         self.assertTrue(any(result["error_id"] in row for row in captured.output))
         self.assertTrue(any("RuntimeError" in row for row in captured.output))
 
