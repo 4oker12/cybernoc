@@ -38,8 +38,10 @@ class StubModel:
     def __init__(self):
         self.round = 0
         self.advertised = []
+        self.advertised_history = []
     def chat(self, messages, tools=None, **_):
         self.advertised = tools or []
+        self.advertised_history.append(self.advertised)
         self.round += 1
         if self.round == 1:
             return {"content": "", "tool_calls": [{
@@ -295,8 +297,11 @@ def run():
         model = StubModel()
         agent = Agent(model, lambda: StubMCP(), local_tool_runtime=runtime)
         res = agent.run([], "Проверь свой терминал", force_tools=False)
-        advertised = {item["function"]["name"] for item in model.advertised}
-        if not {"terminal_status", "computer_system_overview", "browser_navigate"}.issubset(advertised) or res.get("tool_calls") != 1:
+        advertised = {item["function"]["name"] for item in model.advertised_history[0]}
+        review_disables_tools = (len(model.advertised_history) >= 3 and
+                                 model.advertised_history[-1] == [])
+        if (not {"terminal_status", "computer_system_overview", "browser_navigate"}.issubset(advertised)
+                or res.get("tool_calls") != 1 or not review_disables_tools):
             failures.append("deepseek_shared_tool_dispatch")
             print('{"test":"deepseek_shared_tool_dispatch","status":"FAIL"}')
         else:
