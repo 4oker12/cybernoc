@@ -187,6 +187,13 @@ class CollaborationTests(unittest.TestCase):
             })
             self.assertEqual(created.status_code, 200, created.text)
             task_id = created.json()["task_id"]
+            injected = client.post("/api/collab/message", json={
+                "task_id": task_id, "message": "Уточнение от пользователя во время работы"
+            })
+            self.assertEqual(injected.status_code, 200, injected.text)
+            self.assertTrue(any(m["actor"] == "human" and
+                                "Уточнение от пользователя" in m["body"]
+                                for m in injected.json()["messages"]))
             speakers = []
             for _ in range(2):
                 response = client.post("/api/collab/step", json={"task_id": task_id})
@@ -209,6 +216,8 @@ class CollaborationTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertIn("DeepSeek", calls[1][0][-1]["content"])
             self.assertIn("ведущий инженер", calls[0][1]["profile_instructions"])
+            self.assertTrue(any("Уточнение от пользователя" in item["content"]
+                                for item in calls[0][0]))
             self.assertGreaterEqual(len(client.get("/api/collab/run",
                 params={"task_id":task_id}).json()["messages"]),7)
             self.assertEqual(client.post("/api/collab/step",json={"task_id":task_id}).status_code,409)
