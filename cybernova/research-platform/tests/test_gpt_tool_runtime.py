@@ -18,6 +18,28 @@ from console.computer_control import (
 
 
 class GPTToolRuntimeTests(unittest.TestCase):
+    def test_browser_sessions_are_reused_per_task_and_isolated_between_tasks(self):
+        class FakeBrowser:
+            def __init__(self, *, profile_dir):
+                self.profile_dir = profile_dir
+                self.closed = False
+            def close(self):
+                self.closed = True
+
+        with patch("console.gpt_tool_runtime.BrowserSession", FakeBrowser):
+            runtime = GPTToolRuntime()
+            first = runtime._browser_for("task-alpha")
+            self.assertIs(first, runtime._browser_for("task-alpha"))
+            second = runtime._browser_for("task-beta")
+            self.assertIsNot(first, second)
+            self.assertNotEqual(first.profile_dir, second.profile_dir)
+            self.assertNotIn("task-alpha", str(first.profile_dir))
+            runtime.close_session("task-alpha")
+            self.assertTrue(first.closed)
+            self.assertIs(second, runtime._browser_for("task-beta"))
+            runtime.close()
+            self.assertTrue(second.closed)
+
     def test_tool_catalog_is_separate_and_excludes_unapproved_submit(self):
         tools = build_tool_catalog()
         names = {item["name"] for item in tools}
