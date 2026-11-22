@@ -96,7 +96,7 @@ def _source_commit() -> str:
     if configured and configured.lower() not in {"unknown", "uncommitted"}:
         return configured
     repository = Path(
-        os.environ.get("CYBERNOVA_DEV_SOURCE") or ROOT.parents[3]
+        os.environ.get("CYBERNOVA_DEV_SOURCE") or ROOT.parents[2]
     ).expanduser()
     try:
         revision = subprocess.run(
