@@ -52,6 +52,7 @@ class WorkItemStore:
                     result TEXT NOT NULL DEFAULT '',
                     review TEXT NOT NULL DEFAULT '',
                     last_error TEXT NOT NULL DEFAULT '',
+                    blocked_phase TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE(task_id,position)
@@ -270,7 +271,9 @@ class WorkItemStore:
             if row["state"] in {"running", "reviewing"}:
                 db.execute(
                     "UPDATE collaboration_work_items SET state='blocked',last_error=?,"
-                    "updated_at=? WHERE item_id=?", (safe, _now(), item_id),
+                    "blocked_phase=?,updated_at=? WHERE item_id=?",
+                    (safe, "review" if row["state"] == "reviewing" else "research",
+                     _now(), item_id),
                 )
             db.commit()
         self.comm.append(task_id, "controller", "system",
@@ -286,14 +289,16 @@ class WorkItemStore:
             if parent is None or parent["state"] not in {"active", "paused"}:
                 raise WorkItemError("work_parent_not_resumable")
             item = db.execute(
-                "SELECT state,attempt FROM collaboration_work_items "
+                "SELECT state,attempt,blocked_phase FROM collaboration_work_items "
                 "WHERE task_id=? AND item_id=?", (task_id, item_id),
             ).fetchone()
             if item is None or item["state"] != "blocked" or item["attempt"] >= MAX_ATTEMPTS:
                 raise WorkItemError("work_item_retry_not_allowed")
             db.execute(
-                "UPDATE collaboration_work_items SET state='rework',last_error='',"
-                "updated_at=? WHERE item_id=?", (_now(), item_id),
+                "UPDATE collaboration_work_items SET state=?,last_error='',"
+                "blocked_phase='',updated_at=? WHERE item_id=?",
+                ("needs_review" if item["blocked_phase"] == "review" else "rework",
+                 _now(), item_id),
             )
             db.commit()
         self.comm.append(task_id, "human", "decision",
@@ -317,7 +322,9 @@ class WorkItemStore:
             db.execute("BEGIN IMMEDIATE")
             result = db.execute(
                 "UPDATE collaboration_work_items SET state='blocked',"
-                "last_error='interrupted_before_commit',updated_at=? "
+                "last_error='interrupted_before_commit',"
+                "blocked_phase=CASE WHEN state='reviewing' THEN 'review' "
+                "ELSE 'research' END,updated_at=? "
                 "WHERE state IN ('running','reviewing')",
                 (_now(),),
             )
