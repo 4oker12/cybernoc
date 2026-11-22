@@ -15,6 +15,7 @@ from console.collaboration import (
     mentor_messages, researcher_messages,
 )
 from console.communication import CommunicationStore
+from console.evidence import EvidenceJournal
 from console.profile_settings import ProfileSettingsStore
 from console.tunnel_access import allowed_path
 
@@ -82,6 +83,18 @@ class CollaborationTests(unittest.TestCase):
         self.assertIs(first, server._collaboration_step_lock("cn_task_one_123456"))
         second = server._collaboration_step_lock("cn_task_two_123456")
         self.assertIsNot(first, second)
+
+    def test_tool_activity_receipt_is_persisted_incrementally(self):
+        run = self.collab.create("Проверить локальную активность", "gpt-test", 1)
+        server._record_collaboration_tool_event(run["task_id"], {
+            "type": "tool_result", "name": "http_get",
+            "arguments": {"url": "https://example.org/"},
+            "result": {"status": 200}, "is_error": False,
+        })
+        receipts = EvidenceJournal(self.comm).list_tool_receipts(run["task_id"])
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0]["tool_name"], "http_get")
+        self.assertFalse(receipts[0]["is_error"])
 
     def test_stop_does_not_advance(self):
         run = self.collab.create("Проверь тестовый проект", "gpt-test", 3)
@@ -229,6 +242,7 @@ class CollaborationTests(unittest.TestCase):
             ("/api/collab/stop", "POST"), ("/api/collab/resume", "POST"),
             ("/api/collab/finish", "POST"), ("/api/collab/runs", "GET"),
             ("/api/collab/run?task_id=x", "GET"),
+            ("/api/collab/activity?task_id=x", "GET"),
             ("/api/collab/message", "POST"), ("/api/tools/run", "POST"),
         ]:
             self.assertTrue(allowed_path(path,method),path)
