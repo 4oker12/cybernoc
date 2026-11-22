@@ -362,9 +362,12 @@ function updateBusyUI(){
   $("newSession").disabled=!!activeRunning;
   $("artifactFile").disabled=state.mode!=="qwen"||state.qwenRunning||state.collabRunning;
   $("toolPickerToggle").disabled=anyModelRunning||state.collabRunning;
-  $("toolPickerGroups").querySelectorAll("input").forEach(input=>{
-    input.disabled=anyModelRunning||state.collabRunning||input.dataset.available==="false";
-  });
+  const toolPickerGroups=$("toolPickerGroups");
+  if(toolPickerGroups&&typeof toolPickerGroups.querySelectorAll==="function"){
+    toolPickerGroups.querySelectorAll("input").forEach(input=>{
+      input.disabled=anyModelRunning||state.collabRunning||input.dataset.available==="false";
+    });
+  }
   const active=[];
   if(state.qwenRunning)active.push("DeepSeek работает");
   if(state.gptRunning)active.push("ChatGPT работает");
@@ -374,8 +377,10 @@ function updateBusyUI(){
   $("modeQwen").disabled=state.collabRunning;
   $("modeChatGPT").disabled=state.collabRunning;
   $("modeCollab").disabled=anyModelRunning||state.collabRunning;
-  $("gptTopModel").disabled=!state.gptConnected||!state.gptPlanUsage||
-    !$("gptTopModel").options.length||state.gptRunning;
+  const gptModelSelect=$("gptTopModel");
+  const hasGptModelOptions=!!gptModelSelect.options&&gptModelSelect.options.length>0;
+  gptModelSelect.disabled=!state.gptConnected||!state.gptPlanUsage||
+    !hasGptModelOptions||state.gptRunning;
 }
 function busy(on,mode=state.mode){
   const key=mode==="gpt"?"gptRunning":mode==="collab"?"collabRunning":"qwenRunning";
