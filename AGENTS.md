@@ -39,7 +39,7 @@ report the limitation; do not claim compliance.
   Some historical source files and names still include `Vast` or `tunnel_access`;
   their presence does NOT prove that a remote Vast machine is running.
   Use remote infrastructure only after a new, explicit request.
-- The user uses both **Windows PowerShell 5.1** and **CMD**. Determine the
+- The user uses both **Windows PowerShell 5.1** and **Windows CMD**. Determine the
   actual shell from the prompt before generating commands (`PS ...>` means
   PowerShell; `C:\\...>` means CMD). Never mix their syntax.
 - PowerShell 5.1 has a confirmed multiline-paste problem: pasted multiline
