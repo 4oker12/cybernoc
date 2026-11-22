@@ -1,8 +1,8 @@
-"""Policy for autonomous MCP choice and bounded, human-approved execution.
+"""Policy for autonomous tool selection and task-intent gating.
 
-All advertised tools are visible to the model. Mere visibility is NOT execution
-permission: six current reviewed methods run automatically; newly connected MCP
-methods can be requested and approved once, with exact arguments.
+All tools registered by the owner-configured local MCP gateway are executable
+without per-call approval after strict schema validation. Only high-impact
+operations need matching intent in the current user task.
 """
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ REVIEWED_OFFLINE = frozenset({
     # Coding agent: edits and commits only in a separate Qwen task worktree.
     "dev_workspace", "dev_list", "dev_read", "dev_search",
     "dev_edit", "dev_delete", "dev_move", "dev_diff", "dev_test", "dev_commit",
+    "dev_command", "dev_push", "dev_open_pr",
 })
 REVIEWED_SCOPED = frozenset({
     "http_get", "scoped_dns_resolve", "scoped_tls_inspect",
@@ -45,9 +46,13 @@ REVIEWED_SCOPED = frozenset({
 try:
     from .computer_control import COMPUTER_TOOL_NAMES
     from .browser_control import BROWSER_CONTROL_TOOLS
+    from .github_tools import GITHUB_NAMES
+    from .github_write_tools import GITHUB_WRITE_NAMES
 except ImportError:
     from computer_control import COMPUTER_TOOL_NAMES
     from browser_control import BROWSER_CONTROL_TOOLS
+    from github_tools import GITHUB_NAMES
+    from github_write_tools import GITHUB_WRITE_NAMES
 
 # Shared local tools are safe-by-default or enforce their own exact-action
 # authorization inside the controller (Defender scan, package install,
@@ -58,6 +63,7 @@ SHARED_LOCAL_TOOLS = (
     | frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS
                 if item["name"] != "browser_submit")
     | frozenset({"terminal_run", "terminal_status"})
+    | GITHUB_NAMES | GITHUB_WRITE_NAMES
 )
 REVIEWED_TOOLS = REVIEWED_OFFLINE | REVIEWED_SCOPED | SHARED_LOCAL_TOOLS
 
@@ -98,7 +104,7 @@ def model_tools(rows: object) -> list[dict]:
         "function": {
             "name": item["name"],
             "description": item["description"] + (
-                " [Requires user approval before execution.]"
+                " [Autonomous when relevant. High-impact actions require matching intent in the current user task.]"
                 if item["name"] not in REVIEWED_TOOLS else ""
             ),
             "parameters": item["inputSchema"],
@@ -106,7 +112,7 @@ def model_tools(rows: object) -> list[dict]:
     } for item in discovered_tools(rows)]
 
 
-def _json_depth(item, depth=0) -> None:
+def _json_depth(item, depth=0, max_value_length=MAX_VALUE_LENGTH) -> None:
     if depth > 8:
         raise ToolPolicyError("tool_arguments_too_deep")
     if isinstance(item, dict):
@@ -115,23 +121,26 @@ def _json_depth(item, depth=0) -> None:
         for key, value in item.items():
             if not isinstance(key, str) or len(key) > 90:
                 raise ToolPolicyError("tool_argument_key_invalid")
-            _json_depth(value, depth + 1)
+            _json_depth(value, depth + 1, max_value_length)
     elif isinstance(item, list):
         if len(item) > 80:
             raise ToolPolicyError("tool_arguments_too_many_items")
         for value in item:
-            _json_depth(value, depth + 1)
+            _json_depth(value, depth + 1, max_value_length)
     elif not (item is None or isinstance(item, (str, int, float, bool))):
         raise ToolPolicyError("tool_arguments_non_json_value")
-    elif isinstance(item, str) and len(item) > MAX_VALUE_LENGTH:
+    elif isinstance(item, str) and len(item) > max_value_length:
         raise ToolPolicyError("tool_argument_value_too_large")
 
 
-def validate_dynamic_arguments(raw: object, schema: dict) -> dict:
-    """Validate shape and types from MCP schema without executing tool code.
+def validate_dynamic_arguments(raw: object, schema: dict, *,
+                               max_argument_bytes: int = MAX_ARGUMENT_BYTES,
+                               max_value_length: int = MAX_VALUE_LENGTH) -> dict:
+    """Validate argument shape and types before autonomous MCP execution.
 
-    Unknown tool schemas are not trusted as security classification; approval
-    is still mandatory. Only keys explicitly declared by the tool are allowed.
+    Schema validation is mandatory. Execution policy is evaluated separately:
+    routine connected tools run automatically; high-impact tools require direct
+    intent in the current user task. Only declared keys are accepted.
     """
     if isinstance(raw, str):
         try:
@@ -140,8 +149,8 @@ def validate_dynamic_arguments(raw: object, schema: dict) -> dict:
             raise ToolPolicyError("tool_arguments_not_json") from exc
     if not isinstance(raw, dict):
         raise ToolPolicyError("tool_arguments_not_object")
-    _json_depth(raw)
-    if len(json.dumps(raw, ensure_ascii=False).encode()) > MAX_ARGUMENT_BYTES:
+    _json_depth(raw, max_value_length=max_value_length)
+    if len(json.dumps(raw, ensure_ascii=False).encode()) > max_argument_bytes:
         raise ToolPolicyError("tool_arguments_too_large")
     if not isinstance(schema, dict) or schema.get("type") != "object":
         raise ToolPolicyError("tool_schema_not_supported")
@@ -183,6 +192,50 @@ def validate_dynamic_arguments(raw: object, schema: dict) -> dict:
         if "enum" in prop and value not in prop["enum"]:
             raise ToolPolicyError("invalid_enum_" + key)
     return raw
+
+
+
+HIGH_IMPACT_TOOL_RE = re.compile(
+    r"(?i)(?:delete|remove|destroy|drop|purge|format|uninstall|"
+    r"shell|terminal|command|exec|install|scan|defender|"
+    r"send|submit|publish|deploy|release|merge|dispatch|"
+    r"permission|collaborator|invite|revoke|secret|credential|"
+    r"webhook|branch.?protection|shutdown|restart|kill|terminate|"
+    r"archive.?extract|file.?move|organize)"
+)
+
+
+def tool_requires_task_intent(name: str, description: str = "") -> bool:
+    """Return true only for tool definitions whose names/descriptions signal a side effect."""
+    return bool(HIGH_IMPACT_TOOL_RE.search(str(name) + " " + str(description)))
+
+
+def task_intent_matches(name: str, description: str, user_text: str) -> bool:
+    """Check that the current user task directly asks for the high-impact action."""
+    text = str(user_text or "")
+    if re.search(
+        r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотмена\b|"
+        r"\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)",
+        text,
+    ):
+        return False
+    definition = (str(name) + " " + str(description)).casefold()
+    groups = (
+        (r"(?:delete|remove|destroy|drop|purge|format)", r"(?:удал|delete|remove|destroy|drop|purge|форматир)"),
+        (r"(?:uninstall|install|package)", r"(?:установ|install|uninstall|поставь|upgrade|обнови)"),
+        (r"(?:shell|terminal|command|exec)", r"(?:вызов|вызови|выполн|запусти|run|execute|command|shell|терминал|команд|скрипт)"),
+        (r"(?:scan|defender)", r"(?:скан|проверь|провер|scan|check|антивирус|defender|malware)"),
+        (r"(?:send|submit|publish|comment|email)", r"(?:отправ|send|submit|publish|опубликуй|коммент|email|письмо)"),
+        (r"(?:deploy|release|merge|dispatch)", r"(?:deploy|развер|релиз|release|merge|мерж|объедин|слий|dispatch|workflow)"),
+        (r"(?:permission|collaborator|invite|revoke|secret|credential|webhook|branch.?protection)", r"(?:доступ|прав|permission|collaborator|участник|приглас|revoke|секрет|secret|credential|webhook|защит|protection)"),
+        (r"(?:archive.?extract|extract|unpack)", r"(?:распак|извлеч|extract|unpack)"),
+        (r"(?:file.?move|organize)", r"(?:перемест|move|организ|сортир)"),
+        (r"(?:shutdown|restart|kill|terminate)", r"(?:выключ|заверш|останов|перезапуск|restart|shutdown|kill|terminate)"),
+    )
+    for definition_pattern, intent_pattern in groups:
+        if re.search(definition_pattern, definition) and re.search(intent_pattern, text, re.IGNORECASE):
+            return True
+    return False
 
 
 def schema_digest(tool: dict) -> str:

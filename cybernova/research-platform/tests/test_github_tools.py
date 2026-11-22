@@ -47,6 +47,7 @@ class GitHubToolsTests(unittest.TestCase):
         self.assertFalse(failed)
         self.assertTrue(result["authenticated"])
         self.assertEqual(result["account"], "cybernova-user")
+        self.assertEqual(result["mode"], "authenticated_repo_scoped")
         self.assertNotIn(secret, str(result))
 
     def test_anonymous_mode_is_public_read_only(self):

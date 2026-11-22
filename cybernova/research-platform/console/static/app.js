@@ -28,13 +28,13 @@ const TOOL_GROUP_GLYPHS={
 const TOOL_GROUP_FALLBACK=[
   {id:"browser",label:"Chrome / браузер",icon:"globe",description:"Открывать сайты, читать DOM, переходить по ссылкам, создавать вкладки, переключаться между ними, назад/вперёд, обновлять страницы, смотреть Console и DevTools Network."},
   {id:"computer",label:"Компьютер Windows",icon:"monitor",description:"Состояние ПК: CPU/RAM/диски, процессы и службы, автозагрузка, установленные программы, окна, Defender и локальные файлы."},
-  {id:"terminal",label:"Терминал Windows",icon:"terminal",description:"Полноценные CMD и PowerShell для локальной работы. terminal_run доступен только при явном выборе этой группы."},
+  {id:"terminal",label:"Терминал Windows",icon:"terminal",description:"Полноценные CMD и PowerShell для локальной работы. Доступны автоматически в автономном режиме."},
   {id:"web",label:"Интернет / Research",icon:"search",description:"Искать в интернете, получать выдачу с пагинацией, открывать найденные страницы, читать первоисточники и сопоставлять источники."},
   {id:"network",label:"Сеть / NOC",icon:"network",description:"DNS, TLS, IP, HTTP и сетевые проверки."},
   {id:"security",label:"Security",icon:"shield",description:"Проверки безопасности и лабораторные сканеры."},
   {id:"traffic",label:"Traffic / HAR",icon:"activity",description:"HAR, JavaScript, сессии и сетевые гипотезы."},
   {id:"developer",label:"Разработка",icon:"code",description:"Workspace, Git, файлы проекта и тесты."},
-  {id:"github",label:"GitHub",icon:"git-branch",description:"Репозитории, ветки, коммиты, Issues, Pull Requests и GitHub Actions. Только чтение."},
+  {id:"github",label:"GitHub",icon:"git-branch",description:"Полный repo-scoped доступ: чтение и запись файлов, ветки, коммиты, Issues, PR, Releases, Actions и настройки."},
   {id:"mcp",label:"MCP / прочее",icon:"plug",description:"Подключённые MCP-сервисы и координация."}
 ];
 function displayModelName(modelId){
@@ -487,7 +487,7 @@ function updateToolPickerSummary(){
   }
   if(!selected.length){
     $("toolSelectionBadge").textContent="Авто";
-    $("toolPickerSummary").textContent="Автовыбор: все группы, кроме terminal_run. Для полного терминала выбери группу «Терминал Windows».";
+    $("toolPickerSummary").textContent="Автономный режим: все группы и инструменты доступны модели, включая CMD и PowerShell. Обычные действия выполняются без подтверждения каждого шага.";
     return;
   }
   const labels=state.toolGroupCatalog.filter(x=>selected.includes(x.id)).map(x=>x.label);
@@ -1603,11 +1603,21 @@ function init(){
   showResearchScope({hosts:[],capture_detail:"evidence"});
   let savedEnabled=null;
   try{
-    const saved=JSON.parse(window.localStorage.getItem("cybernova_tool_groups")||"[]");
-    if(Array.isArray(saved))state.toolGroups=saved.filter(id=>
-      TOOL_GROUP_FALLBACK.some(group=>group.id===id));
-    savedEnabled=window.localStorage.getItem("cybernova_tools_enabled");
-  }catch(_){state.toolGroups=[];}
+    const profileVersion=window.localStorage.getItem("cybernova_tool_profile_version");
+    if(profileVersion!=="2"){
+      state.toolGroups=[];
+      state.toolsEnabled=true;
+      window.localStorage.setItem("cybernova_tool_groups","[]");
+      window.localStorage.setItem("cybernova_tools_enabled","true");
+      window.localStorage.setItem("cybernova_tool_profile_version","2");
+      savedEnabled="true";
+    }else{
+      const saved=JSON.parse(window.localStorage.getItem("cybernova_tool_groups")||"[]");
+      if(Array.isArray(saved))state.toolGroups=saved.filter(id=>
+        TOOL_GROUP_FALLBACK.some(group=>group.id===id));
+      savedEnabled=window.localStorage.getItem("cybernova_tools_enabled");
+    }
+  }catch(_){state.toolGroups=[];savedEnabled="true";}
   state.toolsEnabled=savedEnabled===null?true:savedEnabled==="true";
   renderToolPicker([]);
   $("toolPickerToggle").addEventListener("click",()=>{

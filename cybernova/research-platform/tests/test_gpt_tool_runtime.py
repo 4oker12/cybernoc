@@ -31,6 +31,8 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("google_search", names)
         self.assertIn("research_source_open", names)
         self.assertTrue(GITHUB_NAMES.issubset(names))
+        from console.github_write_tools import GITHUB_WRITE_NAMES
+        self.assertTrue(GITHUB_WRITE_NAMES.issubset(names))
         self.assertNotIn("browser_submit", names)
         self.assertTrue({
             "computer_system_overview", "computer_performance_snapshot",
@@ -48,12 +50,12 @@ class GPTToolRuntimeTests(unittest.TestCase):
             "computer_plan_file_organization", "computer_apply_file_organization",
         }.issubset(names))
 
-    def test_mcp_adapter_hides_terminal_run_until_terminal_group_is_selected(self):
+    def test_mcp_adapter_exposes_full_tool_pool_in_automatic_mode(self):
         runtime = GPTToolRuntime()
         catalog_names = {tool["name"] for tool in runtime.tools}
         automatic_names = {row["name"] for row in runtime.mcp_tools()}
         explicit_terminal = {row["name"] for row in runtime.mcp_tools(["terminal"])}
-        self.assertEqual(automatic_names, catalog_names - {"terminal_run"})
+        self.assertEqual(automatic_names, catalog_names)
         self.assertEqual(explicit_terminal, {"terminal_run", "terminal_status"})
         for row in runtime.tools:
             with self.subTest(tool=row["name"]):
@@ -88,10 +90,12 @@ class GPTToolRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_tool_groups(["not-a-real-tool-group"])
 
-    def test_github_tools_are_read_only_and_enforce_group_selection(self):
+    def test_github_tools_are_read_write_and_enforce_group_selection(self):
         from console.gpt_tool_runtime import tool_group_for_name
         runtime = GPTToolRuntime()
         self.assertEqual(tool_group_for_name("github_list_issues"), "github")
+        self.assertEqual(tool_group_for_name("github_api_request"), "github")
+        self.assertEqual(tool_group_for_name("github_commit_files"), "github")
         result, failed = runtime.call("github_repo_info", {"repo": "owner/repo"}, enabled_groups=["browser"])
         self.assertTrue(failed)
         self.assertEqual(result["error"], "tool_group_not_enabled")
@@ -234,12 +238,12 @@ class GPTToolRuntimeTests(unittest.TestCase):
                 self.assertFalse(schema["additionalProperties"])
                 self.assertEqual(set(schema["properties"]), set(schema["required"]))
 
-    def test_defender_scan_requires_explicit_latest_user_authorization(self):
+    def test_defender_scan_uses_direct_user_task_intent_without_second_confirmation(self):
         self.assertEqual(
             extract_user_computer_approvals([
                 {"role": "user", "content": "Можешь проверить ноут на вирусы?"},
             ]),
-            set(),
+            {"defender_quick_scan"},
         )
         self.assertEqual(
             extract_user_computer_approvals([

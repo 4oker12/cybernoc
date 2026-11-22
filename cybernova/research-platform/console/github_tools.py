@@ -234,6 +234,7 @@ def _repo_info(item: dict) -> dict:
         "archived": item.get("archived"),
         "updated_at": item.get("updated_at"),
         "html_url": item.get("html_url"),
+        "permissions": item.get("permissions"),
     }
 
 
@@ -268,7 +269,8 @@ def github_call(name: str, args: dict) -> tuple[dict, bool]:
                     "auth_source": auth_source,
                     "gh_cli_available": bool(shutil.which("gh") or shutil.which("gh.exe")),
                     "account": user.get("login"),
-                    "account_type": user.get("type"), "mode": "read_only",
+                    "account_type": user.get("type"), "mode": "authenticated_repo_scoped",
+                    "write_access": "token_present_repository_permissions_checked_by_github",
                 }, False
             rate = _api_get("rate_limit")
             core = (rate.get("resources") or {}).get("core", {}) if isinstance(rate, dict) else {}

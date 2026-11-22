@@ -17,21 +17,23 @@ try:
     from .tool_policy import (
         REVIEWED_TOOLS, discovered_tools, model_tools, schema_digest,
         validate_dynamic_arguments, safe_preview, action_description,
-        ToolPolicyError,
+        tool_requires_task_intent, task_intent_matches, ToolPolicyError,
     )
 except ImportError:
     from tool_policy import (
         REVIEWED_TOOLS, discovered_tools, model_tools, schema_digest,
         validate_dynamic_arguments, safe_preview, action_description,
-        ToolPolicyError,
+        tool_requires_task_intent, task_intent_matches, ToolPolicyError,
     )
 try:
     from .gpt_tool_runtime import (
         extract_user_targets, filter_tool_rows, normalize_tool_groups,
+        GITHUB_WRITE_NAMES,
     )
 except ImportError:
     from gpt_tool_runtime import (
         extract_user_targets, filter_tool_rows, normalize_tool_groups,
+        GITHUB_WRITE_NAMES,
     )
 
 try:
@@ -866,6 +868,8 @@ class Agent:
                             args = validate_dynamic_arguments(
                                 function.get("arguments"),
                                 descriptors[name].get("inputSchema", {}),
+                                max_argument_bytes=1_100_000 if name in GITHUB_WRITE_NAMES else 8192,
+                                max_value_length=250_000 if name in GITHUB_WRITE_NAMES else 4096,
                             )
                         if name == "http_get":
                             if not public_get:
@@ -904,27 +908,23 @@ class Agent:
                             safe_result, failed = mcp.call(name, args)
                             executed += 1
                         else:
-                            # New/unreviewed MCP functions are visible to the active model,
-                            # but execution needs one-time user consent.
-                            kind = "approval_required"
-                            failed = True
-                            request_id = secrets.token_urlsafe(18)
-                            desc = action_description(
-                                name, "Вызов ещё не проверенной функции требует согласования", args,
-                                objective=text,
-                                description=descriptors[name].get("description", ""),
-                            )
-                            event = {"request_id": request_id, **desc}
-                            pending_requests.append({
-                                "request_id": request_id, "tool": name,
-                                "args": args, "schema_hash": schema_digest(descriptors[name]),
-                                "created_at": time.time(),
-                            })
-                            safe_result = {
-                                "ok": False, "status": "approval_required",
-                                "request_id": request_id,
-                                "message": "Нужна отдельная санкция пользователя. Вызов не исполнен.",
-                            }
+                            # Owner-connected MCP tools are autonomous after strict schema validation.
+                            # Only high-impact tools need matching intent in the current user task;
+                            # this is task authorization, not a separate confirmation prompt.
+                            description = descriptors[name].get("description", "")
+                            if (tool_requires_task_intent(name, description)
+                                    and not task_intent_matches(name, description, text)):
+                                kind = "task_intent_required"
+                                failed = True
+                                safe_result = {
+                                    "ok": False, "status": "task_intent_required",
+                                    "message": "Это действие не запрошено напрямую в текущей задаче. Продолжи безопасные части работы; не запрашивай отдельное подтверждение для рутинных шагов.",
+                                }
+                            else:
+                                if mcp is None:
+                                    raise BackendError("mcp_backend_unavailable")
+                                safe_result, failed = mcp.call(name, args)
+                                executed += 1
                     except (BackendError, ToolPolicyError, ValueError, TypeError) as exc:
                         failed = True
                         safe_result = {"ok": False, "error": str(exc)[:200]}

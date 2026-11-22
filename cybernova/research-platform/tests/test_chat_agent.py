@@ -125,7 +125,7 @@ class AgentTests(unittest.TestCase):
         names = [t["function"]["name"] for t in _tool_schema(TOOLS, False)]
         self.assertEqual(names, ["gateway_status", "http_get", "ip_network_summary",
                                  "arbitrary_shell"])
-        self.assertIn("Requires user approval",
+        self.assertIn("Autonomous when relevant",
                       _tool_schema(TOOLS)[-1]["function"]["description"])
 
     def test_deepseek_agent_receives_the_same_local_computer_tool_catalog(self):
@@ -275,16 +275,43 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(mcp.calls,[("ip_network_summary",{"cidr":"192.0.2.7/24"})])
         self.assertIn("192.0.2.0/24",out["answer"])
 
-    def test_new_tool_is_proposed_not_executed(self):
+    def test_unreviewed_high_impact_tool_runs_when_current_task_requests_it(self):
         mcp=FakeMCP();lm=FakeOllama([calls(("arbitrary_shell",{"command":"id"})),
-                                   {"role":"assistant","content":"Нужно разрешение"}])
+                                   {"role":"assistant","content":"Вызов инструмента выполнен; вернулась ошибка неизвестного обработчика."}])
         out=Agent(lm,lambda:mcp).run([],"Вызови shell")
+        self.assertEqual(mcp.calls,[("arbitrary_shell",{"command":"id"})])
+        self.assertEqual(out["tool_calls"],1)
+        self.assertEqual(out["events"][0]["type"],"tool_result")
+        self.assertTrue(out["events"][0]["is_error"])
+        self.assertEqual(out["approval_requests"],[])
+
+    def test_unreviewed_high_impact_tool_is_not_run_without_task_intent(self):
+        mcp=FakeMCP();lm=FakeOllama([calls(("arbitrary_shell",{"command":"id"})),
+                                   {"role":"assistant","content":"Команда не запускалась."}])
+        out=Agent(lm,lambda:mcp).run([],"Покажи краткий статус проекта")
         self.assertEqual(mcp.calls,[])
         self.assertEqual(out["tool_calls"],0)
-        self.assertEqual(out["events"][0]["type"],"approval_required")
-        self.assertEqual(out["events"][0]["result"]["status"],"approval_required")
-        self.assertEqual(out["approval_requests"][0]["args"],{"command":"id"})
-        self.assertIn("нужны отдельные разрешения",out["answer"])
+        self.assertEqual(out["events"][0]["type"],"task_intent_required")
+        self.assertEqual(out["approval_requests"],[])
+
+    def test_unreviewed_read_only_tool_runs_without_per_call_approval(self):
+        class ReadMCP(FakeMCP):
+            def initialize(self):
+                return TOOLS + [{
+                    "name":"external_status","description":"Read service status.",
+                    "inputSchema":{"type":"object","properties":{},"required":[],"additionalProperties":False},
+                }]
+            def call(self,name,args):
+                self.calls.append((name,args))
+                return {"ok":True,"status":"online"},False
+        mcp=ReadMCP()
+        lm=FakeOllama([calls(("external_status",{})),
+                       {"role":"assistant","content":"Сервис online."}])
+        out=Agent(lm,lambda:mcp).run([],"Проверь статус сервиса")
+        self.assertEqual(mcp.calls,[("external_status",{})])
+        self.assertEqual(out["tool_calls"],1)
+        self.assertEqual(out["events"][0]["type"],"tool_result")
+        self.assertEqual(out["approval_requests"],[])
 
     def test_external_get_rejected_even_when_checkbox_enabled(self):
         mcp=FakeMCP();lm=FakeOllama([calls(("http_get",{"url":"https://example.org/"})),

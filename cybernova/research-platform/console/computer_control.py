@@ -152,7 +152,7 @@ COMPUTER_TOOLS = [
           "Launch one allowlisted Windows diagnostic or settings application without elevation or shell execution.",
           {"app": {"type": "string", "enum": sorted(APP_COMMANDS)}}, ["app"]),
     _tool("computer_screenshot",
-          "Capture the visible local desktop only after explicit consent in the latest user turn using this exact phrase: Разрешаю сделать снимок экрана и передать его ChatGPT для анализа. The image may include personal information."),
+          "Capture the visible local desktop when the current user task directly requests a screenshot. The image may include personal information."),
     _tool("computer_ui_windows",
           "List visible top-level desktop windows by title for local UI navigation. No window contents or input values are read."),
     _tool("computer_ui_controls",
@@ -168,7 +168,7 @@ COMPUTER_TOOLS = [
     _tool("computer_defender_events",
           "Read recent Microsoft-Windows-Windows Defender operational events for scan completion and threat detections. Read-only."),
     _tool("computer_defender_scan",
-          "Start a Microsoft Defender quick or full scan. Requires an explicit user instruction in the current conversation; full scans require explicit full-scan authorization. The scan can increase CPU/disk load.",
+          "Start a Microsoft Defender quick or full scan when the current user task directly requests a scan. Full scans are selected only when the user explicitly asks for a full scan. The scan can increase CPU/disk load.",
           {"scan_type": {"type": "string", "enum": ["quick", "full"]}}, ["scan_type"]),
     _tool("computer_defender_scan_status",
           "Check the locally started Defender scan process and recent Defender operational events. Read-only."),
@@ -187,13 +187,13 @@ COMPUTER_TOOLS = [
           "Show metadata for one exact winget package ID from the configured winget source. Read-only.",
           {"package_id": STRING}, ["package_id"]),
     _tool("computer_package_install",
-          "Install one exact winget package ID in user scope only. Requires explicit approval of the exact package ID in the current or immediately preceding user turn. No elevation is requested.",
+          "Install one exact winget package ID in user scope only when the current user task requests installation. No elevation is requested; package identity is rechecked immediately before install.",
           {"package_id": STRING}, ["package_id"]),
     _tool("computer_archive_inspect",
           "Inspect ZIP or TAR archive members without extracting. Rejects unsafe paths, links and oversized archives.",
           {"path": STRING}, ["path"]),
     _tool("computer_archive_extract",
-          "Safely extract a ZIP or TAR archive into an existing approved destination. Rejects traversal, links, overwrites and oversized archives. Requires explicit approval of the exact source and destination paths.",
+          "Safely extract a ZIP or TAR archive into an existing approved destination when the current user task requests extraction. Rejects traversal, links, overwrites and oversized archives.",
           {"path": STRING, "destination": STRING}, ["path", "destination"]),
     _tool("computer_plan_file_organization",
           "Create a dry-run plan for sorting direct files from one approved folder into an existing destination by extension, file type or year-month. No files are moved.",
@@ -201,7 +201,7 @@ COMPUTER_TOOLS = [
            "group_by": {"type": "string", "enum": ["extension", "file_type", "year_month"]}},
           ["source", "destination", "group_by"]),
     _tool("computer_apply_file_organization",
-          "Move files according to a previously previewed organization plan. Never overwrites. Requires explicit approval of exact source, destination and grouping.",
+          "Move files according to a previously previewed organization plan when the current user task requests organization. Never overwrites.",
           {"source": STRING, "destination": STRING,
            "group_by": {"type": "string", "enum": ["extension", "file_type", "year_month"]}},
           ["source", "destination", "group_by"]),
@@ -1125,42 +1125,16 @@ def _latest_user_and_previous_assistant(messages):
 
 
 def _explicit_action_approved(messages, action_pattern: str, identifiers: list[str]) -> bool:
-    latest, previous = _latest_user_and_previous_assistant(messages)
-    # Fail closed on explicit negation, even if the sentence also contains an approval verb.
+    """A direct task instruction authorizes bounded routine actions; no second confirmation turn."""
+    latest, _ = _latest_user_and_previous_assistant(messages)
     if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
         return False
-    simple_yes = bool(re.fullmatch(
-        r"\s*(да|yes|подтверждаю|разрешаю|выполняй)[!. ]*\s*",
-        latest, flags=re.I,
-    ))
-    context = latest + (" " + previous if simple_yes else "")
-    if not re.search(action_pattern, context, flags=re.I):
-        return False
-    if not re.search(
-        r"(?i)(разрешаю|подтверждаю|выполняй|запускай|установи|распакуй|"
-        r"перемести|организуй|install|extract|move|organize|yes|да)",
-        latest,
-    ):
-        return False
-    normalized = context.casefold().replace("/", "\\")
-    return all(
-        isinstance(value, str) and value.strip()
-        and value.casefold().replace("/", "\\") in normalized
-        for value in identifiers
-    )
+    return bool(re.search(action_pattern, latest, flags=re.I))
 
 
 def _package_install(package_id: str, user_messages) -> dict:
     _windows_only()
     package_id = _valid_package_id(package_id)
-    if not _explicit_action_approved(
-        user_messages, r"(установ|install)", [package_id]
-    ):
-        return {
-            "ok": False, "approval_required": True,
-            "package_id": package_id,
-            "required_user_confirmation": f"Напишите: «Разрешаю установить пакет {package_id} из источника winget в область текущего пользователя».",
-        }
     # Resolve the exact package from the selected source immediately before install.
     details = _package_details(package_id)
     if not details.get("ok"):
@@ -1252,14 +1226,11 @@ def _archive_extract(path_raw: str, destination_raw: str, user_messages) -> dict
     destination = _resolve_local_path(destination_raw)
     if not path.is_file() or not destination.is_dir():
         raise ValueError("archive_source_or_destination_invalid")
-    if not _explicit_action_approved(
-        user_messages, r"(распак|извлеч|extract|unpack)",
-        [str(path), str(destination)],
-    ):
+    if not _explicit_action_approved(user_messages, r"(распак|извлеч|extract|unpack)", [str(path), str(destination)]):
         return {
-            "ok": False, "approval_required": True,
+            "ok": False, "task_intent_required": True,
             "source": str(path), "destination": str(destination),
-            "required_user_confirmation": f"Напишите: «Разрешаю распаковать {path} в {destination}».",
+            "error": "archive_extraction_not_requested",
         }
     if zipfile.is_zipfile(path):
         with zipfile.ZipFile(path) as archive:
@@ -1406,13 +1377,10 @@ def _apply_organization(source_raw: str, destination_raw: str, group_by: str,
         [source, destination, group_by],
     ):
         return {
-            "ok": False, "approval_required": True,
+            "ok": False, "task_intent_required": True,
             "source": source, "destination": destination, "group_by": group_by,
             "preview": plan["moves"][:30],
-            "required_user_confirmation": (
-                f"Напишите: «Разрешаю переместить файлы из {source} в {destination} "
-                f"с группировкой {group_by}»."
-            ),
+            "error": "file_organization_not_requested",
         }
     completed, failed, skipped = [], [], []
     for item in plan["moves"]:
@@ -1454,10 +1422,7 @@ def extract_user_computer_approvals(messages) -> set[str]:
     if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
         return set()
     approvals = set()
-    if re.fullmatch(
-        r"\s*разрешаю\s+(?:сделать|снять)\s+(?:скриншот|снимок)\s+экрана\s+и\s+передать\s+(?:его\s+)?chatgpt\s+для\s+анализа[.! ]*\s*",
-        latest, flags=re.I,
-    ):
+    if re.search(r"(?i)(?:скриншот|снимок экрана|screenshot|capture screen)", latest):
         approvals.add("computer_screenshot")
     previous_assistant = ""
     for index in range(latest_user_index - 1, -1, -1):
@@ -1465,33 +1430,25 @@ def extract_user_computer_approvals(messages) -> set[str]:
         if isinstance(item, dict) and item.get("role") == "assistant":
             previous_assistant = str(item.get("content") or "").casefold()
             break
-    affirmative = bool(re.search(
-        r"\b(разрешаю|подтверждаю|запускай|запусти|проведи|выполни|начинай|"
-        r"run|start|perform|launch|authorize|confirm)\b", latest
+    scan_context = latest
+    if re.fullmatch(r"\s*(да|yes|подтверждаю|разрешаю)[!. ]*\s*", latest):
+        for index in range(latest_user_index - 1, -1, -1):
+            row = messages[index]
+            if isinstance(row, dict) and row.get("role") == "assistant":
+                scan_context += " " + str(row.get("content") or "").casefold()
+                break
+    scan_intent = bool(re.search(
+        r"(?:проверь|провер\w*|запусти|запустить|выполни|сканир|scan|run|start)"
+        r".{0,50}(?:defender|антивирус|вирус|защит|malware)|"
+        r"(?:defender|антивирус|вирус|malware).{0,50}(?:проверь|провер|скан|scan)",
+        scan_context,
     ))
-    if not affirmative and re.fullmatch(r"\s*(да|yes|подтверждаю|разрешаю)[!. ]*\s*", latest):
-        affirmative = bool(re.search(
-            r"(defender|антивирус|вирус|полную проверку|быструю проверку|scan)",
-            previous_assistant,
-        ))
-    if not affirmative:
+    if not scan_intent:
         return approvals
-    context = latest + " " + previous_assistant
-    if not re.search(r"(defender|антивирус|вирус|защит[аы]|malware)", context):
-        return approvals
-    affirmative_only = bool(re.fullmatch(
-        r"\s*(да|yes|подтверждаю|разрешаю)[!. ]*\s*", latest
-    ))
-    scan_context = latest + (" " + previous_assistant if affirmative_only else "")
     if re.search(r"(полную|полный|full)\s*(провер|скан|scan)", scan_context):
         approvals.add("defender_full_scan")
-        return approvals
-    if re.search(r"(быструю|быстрый|quick)\s*(провер|скан|scan)", scan_context):
+    else:
         approvals.add("defender_quick_scan")
-        return approvals
-    if re.search(r"(провер|скан|scan)", latest):
-        approvals.add("defender_quick_scan")
-        return approvals
     return approvals
 
 
@@ -1501,13 +1458,8 @@ def _start_defender_scan(scan_type: str, approved_actions: set[str]) -> dict:
         raise ValueError("defender_scan_type_invalid")
     required = "defender_full_scan" if scan_type == "full" else "defender_quick_scan"
     if required not in approved_actions:
-        phrase = (
-            "Напишите: «Разрешаю полную проверку Microsoft Defender»."
-            if scan_type == "full" else
-            "Напишите: «Разрешаю быструю проверку Microsoft Defender»."
-        )
-        return {"ok": False, "approval_required": True, "scan_type": scan_type,
-                "required_user_confirmation": phrase}
+        return {"ok": False, "task_intent_required": True, "scan_type": scan_type,
+                "error": "defender_scan_not_requested"}
     exe = _find_mpcmdrun()
     if exe is None:
         return {"ok": False, "error": "defender_mpcmdrun_not_found"}
@@ -1721,8 +1673,8 @@ def computer_control_call(name: str, args: dict, *, user_messages=None) -> tuple
         if name == "computer_screenshot":
             approved = extract_user_computer_approvals(user_messages or [])
             if "computer_screenshot" not in approved:
-                return {"ok": False, "approval_required": True,
-                        "required_user_confirmation": "Напишите: «Разрешаю сделать снимок экрана и передать его ChatGPT для анализа»."}, True
+                return {"ok": False, "task_intent_required": True,
+                        "error": "screenshot_not_requested"}, True
             result = _screenshot()
             return result, not bool(result.get("ok"))
         if name == "computer_ui_windows":

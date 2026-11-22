@@ -27,12 +27,14 @@ try:
     from .research_web import RESEARCH_WEB_TOOLS, research_web_call
     from .computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
     from .github_tools import GITHUB_TOOLS, GITHUB_NAMES, github_call
+    from .github_write_tools import GITHUB_WRITE_TOOLS, GITHUB_WRITE_NAMES, github_write_call
 except ImportError:
     from browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from developer_tools import SOURCE
     from research_web import RESEARCH_WEB_TOOLS, research_web_call
     from computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
     from github_tools import GITHUB_TOOLS, GITHUB_NAMES, github_call
+    from github_write_tools import GITHUB_WRITE_TOOLS, GITHUB_WRITE_NAMES, github_write_call
 
 
 try:
@@ -56,14 +58,14 @@ _EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 
 MAX_BROWSER_SESSIONS = 4
 BROWSER_SESSION_IDLE_SECONDS = 900
-EXPLICIT_ONLY_TOOLS = frozenset({"terminal_run"})
+EXPLICIT_ONLY_TOOLS = frozenset()  # Full local tool pool is exposed in automatic mode.
 
 _TOOL_NAMES = frozenset(
     item["name"] for item in BROWSER_CONTROL_TOOLS
     if item["name"] != "browser_submit"
 ) | frozenset(item["name"] for item in RESEARCH_WEB_TOOLS) | {
     "terminal_run", "terminal_status",
-} | COMPUTER_TOOL_NAMES | GITHUB_NAMES
+} | COMPUTER_TOOL_NAMES | GITHUB_NAMES | GITHUB_WRITE_NAMES
 
 # Composer tool bundles. Empty selection means automatic access to the full
 # catalog; an explicit selection exposes only the chosen groups to the model.
@@ -78,7 +80,7 @@ TOOL_GROUPS = (
     },
     {
         "id": "terminal", "label": "Терминал Windows", "icon": "terminal",
-        "description": "CMD, Windows PowerShell 5.1 и PowerShell 7 для локальной работы. terminal_run показывается только при явном выборе этой группы; выполнение идёт с правами процесса Cybernova, без скрытого повышения привилегий.",
+        "description": "CMD, Windows PowerShell 5.1 и PowerShell 7 для локальной работы. Доступны автоматически; выполнение идёт с правами процесса Cybernova, без скрытого повышения привилегий.",
     },
     {
         "id": "web", "label": "Интернет / Research", "icon": "search",
@@ -102,7 +104,7 @@ TOOL_GROUPS = (
     },
     {
         "id": "github", "label": "GitHub", "icon": "git-branch",
-        "description": "Поиск репозиториев, ветки, коммиты, Issues, Pull Requests и GitHub Actions. Только чтение; изменения через отдельное подтверждение.",
+        "description": "Полный доступ к выбранным репозиториям: файлы, ветки, коммиты, Issues, Pull Requests, Releases, Actions, настройки и collaborators через GitHub API. Обычная разработка выполняется автономно; удаление и администрирование — только по прямому поручению.",
     },
     {
         "id": "mcp", "label": "MCP / прочее", "icon": "plug",
@@ -272,6 +274,7 @@ def build_tool_catalog() -> list[dict]:
     rows.extend(_convert_mcp_tool(item) for item in RESEARCH_WEB_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in COMPUTER_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in GITHUB_TOOLS)
+    rows.extend(_convert_mcp_tool(item) for item in GITHUB_WRITE_TOOLS)
     return rows
 
 
@@ -573,7 +576,7 @@ class GPTToolRuntime:
         """Auto mode omits tools that require an explicit group selection."""
         selected = set(normalize_tool_groups(groups))
         rows = filter_tool_rows(self.tools, groups)
-        if "terminal" not in selected:
+        if "terminal" not in selected and EXPLICIT_ONLY_TOOLS:
             rows = [item for item in rows if item["name"] not in EXPLICIT_ONLY_TOOLS]
         return rows
 
@@ -629,6 +632,8 @@ class GPTToolRuntime:
         try:
             if name in GITHUB_NAMES:
                 return github_call(name, args)
+            if name in GITHUB_WRITE_NAMES:
+                return github_write_call(name, args, user_messages=user_messages)
             # Browser operations use their own per-conversation lock and worker
             # thread. They never hold the runtime-wide lock while Playwright runs.
             if name.startswith("browser_"):

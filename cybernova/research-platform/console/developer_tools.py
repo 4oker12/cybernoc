@@ -2,8 +2,9 @@
 
 All work happens in a dedicated Git worktree per durable task; never edit the
 running console checkout. Model-controlled test commands are executed without
-root privileges. Publishing/updating remote refs requires the agent's existing
-one-shot human approval workflow. The owner configures Git write credentials.
+root privileges. Task-related branch pushes and Pull Request creation are
+autonomous when Git write credentials are configured; no per-step approval
+workflow is used.
 """
 from __future__ import annotations
 
@@ -64,19 +65,20 @@ DEV_TOOLS = [
           {"pattern": {"type": "string", "description": "unittest test filename pattern, default test_*.py"}}),
     _tool("dev_commit", "Commit the current task worktree changes onto my own Qwen branch.",
           {"message": {"type": "string"}}, ["message"]),
-    _tool("dev_command", "Run custom argv command in the task worktree, without shell, as unprivileged user. Requires explicit owner approval.",
+    _tool("dev_command", "Run custom argv command in the task worktree, without shell, as unprivileged user. Runs automatically when needed for the current coding task.",
           {"argv": {"type": "array", "items": {"type": "string"}},
            "timeout": {"type": "integer"}}, ["argv"]),
-    _tool("dev_push", "Push only my Qwen task branch to origin using configured write credentials. Requires owner approval.",
+    _tool("dev_push", "Push only my Qwen task branch to origin using configured write credentials. No force-push; automatic for the current coding task.",
           {}),
-    _tool("dev_open_pr", "Open GitHub PR from my pushed branch into selected base using gh CLI and configured credentials. Requires owner approval.",
+    _tool("dev_open_pr", "Open GitHub PR from my pushed branch into selected base using gh CLI and configured credentials. Automatic after tests and push.",
           {"title": {"type": "string"}, "body": {"type": "string"},
            "base": {"type": "string"}}, ["title", "body"]),
 ]
 DEV_NAMES = frozenset(t["name"] for t in DEV_TOOLS)
 DEV_AUTOMATIC = frozenset({
     "dev_workspace", "dev_list", "dev_read", "dev_search",
-    "dev_edit", "dev_delete", "dev_move", "dev_diff", "dev_test", "dev_commit"
+    "dev_edit", "dev_delete", "dev_move", "dev_diff", "dev_test", "dev_commit",
+    "dev_command", "dev_push", "dev_open_pr"
 })
 
 
@@ -340,11 +342,21 @@ def dev_call(name, args, task_id):
         return {"branch": branch, "commit": sha, **result}
     if name == "dev_push":
         key = os.environ.get("CYBERNOVA_DEV_WRITE_KEY", "")
-        if not key or not Path(key).is_file():
-            raise DeveloperError("git_write_key_not_configured")
-        ssh = "ssh -i " + key + " -o BatchMode=yes -o IdentitiesOnly=yes"
-        return {"branch": branch, **_run(["git", "push", "-u", "origin", branch],
-                         cwd=root, timeout=90, env={"GIT_SSH_COMMAND": ssh})}
+        if key and Path(key).is_file():
+            ssh = "ssh -i " + key + " -o BatchMode=yes -o IdentitiesOnly=yes"
+            pushed = _run(["git", "push", "-u", "origin", branch],
+                          cwd=root, timeout=90, env={"GIT_SSH_COMMAND": ssh})
+        elif shutil.which("gh"):
+            auth = _run(["gh", "auth", "status", "--hostname", "github.com"],
+                        cwd=root, timeout=12)
+            if not auth.get("ok"):
+                raise DeveloperError("github_cli_auth_required_run_gh_auth_login")
+            pushed = _run(["git", "-c", "credential.helper=", "-c",
+                           "credential.helper=!gh auth git-credential",
+                           "push", "-u", "origin", branch], cwd=root, timeout=90)
+        else:
+            raise DeveloperError("github_write_credentials_not_configured")
+        return {"branch": branch, **pushed}
     if name == "dev_open_pr":
         if not shutil.which("gh"):
             raise DeveloperError("github_cli_not_installed")
@@ -354,9 +366,14 @@ def dev_call(name, args, task_id):
             raise DeveloperError("invalid_pr_description")
         if not isinstance(base, str) or not re.fullmatch(r"[A-Za-z0-9/_-]{1,100}", base):
             raise DeveloperError("invalid_base_ref")
-        token = os.environ.get("CYBERNOVA_DEV_GITHUB_TOKEN")
+        token = (os.environ.get("CYBERNOVA_DEV_GITHUB_TOKEN")
+                 or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
         if not token:
-            raise DeveloperError("github_write_token_not_configured")
+            auth = _run(["gh", "auth", "token", "--hostname", "github.com"],
+                        cwd=root, timeout=12)
+            token = auth.get("stdout", "").strip() if auth.get("ok") else ""
+        if not token:
+            raise DeveloperError("github_cli_auth_required_run_gh_auth_login")
         return {"branch": branch, **_run(["gh", "pr", "create", "--head", branch,
                  "--base", base, "--title", title, "--body", body], cwd=root,
                  timeout=40, env={"GH_TOKEN": token})}
