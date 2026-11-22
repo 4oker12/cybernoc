@@ -318,7 +318,8 @@ class WorkItemStore:
     def record_usage(self, task_id: str, item_id: str,
                      phase: str, usage: dict) -> None:
         """Record only provider-reported token counts, never inferred prices."""
-        if phase not in {"research", "review"} or not isinstance(usage, dict):
+        if phase not in {"research", "review"} or not isinstance(usage, dict) \
+                or usage.get("available") is not True:
             return
         summary = {}
         for key in ("input_tokens", "output_tokens", "total_tokens", "requests"):
