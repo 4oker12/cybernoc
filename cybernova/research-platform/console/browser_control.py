@@ -1,9 +1,9 @@
-"""Interactive, isolated Chromium browser tools for Account GPT.
+"""Interactive, isolated Chromium browser tools for Cybernova model agents.
 
-The browser uses a dedicated local profile, never the user's personal Chrome
-profile. The user signs in manually; browser cookies are not returned to the
-model. Private hosts are reachable only when explicitly named in the task.
-Downloads and unapproved form submissions are blocked.
+Each model runtime supplies its own dedicated local profile, never the user's
+personal Chrome profile. The user signs in manually; browser cookies are not
+returned to the model. Private hosts require explicit task scope. Downloads
+and unapproved form submissions are blocked.
 """
 from __future__ import annotations
 
