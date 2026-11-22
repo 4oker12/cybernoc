@@ -783,6 +783,13 @@ class Agent:
                                 "Реальный инструмент " + chosen +
                                 " уже вызван контроллером. Отдели полученные факты "
                                 "от ошибок и гипотез. Не утверждай, что инструментов нет."})
+                            context.append({
+                                "role": "assistant", "content": "",
+                                "tool_calls": [{
+                                    "id": "cybernova_controller_" + chosen,
+                                    "function": {"name": chosen, "arguments": chosen_args},
+                                }],
+                            })
                             context.append({"role": "tool", "tool_name": chosen,
                                             "content": serialized})
                             continue
@@ -811,6 +818,13 @@ class Agent:
                             "Если нужен конкретный исходный файл, вызывай dev_read; "
                             "если нужно менять код, используй dev_edit/dev_test. "
                             "Не утверждай, что у тебя нет доступа к репозиторию."})
+                        context.append({
+                            "role": "assistant", "content": "",
+                            "tool_calls": [{
+                                "id": "cybernova_controller_dev_list",
+                                "function": {"name": "dev_list", "arguments": {"limit": 100}},
+                            }],
+                        })
                         context.append({"role": "tool", "tool_name": "dev_list",
                                         "content": json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]})
                         continue
