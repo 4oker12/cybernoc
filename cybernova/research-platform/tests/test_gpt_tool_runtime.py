@@ -40,6 +40,24 @@ class GPTToolRuntimeTests(unittest.TestCase):
             runtime.close()
             self.assertTrue(second.closed)
 
+    def test_agent_passes_server_owned_task_id_to_local_tool_runtime(self):
+        from console.agent import Agent
+        class FakeRuntime:
+            tool_map = {"browser_tabs": {}}
+            def __init__(self):
+                self.received = None
+            def call(self, name, args, **kwargs):
+                self.received = kwargs.get("session_id")
+                return {"ok": True, "tabs": []}, False
+        runtime = FakeRuntime()
+        agent = Agent(ollama=object(), local_tool_runtime=runtime)
+        result, failed = agent._call_registered_tool(
+            "browser_tabs", {}, session_id="cn_server_owned_task_123456",
+        )
+        self.assertFalse(failed)
+        self.assertTrue(result["ok"])
+        self.assertEqual(runtime.received, "cn_server_owned_task_123456")
+
     def test_tool_catalog_is_separate_and_excludes_unapproved_submit(self):
         tools = build_tool_catalog()
         names = {item["name"] for item in tools}
