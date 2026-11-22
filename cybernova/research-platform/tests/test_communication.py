@@ -185,8 +185,9 @@ class GatewayTests(unittest.TestCase):
         self.assertIn("dev_workspace", names)
         self.assertIn("dev_open_pr", names)
         self.assertTrue(set(names[:len(COMMUNICATION_TOOLS)]) <= REVIEWED_TOOLS)
-        self.assertNotIn("dev_push", REVIEWED_TOOLS)
-        self.assertNotIn("dev_command", REVIEWED_TOOLS)
+        self.assertIn("dev_push", REVIEWED_TOOLS)
+        self.assertIn("dev_command", REVIEWED_TOOLS)
+        self.assertIn("dev_open_pr", REVIEWED_TOOLS)
         self.assertEqual(
             [x["function"]["name"] for x in model_tools(client.initialize())], names
         )

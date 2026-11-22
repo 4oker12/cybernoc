@@ -1422,7 +1422,7 @@ def extract_user_computer_approvals(messages) -> set[str]:
     if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
         return set()
     approvals = set()
-    if re.search(r"(?i)(?:скриншот|снимок экрана|screenshot|capture screen)", latest):
+    if _explicit_action_approved(messages, r"(?:скриншот|снимок экрана|screenshot|capture screen)", []):
         approvals.add("computer_screenshot")
     previous_assistant = ""
     for index in range(latest_user_index - 1, -1, -1):
@@ -1430,6 +1430,8 @@ def extract_user_computer_approvals(messages) -> set[str]:
         if isinstance(item, dict) and item.get("role") == "assistant":
             previous_assistant = str(item.get("content") or "").casefold()
             break
+    if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
+        return approvals
     scan_context = latest
     if re.fullmatch(r"\s*(да|yes|подтверждаю|разрешаю)[!. ]*\s*", latest):
         for index in range(latest_user_index - 1, -1, -1):

@@ -80,7 +80,9 @@ class GPTToolRuntimeTests(unittest.TestCase):
             {row["name"] for row in runtime.mcp_tools(["computer"])},
             COMPUTER_TOOL_NAMES,
         )
-        self.assertEqual({row["name"] for row in runtime.mcp_tools(["github"])}, GITHUB_NAMES)
+        from console.github_write_tools import GITHUB_WRITE_NAMES
+        self.assertEqual({row["name"] for row in runtime.mcp_tools(["github"])},
+                         GITHUB_NAMES | GITHUB_WRITE_NAMES)
         result, failed = runtime.call(
             "terminal_status", {}, enabled_groups=["browser"]
         )
@@ -344,17 +346,18 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertTrue(any("RuntimeError" in row for row in captured.output))
         runtime.close()
 
-    def test_terminal_run_requires_explicit_terminal_group_selection(self):
+    def test_terminal_run_is_available_in_automatic_mode(self):
         runtime = GPTToolRuntime()
-        self.assertNotIn("terminal_run", {row["name"] for row in runtime.mcp_tools()})
+        self.assertIn("terminal_run", {row["name"] for row in runtime.mcp_tools()})
+        self.assertEqual(runtime.explicit_only_tools, ())
         result, failed = runtime.call(
             "terminal_run", {
                 "command": "whoami", "shell": "cmd", "cwd": "",
                 "timeout_seconds": 30, "max_output_chars": 20000,
-            }
+            }, enabled_groups=["browser"]
         )
         self.assertTrue(failed)
-        self.assertEqual(result["error"], "terminal_run_requires_explicit_group_selection")
+        self.assertEqual(result["error"], "tool_group_not_enabled")
 
     def test_unknown_or_unapproved_tools_are_rejected(self):
         runtime = GPTToolRuntime()

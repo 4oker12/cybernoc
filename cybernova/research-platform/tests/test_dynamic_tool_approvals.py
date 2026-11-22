@@ -67,7 +67,7 @@ def tool_call(name="dns_research", args=None):
 class DynamicToolPolicyTests(unittest.TestCase):
     def test_model_sees_new_tools_without_name_allowlist(self):
         self.assertEqual(model_tools([NEW])[0]["function"]["name"], "dns_research")
-        self.assertIn("Requires user approval", model_tools([NEW])[0]["function"]["description"])
+        self.assertIn("Autonomous when relevant", model_tools([NEW])[0]["function"]["description"])
 
     def test_invalid_names_and_duplicates_ignored(self):
         found = discovered_tools([NEW, NEW, {"name": "x;rm -rf", "inputSchema": {}}])
@@ -100,32 +100,25 @@ class DynamicToolPolicyTests(unittest.TestCase):
     def test_schema_fingerprint_changes_with_definition(self):
         self.assertNotEqual(schema_digest(NEW), schema_digest(CHANGED))
 
-    def test_new_tool_proposal_no_execution(self):
+    def test_new_read_only_tool_runs_without_per_call_approval(self):
         mcp = FakeMCP()
-        qwen = FakeQwen([tool_call(), {"role": "assistant", "content": "Нужен допуск"}])
+        qwen = FakeQwen([tool_call(), {"role": "assistant", "content": "DNS проверен"}])
         result = Agent(qwen, lambda: mcp).run([], "Проверь DNS")
-        self.assertEqual(mcp.calls, [])
-        self.assertEqual(result["tool_calls"], 0)
-        self.assertEqual(result["events"][0]["type"], "approval_required")
-        self.assertEqual(result["events"][0]["execution"], "not_started")
-        self.assertEqual(result["approval_requests"][0]["tool"], "dns_research")
-
-    def test_approved_tool_calls_exact_args_once(self):
-        mcp = FakeMCP()
-        qwen = FakeQwen([tool_call(), {"role": "assistant", "content": "Нужен допуск"},
-                         {"role": "assistant", "content": "По результату: тест"}])
-        agent = Agent(qwen, lambda: mcp)
-        response = agent.run([], "Исследуй DNS")
-        proposal = response["approval_requests"][0]
-        result = agent.execute_approved(proposal, [
-            {"role": "user", "content": "Исследуй DNS"},
-            {"role": "assistant", "content": response["answer"]},
-        ])
         self.assertEqual(mcp.calls, [("dns_research", {"domain": "example.test"})])
         self.assertEqual(result["tool_calls"], 1)
-        self.assertEqual(result["selected_by"], "user_approved")
+        self.assertEqual(result["events"][0]["type"], "tool_result")
+        self.assertEqual(result["approval_requests"], [])
+
+    def test_task_tool_calls_execute_once_with_exact_schema_arguments(self):
+        mcp = FakeMCP()
+        qwen = FakeQwen([tool_call(), {"role": "assistant", "content": "По результату: тест"}])
+        result = Agent(qwen, lambda: mcp).run([], "Исследуй DNS")
+        self.assertEqual(mcp.calls, [("dns_research", {"domain": "example.test"})])
+        self.assertEqual(result["tool_calls"], 1)
+        self.assertEqual(result["selected_by"], "native")
         self.assertIn("тест", result["answer"])
-        self.assertFalse(qwen.inputs[-1]["tools"])
+        self.assertEqual(result["approval_requests"], [])
+        self.assertTrue(qwen.inputs[-1]["tools"])
 
     def test_expired_approval_never_executes(self):
         mcp = FakeMCP()
