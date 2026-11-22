@@ -18,6 +18,10 @@ try:
     from .local_tools_profile import LOCAL_TOOLS_PROFILE
 except ImportError:
     from local_tools_profile import LOCAL_TOOLS_PROFILE
+try:
+    from .operational_contract import OPERATIONAL_CONTRACT
+except ImportError:
+    from operational_contract import OPERATIONAL_CONTRACT
 
 
 MAX_TOOL_ROUNDS = 24
@@ -324,6 +328,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
         "Сетевые цели проверяй только в пределах, явно заданных пользователем. "
         "Учитывай историю текущего GPT-диалога и уже полученные результаты."
         + "\n\n" + LOCAL_TOOLS_PROFILE
+        + "\n\n" + OPERATIONAL_CONTRACT
         + (("\n\n" + user_context[:8500]) if user_context else "")
         + (("\n\n" + profile_instructions[:12500]) if profile_instructions else "")
     )

@@ -7,6 +7,7 @@ on:
       - chatgpt/browser-intelligence
     paths:
       - cybernova/research-platform/**
+      - AGENTS.md
       - .github/workflows/cybernova-windows-readonly-smoke.yml
 
 concurrency:
