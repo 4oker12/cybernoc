@@ -1406,6 +1406,9 @@ function renderCollabRun(run){
   $("collabForm").hidden=true;
   $("collabActiveBar").hidden=false;
   const active=run.state==="active",paused=run.state==="paused";
+  const writable=active||paused;
+  $("messageInput").disabled=!writable;
+  $("sendButton").disabled=!writable;
   $("collabStop").hidden=!active;
   $("collabResume").hidden=!paused||state.collabLoopTasks.has(run.task_id);
   $("collabFinish").hidden=!(active||paused);
@@ -1442,8 +1445,11 @@ async function refreshCollabRuns(){
       const button=node("button","task-item"+(run.task_id===state.collabRun?.task_id?" selected":""));
       button.type="button";
       button.append(node("span","task-title",compactPreview(run.goal||"Совместная задача",58)));
+      const stateLabel=run.state==="active"?"В работе":run.state==="paused"?"Пауза":
+        run.state==="blocked"?"Требует внимания":run.state==="completed"?"Завершено":run.state;
+      button.append(node("span","task-preview",stateLabel+" · "+run.step+" сообщений"));
       if(run.last_preview)button.append(node("span","task-preview",compactPreview(run.last_preview,90)));
-      button.title=(run.goal||"Совместная задача")+" · "+run.state+" · "+run.step+" сообщений";
+      button.title=(run.goal||"Совместная задача")+" · "+stateLabel+" · "+run.step+" сообщений";
       button.addEventListener("click",()=>openCollabRun(run.task_id));
       list.append(button);
     }
@@ -1557,6 +1563,8 @@ async function newCollab(){
   $("collabActiveBar").hidden=true;
   $("collabLog").replaceChildren();
   $("collabGoal").value="";
+  $("messageInput").disabled=true;
+  $("sendButton").disabled=true;
   void refreshCollabRuns();
 }
 function init(){
