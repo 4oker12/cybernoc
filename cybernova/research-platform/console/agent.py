@@ -604,8 +604,9 @@ class Agent:
                             safe_result, failed = self._call_registered_tool(
                                 name, args, mcp=mcp,
                                 authorized_targets=authorized_targets,
-                                user_messages=task_messages,
+                                user_messages=approval_messages,
                                 enabled_groups=selected_groups or None,
+                                session_id=session_id,
                             )
                             executed += 1
                         elif name in REVIEWED_TOOLS:
