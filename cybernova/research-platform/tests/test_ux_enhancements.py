@@ -106,6 +106,14 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn('проверь и нажми Enter', app)
         self.assertIn('ничего не отправляется автоматически', html.lower())
 
+    def test_readable_dark_light_contrast_and_scoped_typography(self):
+        css = (ROOT / "console/static/styles.css").read_text(encoding="utf-8")
+        self.assertIn("Cybernova contrast and type readability pass", css)
+        self.assertIn(':root[data-theme="dark"] .message-body .md-content', css)
+        self.assertIn(':root[data-theme="light"] .message-body .md-content', css)
+        self.assertIn(".sidebar .task-title{font-size:13.5px", css)
+        self.assertIn(".tool-group-description{font-size:11px", css)
+
     def test_chat_composer_exposes_diagnostics_download_and_sidebar_lists_scroll(self):
         html = (ROOT / "console/static/index.html").read_text(encoding="utf-8")
         css = (ROOT / "console/static/styles.css").read_text(encoding="utf-8")

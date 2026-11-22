@@ -661,3 +661,93 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
     min-height:32px;padding:6px 9px;font-size:10px;
   }
 }
+
+
+/* Cybernova contrast and type readability pass: both saved themes. */
+:root[data-theme="dark"]{
+  --bg:#19231e;--sidebar:#121b17;--panel:#26362c;
+  --text:#f4faf6;--muted:#c2d2c7;--line:#50675a;
+  --hover:#30483a;--accent:#75d9a7;
+}
+:root[data-theme="light"]{
+  --bg:#f0f5f2;--sidebar:#fff;--panel:#fff;
+  --text:#172e25;--muted:#4a6256;--line:#bfd0c5;
+  --hover:#e7f2eb;--accent:#137a52;
+}
+body{font-size:calc(15.5px * var(--font-scale,1));line-height:1.58}
+.sidebar .sidebar-label{font-size:12px;color:var(--muted);font-weight:750}
+.sidebar .mode-item{font-size:14px;font-weight:700;line-height:1.45}
+.sidebar .mode-item small{font-size:11px;color:var(--muted);font-weight:550}
+.sidebar .task-item{min-height:46px;border:1px solid var(--line);border-radius:11px;padding:10px 11px;margin:2px 0}
+.sidebar .task-title{font-size:13.5px;font-weight:650;line-height:1.4}
+.sidebar .task-preview{font-size:12px;line-height:1.45;color:var(--muted)}
+.sidebar .task-state{font-size:10px;font-weight:600}
+.sidebar .task-item.selected{
+  border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent);
+}
+.model-title,.model-title span{font-weight:750}
+.message-meta{font-size:14px;font-weight:750}
+.message-body,.message-body .md-content,.collab-full .md-content{
+  font-size:calc(15.5px * var(--font-scale,1));line-height:1.7;
+}
+.md-content h2{font-size:21px;line-height:1.4}
+.md-content h3{font-size:17px}
+.md-content h4{font-size:15px}
+.md-table{font-size:13px}
+.composer textarea{font-size:15px;line-height:1.6}
+.composer .paste-output-button,
+.composer .diagnostics-download-button{
+  font-size:12px;font-weight:750;min-height:36px;
+}
+.tool-picker-toggle,.upload-button{font-size:12px;font-weight:650}
+.tool-group-name{font-size:12px}
+.tool-group-description{font-size:11px;line-height:1.5}
+.tool-group-hint,.tool-selection-badge{font-size:10px}
+.token-usage-receipt,.tool-receipt{font-size:11.5px}
+:root[data-theme="dark"] .message-body,
+:root[data-theme="dark"] .message-body .md-content,
+:root[data-theme="dark"] .md-content>p,
+:root[data-theme="dark"] .collab-full{color:#f0f7f2}
+:root[data-theme="dark"] .md-content h2,
+:root[data-theme="dark"] .md-content h3,
+:root[data-theme="dark"] .md-content strong{color:#fff}
+:root[data-theme="dark"] .mode-item.selected{border-color:#86b79c;background:#273c31}
+:root[data-theme="dark"] .sidebar .task-item{background:#1c2922}
+:root[data-theme="dark"] .sidebar .task-item:hover{background:#2a4034}
+:root[data-theme="dark"] .sidebar .task-item.selected{background:#2f4b3b}
+:root[data-theme="dark"] .composer{background:#26392e;border-color:#557060}
+:root[data-theme="dark"] .composer textarea::placeholder{color:#c4d2c8}
+:root[data-theme="dark"] .composer .paste-output-button{
+  background:#314639;border-color:#648371;color:#f5fbf7
+}
+:root[data-theme="dark"] .tool-picker-toggle{
+  background:#314639;color:#f5fbf7;border-color:#648371
+}
+:root[data-theme="light"] .message-body,
+:root[data-theme="light"] .message-body .md-content,
+:root[data-theme="light"] .collab-full{color:#1b3028}
+:root[data-theme="light"] .md-content h2,
+:root[data-theme="light"] .md-content h3,
+:root[data-theme="light"] .md-content strong{color:#142b22}
+:root[data-theme="light"] .sidebar .task-item{background:#f8fbf9}
+:root[data-theme="light"] .sidebar .task-item:hover{background:#e9f3ed}
+:root[data-theme="light"] .sidebar .task-item.selected{background:#e3f1e8}
+:root[data-theme="light"] .composer textarea::placeholder{color:#586a61}
+:root[data-theme="light"] .composer .diagnostics-download-button{
+  background:#dcefe2;border-color:#84b497;color:#145b3e
+}
+:root[data-theme="light"] .composer .paste-output-button{
+  background:#f3f8f4;border-color:#b4cbbb;color:#243b2d
+}
+.composer .paste-output-button:focus-visible,
+.composer .diagnostics-download-button:focus-visible,
+.sidebar .task-item:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media(max-width:680px){
+  .message-body,.message-body .md-content,.collab-full .md-content{
+    font-size:15px;line-height:1.65
+  }
+  .sidebar .task-title{font-size:13px}
+  .composer .paste-output-button,.composer .diagnostics-download-button{
+    font-size:11px;min-height:34px
+  }
+}
