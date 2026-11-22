@@ -1,5 +1,7 @@
 """No-network tests for interactive Chromium controls and request guardrails."""
+import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import sys
 import unittest
@@ -10,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 from console.browser_control import (
     BROWSER_CONTROL_TOOLS, BROWSER_CONTROL_NAMES, BrowserSession,
     HIGH_IMPACT, _redact_text, _safe_url, validate_public_url,
+    _disable_profile_session_restore,
 )
 
 
@@ -74,6 +77,34 @@ class BrowserControlTests(unittest.TestCase):
             self.assertIn(name, deepseek_names)
         self.assertNotIn("browser_submit", gpt_names)
         self.assertNotIn("browser_submit", deepseek_names)
+
+    def test_persistent_profile_disables_tab_restore_without_deleting_login_data(self):
+        with TemporaryDirectory() as temp:
+            profile = Path(temp)
+            default = profile / "Default"
+            default.mkdir()
+            preferences = default / "Preferences"
+            original = {
+                "profile": {"exit_type": "Normal", "name": "Cybernova"},
+                "session": {"restore_on_startup": 5, "startup_urls": ["https://example.org"]},
+                "intl": {"accept_languages": "ru,en"},
+            }
+            preferences.write_text(json.dumps(original), encoding="utf-8")
+            cookies = default / "Cookies"
+            cookies.write_bytes(b"preserve-existing-cookie-database")
+
+            self.assertTrue(_disable_profile_session_restore(profile))
+            updated = json.loads(preferences.read_text(encoding="utf-8"))
+            backup = json.loads(
+                (default / "Preferences.cybernova-backup").read_text(encoding="utf-8")
+            )
+            self.assertEqual(updated["session"]["restore_on_startup"], 1)
+            self.assertEqual(updated["session"]["startup_urls"], ["https://example.org"])
+            self.assertEqual(updated["profile"], original["profile"])
+            self.assertEqual(updated["intl"], original["intl"])
+            self.assertEqual(backup["session"]["restore_on_startup"], 5)
+            self.assertEqual(cookies.read_bytes(), b"preserve-existing-cookie-database")
+            self.assertFalse(_disable_profile_session_restore(profile))
 
     def test_browser_text_redacts_credentials_and_jwts(self):
         value = "api_key=abc12345 Bearer abcdefghijklmnop eyJabcdefghijk.abcdefghijk.abcdefghijk"
