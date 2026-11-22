@@ -43,8 +43,9 @@ _NEWLINES = re.compile(r"[\r\n\x00-\x1f]+")
 def scrub(value: object, limit: int = MAX_TEXT) -> str:
     raw = str(value)
     raw = _URL_QUERY.sub(r"\1?[QUERY-REDACTED]", raw)
-    raw = _SECRET.sub(r"\1[REDACTED]", raw)
+    # Remove full bearer/basic credentials *before* generic key=value masking.
     raw = _BEARER.sub(r"\1 [REDACTED]", raw)
+    raw = _SECRET.sub(r"\1[REDACTED]", raw)
     raw = _OPENAI_KEY.sub("[REDACTED-API-KEY]", raw)
     raw = _PERSONAL.sub(r"\1[USER]", raw)
     return _NEWLINES.sub(" ", raw)[:limit]
