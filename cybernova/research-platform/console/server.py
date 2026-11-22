@@ -36,6 +36,7 @@ try:
     from .safe_terminal import TERMINAL_TOOLS, safe_terminal
     from .research_web import research_web_call
     from .collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
+    from .work_items import WorkItemStore, WorkItemError, MAX_CONCURRENT_ITEMS
     from .gpt_tool_runtime import (
         runtime as gpt_tool_runtime, extract_user_targets,
         normalize_tool_groups, tool_group_summary,
@@ -68,6 +69,7 @@ except ImportError:
     from safe_terminal import TERMINAL_TOOLS, safe_terminal
     from research_web import research_web_call
     from collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
+    from work_items import WorkItemStore, WorkItemError, MAX_CONCURRENT_ITEMS
     from gpt_tool_runtime import (
         runtime as gpt_tool_runtime, extract_user_targets,
         normalize_tool_groups, tool_group_summary,
@@ -173,6 +175,11 @@ def collaboration_store() -> CollaborationStore:
     return CollaborationStore(communication_store())
 
 
+@lru_cache(maxsize=1)
+def work_item_store() -> WorkItemStore:
+    return WorkItemStore(collaboration_store())
+
+
 # Serialize turns per collaboration, not globally. Independent tasks can run in parallel.
 _collaboration_step_locks: dict[str, RLock] = {}
 _collaboration_step_locks_guard = RLock()
@@ -202,6 +209,9 @@ def _record_collaboration_tool_event(task_id: str, event: dict) -> None:
 
 @asynccontextmanager
 async def lifespan(app):
+    # After a process restart, uncertain in-flight tool executions are blocked,
+    # never silently replayed.
+    work_item_store().recover_interrupted()
     worker = None
     if os.environ.get("CYBERNOVA_COMM_WORKER", "1") == "1":
         worker = CommunicationWorker(communication_store())
@@ -369,6 +379,7 @@ class CollaborationStartRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=3000)
     model: str = Field(min_length=1, max_length=160)
     cycles: int = Field(default=5, ge=1, le=12)
+    mode: str = Field(default="dialog", pattern="^(dialog|parallel)$")
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
 
 
@@ -378,6 +389,10 @@ class CollaborationActionRequest(BaseModel):
 
 class CollaborationMessageRequest(CollaborationActionRequest):
     message: str = Field(min_length=1, max_length=10000)
+
+
+class WorkItemRequest(CollaborationActionRequest):
+    item_id: str = Field(min_length=12, max_length=100)
 
 
 class SharedToolRequest(BaseModel):
@@ -443,7 +458,8 @@ def collaboration_start(payload: CollaborationStartRequest):
                 scope = scope_profile(active_session["scope"]["hosts"],
                                       active_session["scope"]["capture_detail"])
         return collaboration_store().create(payload.goal, payload.model,
-                                            payload.cycles, scope=scope)
+                                            payload.cycles, scope=scope,
+                                            mode=payload.mode)
     except (SIWCError, ProfileSettingsError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except (CollaborationError, ValueError, CommunicationError) as exc:
@@ -470,6 +486,7 @@ def collaboration_resume(payload: CollaborationActionRequest):
 def collaboration_finish(payload: CollaborationActionRequest):
     try:
         run = collaboration_store().finish(payload.task_id)
+        work_item_store().cancel_pending(payload.task_id)
         gpt_tool_runtime.close_session(payload.task_id)
         return run
     except (CollaborationError, CommunicationError, ValueError) as exc:
