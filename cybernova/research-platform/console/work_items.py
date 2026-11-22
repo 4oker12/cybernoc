@@ -305,6 +305,32 @@ class WorkItemStore:
                          "Разрешён новый ограниченный запуск подзадачи.")
         return self.get_item(task_id, item_id)
 
+    def recover_task(self, task_id: str) -> dict:
+        """Explicit, fail-closed recovery; no uncertain work item is replayed."""
+        run = self.collab.read(task_id, recover=False)
+        if run["mode"] != "parallel" or run["state"] != "blocked":
+            raise WorkItemError("work_recovery_not_applicable")
+        with self.comm._lock, self.comm._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            inflight = db.execute(
+                "SELECT COUNT(*) FROM collaboration_work_items "
+                "WHERE task_id=? AND state IN ('running','reviewing')",
+                (task_id,),
+            ).fetchone()[0]
+            if inflight:
+                raise WorkItemError("work_recovery_inflight_unknown")
+            db.execute(
+                "UPDATE collaboration_runs SET state='paused',updated_at=? "
+                "WHERE task_id=? AND state IN ('active','blocked','paused')",
+                (_now(), task_id),
+            )
+            db.commit()
+        self.comm.set_state(task_id, "idle")
+        self.comm.append(task_id, "controller", "system",
+                         "Сбой подтверждён. Задача оставлена на паузе; "
+                         "заблокированные подзадачи повторяются только по решению пользователя.")
+        return self.collab.read(task_id, recover=False)
+
     def cancel_pending(self, task_id: str) -> int:
         with self.comm._lock, self.comm._connection() as db:
             db.execute("BEGIN IMMEDIATE")
