@@ -434,12 +434,14 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                 result = {"ok": False, "error": "gpt_tools_not_enabled"}
                 is_error = True
             else:
-                result, is_error = tool_runtime.call(
-                    name, arguments, authorized_targets=authorized_targets,
-                    user_messages=messages,
-                    enabled_groups=enabled_tool_groups,
-                    session_id=session_id,
-                )
+                runtime_kwargs = {
+                    "authorized_targets": authorized_targets,
+                    "user_messages": messages,
+                    "enabled_groups": enabled_tool_groups,
+                }
+                if session_id is not None:
+                    runtime_kwargs["session_id"] = session_id
+                result, is_error = tool_runtime.call(name, arguments, **runtime_kwargs)
             total_calls += 1
             audit_arguments = dict(arguments)
             if name in {"browser_fill", "browser_select"} and "value" in audit_arguments:
