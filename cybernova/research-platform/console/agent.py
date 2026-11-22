@@ -237,11 +237,14 @@ class Agent:
                               authorized_targets=None, user_messages=None,
                               enabled_groups=None, session_id=None):
         if self.local_tool_runtime is not None and name in self.local_tool_runtime.tool_map:
-            result, is_error = self.local_tool_runtime.call(
-                name, args, authorized_targets=authorized_targets,
-                user_messages=user_messages, enabled_groups=enabled_groups,
-                session_id=session_id,
-            )
+            runtime_kwargs = {
+                "authorized_targets": authorized_targets,
+                "user_messages": user_messages,
+                "enabled_groups": enabled_groups,
+            }
+            if session_id is not None:
+                runtime_kwargs["session_id"] = session_id
+            result, is_error = self.local_tool_runtime.call(name, args, **runtime_kwargs)
             if isinstance(result, dict) and isinstance(result.get("image_data_url"), str):
                 # The current DeepSeek/Ollama chat adapter is text-only. Do not
                 # serialize megabytes of base64 into its prompt; use DOM/UIA data.
