@@ -562,6 +562,10 @@ def collaboration_item_step(payload: WorkItemRequest):
                 on_tool_event=persist,
                 # Each subtask owns separate Chromium state even inside one parent.
                 session_id=item["item_id"],
+                trusted_user_messages=[
+                    {"role": "user", "content": run["goal"]},
+                    *[{"role": "user", "content": note} for note in notes],
+                ],
             )
             blocked = bool(result.get("approval_requests")) or any(
                 event.get("type") == "agent_error"
