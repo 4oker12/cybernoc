@@ -176,6 +176,28 @@ context.renderWorkItems('task_parallel',[
 if(byId('collabWorkItems').children.length!==2)
  throw Error('Work item cards were not rendered');
 
+const first=byId('collabWorkItems').children[0];
+const report=first.children.find(child=>child.className==='collab-work-details' &&
+  child.children[0]?.textContent?.startsWith('Результат DeepSeek'));
+if(!report)throw Error('Work item report must be expandable');
+report.open=true;
+report.listeners.toggle();
+context.renderWorkItems('task_parallel',[
+ {item_id:'wi_1',position:0,title:'Audit logs',instructions:'Read safe logs',
+  state:'accepted',depends_on:[],attempt:1,result:'Observed two events.',review:'Accepted'},
+]);
+const refreshed=byId('collabWorkItems').children[0].children.find(
+  child=>child.className==='collab-work-details'&&
+    child.children[0]?.textContent?.startsWith('Результат DeepSeek'));
+if(!refreshed?.open)throw Error('Expanded work report collapsed after status refresh');
+byId('collabStrategy').value='dialog';
+byId('collabStrategy').listeners.change();
+if(byId('collabCyclesLabel').hidden)throw Error('Dialog must offer cycle selector');
+byId('collabStrategy').value='parallel';
+byId('collabStrategy').listeners.change();
+if(!byId('collabCyclesLabel').hidden)
+ throw Error('Parallel planning must hide unused dialog cycle selector');
+
 Promise.resolve().then(async()=>{
  await byId('pasteOutputButton').listeners.click();
  const pasted=byId('messageInput').value;
