@@ -114,7 +114,7 @@ class CollaborationStore:
             self.comm.append(task_id, "human", "instruction", goal.strip(), status="running")
             return self.read(task_id)
 
-    def read(self, task_id: str, *, after: int = 0) -> dict:
+    def read(self, task_id: str, *, after: int = 0, recover: bool = True) -> dict:
         self.comm.get_task(task_id)
         with self.comm._connection() as db:
             row = db.execute(
@@ -143,7 +143,7 @@ class CollaborationStore:
         # A process can terminate between committing a message and updating
         # the run cursor. Never replay that model call or silently duplicate a
         # turn on recovery: require manual review instead.
-        if after == 0:
+        if after == 0 and recover:
             with self.comm._connection() as db:
                 observed = db.execute(
                     "SELECT COUNT(*) FROM messages WHERE task_id=? AND "
@@ -173,13 +173,13 @@ class CollaborationStore:
         if not isinstance(message, str) or not 1 <= len(message.strip()) <= 10000 or "\x00" in message:
             raise CollaborationError("invalid_collaboration_message")
         with self.lock:
-            run = self.read(task_id)
+            run = self.read(task_id, recover=False)
             if run["state"] not in {"active", "paused"}:
                 raise CollaborationError("collaboration_not_writable")
             status = "running" if run["state"] == "active" else "idle"
             self.comm.append(task_id, "human", "instruction", message.strip(),
                              status=status)
-            return self.read(task_id)
+            return self.read(task_id, recover=False)
 
     def list_runs(self, limit=20) -> list[dict]:
         with self.comm._connection() as db:
@@ -195,7 +195,7 @@ class CollaborationStore:
     def halt(self, task_id: str) -> dict:
         """Manual pause; a subsequent explicit resume continues the same chat."""
         with self.lock:
-            run = self.read(task_id)
+            run = self.read(task_id, recover=False)
             if run["state"] == "active":
                 with self.comm._lock, self.comm._connection() as db:
                     db.execute(
@@ -230,7 +230,7 @@ class CollaborationStore:
     def finish(self, task_id: str) -> dict:
         """Only the owner explicitly closes the durable conversation."""
         with self.lock:
-            run = self.read(task_id)
+            run = self.read(task_id, recover=False)
             if run["state"] in {"active", "paused"}:
                 with self.comm._lock, self.comm._connection() as db:
                     db.execute(
