@@ -586,6 +586,7 @@ function setMode(mode){
   const collabWritable=!!state.collabRun&&["active","paused"].includes(state.collabRun.state);
   $("messageInput").disabled=collab?!collabWritable:false;
   $("sendButton").disabled=collab?!collabWritable:state.running;
+  $("newSession").disabled=state.running&&!collab;
   for(const [id,isActive] of [
     ["modeQwen",qwen],["modeChatGPT",gpt],["modeCollab",collab]
   ]){
