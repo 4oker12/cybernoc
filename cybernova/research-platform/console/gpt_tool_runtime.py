@@ -420,7 +420,15 @@ def _browser_session_key(session_id: str | None) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
 
 
-def _browser_profile_dir(key: str) -> Path:
+def _browser_profile_dir(key: str, session_id: str | None) -> Path:
+    # Preserve the legacy configured profile only for the legacy default session.
+    if session_id is None:
+        configured_profile = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")
+        if configured_profile:
+            return Path(configured_profile).expanduser()
+        if os.environ.get("LOCALAPPDATA"):
+            return Path(os.environ["LOCALAPPDATA"]) / "CyberNova" / "data" / "gpt-chromium-profile"
+        return Path.home() / ".local" / "share" / "cybernova" / "gpt-chromium-profile"
     configured = os.environ.get("CYBERNOVA_BROWSER_SESSIONS_DIR")
     if configured:
         base = Path(configured).expanduser()
@@ -464,7 +472,7 @@ class GPTToolRuntime:
                 return browser
             if len(self._browser_sessions) >= MAX_BROWSER_SESSIONS:
                 raise ValueError("browser_session_capacity_reached")
-            browser = BrowserSession(profile_dir=_browser_profile_dir(key))
+            browser = BrowserSession(profile_dir=_browser_profile_dir(key, session_id))
             self._browser_sessions[key] = browser
             return browser
 
