@@ -70,10 +70,14 @@ def run():
                       "explicit_terminal_run": True}))
     failures = []
     warnings = []
-    def call(name, args=None, *, important=False, detail=None, enabled_groups=None):
+    def call(name, args=None, *, important=False, detail=None, enabled_groups=None,
+             conversation_key="windows-readonly-smoke"):
         args = args or {}
         try:
-            result, failed = runtime.call(name, args, enabled_groups=enabled_groups)
+            result, failed = runtime.call(
+                name, args, enabled_groups=enabled_groups,
+                conversation_key=conversation_key,
+            )
         except Exception as exc:
             result, failed = {"ok": False, "error": type(exc).__name__}, True
         passed = summary(name, result, failed, detail=detail(result) if detail else None)
