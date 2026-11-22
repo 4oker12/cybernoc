@@ -82,15 +82,18 @@ class BrowserControlTests(unittest.TestCase):
             model = "deepseek-test"
             def __init__(self):
                 self.tools = []
+                self.tool_history = []
             def chat(self, messages, tools=None, **kwargs):
                 self.tools = tools or []
+                self.tool_history.append(self.tools)
                 return {"content": "done"}
         runtime = GPTToolRuntime()
         model = Model()
         Agent(model, lambda: Remote(), local_tool_runtime=runtime).run(
             [], "Проверь доступные инструменты", force_tools=False,
         )
-        deepseek_names = {item["function"]["name"] for item in model.tools}
+        deepseek_names = {item["function"]["name"] for item in model.tool_history[0]}
+        self.assertEqual(model.tool_history[-1], [])  # Second answer review never receives tools.
         gpt_names = {item["name"] for item in runtime.tools}
         for name in ("browser_navigate", "browser_snapshot", "browser_follow_link",
                      "browser_tabs", "browser_network"):

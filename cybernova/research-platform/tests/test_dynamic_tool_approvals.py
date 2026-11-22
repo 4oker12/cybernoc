@@ -118,7 +118,8 @@ class DynamicToolPolicyTests(unittest.TestCase):
         self.assertEqual(result["selected_by"], "native")
         self.assertIn("тест", result["answer"])
         self.assertEqual(result["approval_requests"], [])
-        self.assertTrue(qwen.inputs[-1]["tools"])
+        self.assertTrue(qwen.inputs[-2]["tools"])  # First pass has tools.
+        self.assertFalse(qwen.inputs[-1]["tools"])  # Second-pass audit is read-only.
 
     def test_expired_approval_never_executes(self):
         mcp = FakeMCP()
