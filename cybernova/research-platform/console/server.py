@@ -423,7 +423,7 @@ def collaboration_activity(task_id: str):
         store = communication_store()
         receipts = EvidenceJournal(store).list_tool_receipts(task_id, limit=100)
         progress = [{
-            "seq": item["seq"], "body": item["body"], "created_at": item["created_at"]
+            "seq": item["seq"], "body": item["body"], "actor": item["actor"], "created_at": item["created_at"]
         } for item in run["messages"]
             if item["actor"] in {"qwen", "controller"} and item["kind"] == "progress"]
         return {"task_id": task_id, "tool_receipts": receipts, "progress": progress}
