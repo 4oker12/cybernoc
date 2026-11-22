@@ -261,7 +261,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
          profile_instructions: str = "", tool_runtime=None,
          authorized_targets: set[str] | None = None,
          on_tool_event=None, enabled_tool_groups: list[str] | None = None,
-         on_usage=None) -> dict:
+         on_usage=None, session_id: str | None = None) -> dict:
     """Stateless Responses API loop with Account GPT-only local tools.
 
     The complete input history and function-call/output items are sent on every
@@ -438,6 +438,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                     name, arguments, authorized_targets=authorized_targets,
                     user_messages=messages,
                     enabled_groups=enabled_tool_groups,
+                    session_id=session_id,
                 )
             total_calls += 1
             audit_arguments = dict(arguments)
