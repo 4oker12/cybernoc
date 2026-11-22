@@ -295,6 +295,28 @@ class GPTToolRuntimeTests(unittest.TestCase):
                 self.assertGreaterEqual(page["visited_entries"], 4)
             _SEARCH_JOBS.clear()
 
+    def test_playwright_errors_are_returned_with_traceback_id(self):
+        runtime = GPTToolRuntime()
+
+        class BrokenBrowser:
+            def set_authorized_hosts(self, hosts):
+                return None
+
+        runtime._browser = BrokenBrowser()
+        with patch(
+            "console.gpt_tool_runtime.browser_control_call",
+            side_effect=RuntimeError("playwright navigation failed token=secret-value"),
+        ), self.assertLogs("console.gpt_tool_runtime", level="ERROR") as captured:
+            result, is_error = runtime.call(
+                "browser_navigate", {"url": "https://example.org/"}
+            )
+        self.assertTrue(is_error)
+        self.assertTrue(result["error"].startswith("RuntimeError:"))
+        self.assertEqual(len(result["error_id"]), 12)
+        self.assertNotIn("secret-value", str(result))
+        self.assertTrue(any(result["error_id"] in row for row in captured.output))
+        self.assertTrue(any("RuntimeError" in row for row in captured.output))
+
     def test_unknown_or_unapproved_tools_are_rejected(self):
         runtime = GPTToolRuntime()
         result, is_error = runtime.call("browser_submit", {"name": "Submit"})
