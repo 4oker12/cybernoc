@@ -1,7 +1,7 @@
-"""Local tool runtime dedicated to Cybernova's Account GPT mode.
+"""Local tool runtime implementation shared by Cybernova model adapters.
 
-The GPT agent gets its own tool loop and browser session. This module does not
-register tools with or modify the DeepSeek research agent.
+Account GPT and DeepSeek receive separate GPTToolRuntime instances, locks and
+persistent browser profiles while retaining the same reviewed tool catalog.
 """
 from __future__ import annotations
 
