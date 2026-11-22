@@ -4,6 +4,7 @@ on:
     branches:
       - feature/account-gpt-local-tools
       - feature/full-shell-computer-discovery
+      - feature/unified-collaboration-orchestrator
     paths:
       - cybernova/research-platform/**
       - AGENTS.md
