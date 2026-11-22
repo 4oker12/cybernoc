@@ -53,6 +53,7 @@ class WorkItemStore:
                     review TEXT NOT NULL DEFAULT '',
                     last_error TEXT NOT NULL DEFAULT '',
                     blocked_phase TEXT NOT NULL DEFAULT '',
+                    usage_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE(task_id,position)
@@ -60,6 +61,14 @@ class WorkItemStore:
                 CREATE INDEX IF NOT EXISTS collaboration_items_by_task
                 ON collaboration_work_items(task_id,position);
             """)
+            fields = {row["name"] for row in db.execute(
+                "PRAGMA table_info(collaboration_work_items)"
+            ).fetchall()}
+            if "usage_json" not in fields:
+                db.execute(
+                    "ALTER TABLE collaboration_work_items ADD COLUMN usage_json "
+                    "TEXT NOT NULL DEFAULT '{}'"
+                )
 
     @staticmethod
     def _validate_text(text: object, limit: int) -> str:
@@ -71,6 +80,7 @@ class WorkItemStore:
     def _row(row: sqlite3.Row) -> dict:
         result = dict(row)
         result["depends_on"] = json.loads(result.pop("dependencies_json"))
+        result["usage"] = json.loads(result.pop("usage_json") or "{}")
         return result
 
     @staticmethod
@@ -304,6 +314,35 @@ class WorkItemStore:
         self.comm.append(task_id, "human", "decision",
                          "Разрешён новый ограниченный запуск подзадачи.")
         return self.get_item(task_id, item_id)
+
+    def record_usage(self, task_id: str, item_id: str,
+                     phase: str, usage: dict) -> None:
+        """Record only provider-reported token counts, never inferred prices."""
+        if phase not in {"research", "review"} or not isinstance(usage, dict):
+            return
+        summary = {}
+        for key in ("input_tokens", "output_tokens", "total_tokens", "requests"):
+            value = usage.get(key)
+            if type(value) is int and 0 <= value <= 100000000:
+                summary[key] = value
+        if not summary:
+            return
+        with self.comm._lock, self.comm._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT usage_json FROM collaboration_work_items "
+                "WHERE task_id=? AND item_id=?", (task_id, item_id),
+            ).fetchone()
+            if row is None:
+                raise WorkItemError("work_item_not_found")
+            stored = json.loads(row["usage_json"] or "{}")
+            stored[phase] = summary
+            db.execute(
+                "UPDATE collaboration_work_items SET usage_json=?,updated_at=? "
+                "WHERE task_id=? AND item_id=?",
+                (json.dumps(stored), _now(), task_id, item_id),
+            )
+            db.commit()
 
     def recover_task(self, task_id: str) -> dict:
         """Explicit, fail-closed recovery; no uncertain work item is replayed."""
