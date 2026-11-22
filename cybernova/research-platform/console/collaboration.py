@@ -86,6 +86,11 @@ class CollaborationStore:
                     "ALTER TABLE collaboration_runs ADD COLUMN pause_at INTEGER "
                     "NOT NULL DEFAULT 0"
                 )
+            if "mode" not in columns:
+                db.execute(
+                    "ALTER TABLE collaboration_runs ADD COLUMN mode TEXT "
+                    "NOT NULL DEFAULT 'dialog'"
+                )
             db.execute(
                 "UPDATE collaboration_runs SET pause_at = "
                 "CASE WHEN step >= 2 * max_cycles THEN step ELSE 2 * max_cycles END "
@@ -93,13 +98,15 @@ class CollaborationStore:
             )
 
     def create(self, goal: str, model: str, max_cycles: int,
-               scope: dict | None = None) -> dict:
+               scope: dict | None = None, mode: str = "dialog") -> dict:
         if not isinstance(goal, str) or not 1 <= len(goal.strip()) <= MAX_GOAL or "\x00" in goal:
             raise CollaborationError("invalid_collaboration_goal")
         if not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9_.:/+\-]{1,160}", model):
             raise CollaborationError("invalid_collaboration_model")
         if type(max_cycles) is not int or not 1 <= max_cycles <= MAX_CYCLES:
             raise CollaborationError("invalid_collaboration_cycles")
+        if mode not in {"dialog", "parallel"}:
+            raise CollaborationError("invalid_collaboration_mode")
         with self.lock:
             task = self.comm.create_task(goal.strip()[:150], origin="human")
             task_id = task["task_id"]
@@ -107,9 +114,9 @@ class CollaborationStore:
             now = _utc()
             with self.comm._lock, self.comm._connection() as db:
                 db.execute(
-                    "INSERT INTO collaboration_runs(task_id,model,goal,max_cycles,pause_at,step,state,created_at,updated_at)"
-                    " VALUES(?,?,?,?,?,0,'active',?,?)",
-                    (task_id, model, goal.strip(), max_cycles, 2 * max_cycles, now, now),
+                    "INSERT INTO collaboration_runs(task_id,model,goal,max_cycles,pause_at,step,state,created_at,updated_at,mode)"
+                    " VALUES(?,?,?,?,?,0,'active',?,?,?)",
+                    (task_id, model, goal.strip(), max_cycles, 2 * max_cycles, now, now, mode),
                 )
             self.comm.append(task_id, "human", "instruction", goal.strip(), status="running")
             return self.read(task_id)
@@ -143,7 +150,7 @@ class CollaborationStore:
         # A process can terminate between committing a message and updating
         # the run cursor. Never replay that model call or silently duplicate a
         # turn on recovery: require manual review instead.
-        if after == 0 and recover:
+        if after == 0 and recover and run["mode"] == "dialog":
             with self.comm._connection() as db:
                 observed = db.execute(
                     "SELECT COUNT(*) FROM messages WHERE task_id=? AND "
@@ -163,7 +170,7 @@ class CollaborationStore:
         if dialog["task"]["status"] == "blocked" and run["state"] == "active":
             run["state"] = "blocked"
         run["next_actor"] = (
-            None if run["state"] != "active" else
+            None if run["state"] != "active" or run["mode"] == "parallel" else
             "chatgpt" if run["step"] % 2 == 0 else "qwen"
         )
         return {**run, "messages": dialog["messages"], "next_after": dialog["next_after"]}
@@ -249,7 +256,7 @@ class CollaborationStore:
             raise CollaborationError("collaboration_empty_answer")
         with self.lock:
             run = self.read(task_id)
-            if run["state"] != "active":
+            if run["state"] != "active" or run["mode"] != "dialog":
                 raise CollaborationError("collaboration_not_active")
             if run["next_actor"] != actor:
                 raise CollaborationError("collaboration_actor_mismatch")
