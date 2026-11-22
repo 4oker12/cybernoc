@@ -1586,20 +1586,26 @@ function renderCollabRun(run){
   $("collabStop").hidden=!active;
   $("collabResume").hidden=!paused||state.collabLoopTasks.has(run.task_id);
   $("collabFinish").hidden=!(active||paused);
-  $("collabResume").textContent="Продолжить ещё "+run.max_cycles+" обменов";
+  $("collabResume").textContent=run.mode==="parallel"?"Продолжить подзадачи":
+    "Продолжить ещё "+run.max_cycles+" обменов";
   const pairs=Math.floor(run.step/2);
-  $("collabStatus").textContent=run.state==="completed"?
-    "Диалог завершён · "+pairs+" обменов":
+  $("collabStatus").textContent=run.mode==="parallel"?
+    (run.state==="completed"?"Параллельная задача завершена":
+      paused?"Параллельная задача на паузе":
+      run.state==="blocked"?"Остановлено: требуется вмешательство":
+      "Оркестратор · подзадачи и ревью в общей истории"):
+    run.state==="completed"?"Диалог завершён · "+pairs+" обменов":
     paused?"Пауза · "+pairs+" обменов завершено, можно продолжить или закрыть":
     run.state==="blocked"?"Остановлено: требуется вмешательство":
     "В работе · "+run.step+"/"+run.pause_at+
     " сообщений в текущем пакете · следующий: "+
     (run.next_actor==="chatgpt"?"ChatGPT":"DeepSeek");
+  displayCollabWork(run);
   const log=$("collabLog");
   log.replaceChildren();
   for(const m of run.messages||[]){
     if(m.actor==="human"&&m.kind==="instruction"||
-       m.actor==="chatgpt"&&m.kind==="feedback"||
+       m.actor==="chatgpt"&&["feedback","instruction"].includes(m.kind)||
        m.actor==="qwen"&&m.kind==="result"){
       renderCollabEntry(m);
     }else if(m.actor==="controller"&&m.kind==="system"){
@@ -1639,7 +1645,8 @@ async function openCollabRun(taskId){
     setMode("collab");
     renderCollabRun(data);
     $("sidebar").classList.remove("open");
-    if(data.state==="active")void continueCollab(taskId);
+    if(data.mode==="parallel")void refreshCollabWork(taskId);
+    else if(data.state==="active")void continueCollab(taskId);
   }catch(err){
     $("collabStatus").textContent="Ошибка: "+String(err.message||err);
   }
@@ -1656,12 +1663,13 @@ async function startCollab(){
   $("collabStart").disabled=true;
   try{
     const run=await requestJson("/api/collab/start",{
-      goal,model,cycles:Number($("collabCycles").value),session_id:state.sessionId
+      goal,model,cycles:Number($("collabCycles").value),session_id:state.sessionId,
+      mode:$("collabStrategy").value
     });
     renderCollabRun(run);
     void refreshCollabRuns();
-    // The run continues independently; the UI remains available for another task.
-    void continueCollab(run.task_id);
+    if(run.mode==="parallel")void refreshCollabWork(run.task_id);
+    else void continueCollab(run.task_id);
   }catch(err){
     $("collabActiveBar").hidden=false;
     $("collabStop").hidden=true;
@@ -1719,6 +1727,7 @@ async function stopCollab(){
   try{
     const run=await requestJson("/api/collab/stop",{task_id:taskId});
     if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+    if(run.mode==="parallel")void refreshCollabWork(taskId);
     void refreshCollabRuns();
   }catch(err){
     $("collabStatus").textContent="Ошибка паузы: "+String(err.message||err);
@@ -1731,6 +1740,7 @@ async function finishCollab(){
   try{
     const run=await requestJson("/api/collab/finish",{task_id:taskId});
     if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+    if(run.mode==="parallel")void refreshCollabWork(taskId);
     void refreshCollabRuns();
   }catch(err){
     $("collabStatus").textContent="Ошибка завершения: "+String(err.message||err);
@@ -1742,6 +1752,8 @@ async function newCollab(){
   $("collabForm").hidden=false;
   $("collabActiveBar").hidden=true;
   $("collabLog").replaceChildren();
+  $("collabWorkPanel").hidden=true;
+  $("collabWorkItems").replaceChildren();
   $("collabGoal").value="";
   $("messageInput").disabled=true;
   $("sendButton").disabled=true;
@@ -1789,7 +1801,19 @@ function init(){
   $("collabStart").addEventListener("click",startCollab);
   $("collabStop").addEventListener("click",stopCollab);
   $("collabFinish").addEventListener("click",finishCollab);
-  $("collabResume").addEventListener("click",()=>continueCollab());
+  $("collabResume").addEventListener("click",async()=>{
+    const taskId=state.collabRun?.task_id;
+    if(!taskId)return;
+    if(state.collabRun.mode==="parallel"){
+      try{
+        const run=await requestJson("/api/collab/resume",{task_id:taskId});
+        if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+        void runCollabWork(taskId);
+      }catch(err){$("collabStatus").textContent="Ошибка продолжения: "+String(err.message||err);}
+    }else void continueCollab(taskId);
+  });
+  $("collabPlan").addEventListener("click",planCollabWork);
+  $("collabWorkRun").addEventListener("click",()=>runCollabWork());
   $("collabNew").addEventListener("click",newCollab);
   $("navProfile").addEventListener("click",openProfileSettings);
   $("profileClose").addEventListener("click",()=>$("profileDialog").close());
