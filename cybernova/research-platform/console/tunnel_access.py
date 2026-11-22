@@ -27,7 +27,7 @@ ALLOWED_STATIC = frozenset({"/", "/static/styles.css", "/static/app.js", "/stati
 ALLOWED_GET = frozenset({"/api/status", "/api/comm/tasks", "/api/comm/events",
     "/api/comm/review-packet", "/api/comm/evidence", "/api/siwc/status",
     "/api/siwc/models", "/api/siwc/chats", "/api/siwc/chat", "/api/research/scope", "/api/profile-settings", "/api/model-config",
-    "/api/collab/runs", "/api/collab/run", "/auth/callback"})
+    "/api/collab/runs", "/api/collab/run", "/api/collab/activity", "/auth/callback"})
 ALLOWED_POST = frozenset({
     "/api/chat", "/api/import", "/api/approve", "/api/followups",
     "/api/reset", "/api/research/scope", "/api/comm/resume", "/api/comm/reviewer-feedback",
