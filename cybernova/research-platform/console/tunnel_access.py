@@ -35,7 +35,8 @@ ALLOWED_POST = frozenset({
     "/api/profile-settings", "/api/model-config", "/api/collab/start", "/api/collab/step",
     "/api/collab/stop", "/api/collab/resume", "/api/collab/finish",
     "/api/collab/message", "/api/collab/items/plan",
-    "/api/collab/items/step", "/api/collab/items/retry", "/api/tools/run",
+    "/api/collab/items/step", "/api/collab/items/retry",
+    "/api/collab/items/recover", "/api/tools/run",
 })
 HOP_HEADERS = frozenset({
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
