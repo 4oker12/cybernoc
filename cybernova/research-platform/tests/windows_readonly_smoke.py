@@ -63,11 +63,16 @@ def run():
         "browser_network", "google_search", "research_source_open",
     }
     assert required.issubset(catalog), sorted(required - catalog)
-    assert "terminal_run" not in catalog, "terminal_run must be explicit-selection only"
-    explicit_terminal = {row["name"] for row in runtime.mcp_tools(["terminal"])}
-    assert "terminal_run" in explicit_terminal, "terminal group must expose terminal_run"
+    assert "terminal_run" in catalog, "terminal_run must be available in automatic mode"
+    terminal_group = {row["name"] for row in runtime.mcp_tools(["terminal"])}
+    assert "terminal_run" in terminal_group, "terminal group must expose terminal_run"
+    restricted, restricted_failed = runtime.call("terminal_run", {
+        "command": "whoami", "shell": "cmd", "cwd": str(Path.home()),
+        "timeout_seconds": 15, "max_output_chars": 4000,
+    }, enabled_groups=["browser"])
+    assert restricted_failed and restricted.get("error") == "tool_group_not_enabled", restricted
     print(json.dumps({"test": "shared_catalog", "status": "PASS", "count": len(catalog),
-                      "explicit_terminal_run": True}))
+                      "automatic_terminal_run": True, "group_restriction": True}))
     failures = []
     warnings = []
     def call(name, args=None, *, important=False, detail=None, enabled_groups=None,
