@@ -26,11 +26,13 @@ try:
     from .developer_tools import SOURCE
     from .research_web import RESEARCH_WEB_TOOLS, research_web_call
     from .computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
+    from .github_tools import GITHUB_TOOLS, GITHUB_NAMES, github_call
 except ImportError:
     from browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from developer_tools import SOURCE
     from research_web import RESEARCH_WEB_TOOLS, research_web_call
     from computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
+    from github_tools import GITHUB_TOOLS, GITHUB_NAMES, github_call
 
 
 try:
@@ -61,7 +63,7 @@ _TOOL_NAMES = frozenset(
     if item["name"] != "browser_submit"
 ) | frozenset(item["name"] for item in RESEARCH_WEB_TOOLS) | {
     "terminal_run", "terminal_status",
-} | COMPUTER_TOOL_NAMES
+} | COMPUTER_TOOL_NAMES | GITHUB_NAMES
 
 # Composer tool bundles. Empty selection means automatic access to the full
 # catalog; an explicit selection exposes only the chosen groups to the model.
@@ -97,6 +99,10 @@ TOOL_GROUPS = (
     {
         "id": "developer", "label": "Разработка", "icon": "code",
         "description": "Работа с workspace, Git, файлами проекта, тестами и изменениями кода.",
+    },
+    {
+        "id": "github", "label": "GitHub", "icon": "git-branch",
+        "description": "Поиск репозиториев, ветки, коммиты, Issues, Pull Requests и GitHub Actions. Только чтение; изменения через отдельное подтверждение.",
     },
     {
         "id": "mcp", "label": "MCP / прочее", "icon": "plug",
@@ -138,6 +144,8 @@ def tool_group_for_name(name: str) -> str:
         return "security"
     if name.startswith("traffic_"):
         return "traffic"
+    if name.startswith("github_"):
+        return "github"
     if name.startswith("dev_"):
         return "developer"
     return "mcp"
@@ -263,6 +271,7 @@ def build_tool_catalog() -> list[dict]:
     )
     rows.extend(_convert_mcp_tool(item) for item in RESEARCH_WEB_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in COMPUTER_TOOLS)
+    rows.extend(_convert_mcp_tool(item) for item in GITHUB_TOOLS)
     return rows
 
 
@@ -618,6 +627,8 @@ class GPTToolRuntime:
         if not isinstance(args, dict):
             return {"ok": False, "error": "tool_arguments_must_be_object"}, True
         try:
+            if name in GITHUB_NAMES:
+                return github_call(name, args)
             # Browser operations use their own per-conversation lock and worker
             # thread. They never hold the runtime-wide lock while Playwright runs.
             if name.startswith("browser_"):

@@ -11,6 +11,7 @@ from console.gpt_tool_runtime import (
     GPTToolRuntime, _run_terminal, _validate_terminal_request, _terminal_argv,
     build_tool_catalog, extract_user_targets, TOOL_GROUPS, normalize_tool_groups,
 )
+from console.github_tools import GITHUB_NAMES
 from console.computer_control import (
     COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, extract_user_computer_approvals,
     _ui_click,
@@ -29,6 +30,7 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("browser_screenshot", names)
         self.assertIn("google_search", names)
         self.assertIn("research_source_open", names)
+        self.assertTrue(GITHUB_NAMES.issubset(names))
         self.assertNotIn("browser_submit", names)
         self.assertTrue({
             "computer_system_overview", "computer_performance_snapshot",
@@ -76,14 +78,23 @@ class GPTToolRuntimeTests(unittest.TestCase):
             {row["name"] for row in runtime.mcp_tools(["computer"])},
             COMPUTER_TOOL_NAMES,
         )
+        self.assertEqual({row["name"] for row in runtime.mcp_tools(["github"])}, GITHUB_NAMES)
         result, failed = runtime.call(
             "terminal_status", {}, enabled_groups=["browser"]
         )
         self.assertTrue(failed)
         self.assertEqual(result["error"], "tool_group_not_enabled")
-        self.assertEqual(len(TOOL_GROUPS), 9)
+        self.assertEqual(len(TOOL_GROUPS), 10)
         with self.assertRaises(ValueError):
             normalize_tool_groups(["not-a-real-tool-group"])
+
+    def test_github_tools_are_read_only_and_enforce_group_selection(self):
+        from console.gpt_tool_runtime import tool_group_for_name
+        runtime = GPTToolRuntime()
+        self.assertEqual(tool_group_for_name("github_list_issues"), "github")
+        result, failed = runtime.call("github_repo_info", {"repo": "owner/repo"}, enabled_groups=["browser"])
+        self.assertTrue(failed)
+        self.assertEqual(result["error"], "tool_group_not_enabled")
 
     def test_all_account_gpt_function_schemas_are_strict_and_closed(self):
         for tool in build_tool_catalog():

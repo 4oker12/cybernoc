@@ -23,7 +23,7 @@ const descriptions={
 };
 const TOOL_GROUP_GLYPHS={
   browser:"◎",computer:"▣",terminal:">_",web:"⌕",network:"⇄",
-  security:"⛨",traffic:"≋",developer:"⌘",mcp:"⧉"
+  security:"⛨",traffic:"≋",developer:"⌘",github:"⑂",mcp:"⧉"
 };
 const TOOL_GROUP_FALLBACK=[
   {id:"browser",label:"Chrome / браузер",icon:"globe",description:"Открывать сайты, читать DOM, переходить по ссылкам, создавать вкладки, переключаться между ними, назад/вперёд, обновлять страницы, смотреть Console и DevTools Network."},
@@ -34,6 +34,7 @@ const TOOL_GROUP_FALLBACK=[
   {id:"security",label:"Security",icon:"shield",description:"Проверки безопасности и лабораторные сканеры."},
   {id:"traffic",label:"Traffic / HAR",icon:"activity",description:"HAR, JavaScript, сессии и сетевые гипотезы."},
   {id:"developer",label:"Разработка",icon:"code",description:"Workspace, Git, файлы проекта и тесты."},
+  {id:"github",label:"GitHub",icon:"git-branch",description:"Репозитории, ветки, коммиты, Issues, Pull Requests и GitHub Actions. Только чтение."},
   {id:"mcp",label:"MCP / прочее",icon:"plug",description:"Подключённые MCP-сервисы и координация."}
 ];
 function displayModelName(modelId){
@@ -507,7 +508,8 @@ function renderToolPicker(groups){
       group.id==="computer"?"WINDOWS · ПРОЦЕССЫ · DEFENDER":
       group.id==="web"?"ПОИСК · СТРАНИЦЫ · ИСТОЧНИКИ":
       group.id==="terminal"?"CMD · POWERSHELL · ДИАГНОСТИКА":
-      group.id==="network"?"DNS · TLS · IP · HTTP":"ГРУППА ИНСТРУМЕНТОВ");
+      group.id==="network"?"DNS · TLS · IP · HTTP":
+      group.id==="github"?"REPOS · BRANCHES · ISSUES · PR · ACTIONS":"ГРУППА ИНСТРУМЕНТОВ");
     copy.append(title,scope,hint);
     label.append(icon,copy,input);
     if(!available)label.title="В этой конфигурации группа сейчас не обнаружена";
