@@ -693,6 +693,11 @@ def collaboration_finish(payload: CollaborationActionRequest):
     try:
         run = collaboration_store().finish(payload.task_id)
         work_item_store().cancel_pending(payload.task_id)
+        for item in work_item_store().list_items(payload.task_id):
+            # Do not forcibly close Chromium while an already-started tool call
+            # is running. Its step handler closes it on the final outcome.
+            if item["state"] not in {"running", "reviewing"}:
+                gpt_tool_runtime.close_session(item["item_id"])
         gpt_tool_runtime.close_session(payload.task_id)
         return run
     except (CollaborationError, CommunicationError, ValueError) as exc:
