@@ -8,6 +8,7 @@ and unapproved form submissions are blocked.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from contextvars import copy_context
 import base64
 import ipaddress
 import json
@@ -19,6 +20,11 @@ import socket
 import sys
 import time
 from urllib.parse import urljoin, urlsplit
+
+try:
+    from .diagnostics import event as diagnostic_event
+except ImportError:
+    from diagnostics import event as diagnostic_event
 
 MAX_URL = 2048
 MAX_TEXT = 6500
@@ -295,7 +301,7 @@ class BrowserSession:
         self._profile_dir = Path(profile_dir).expanduser() if profile_dir is not None else None
         if headless is None:
             configured = os.environ.get("CYBERNOVA_GPT_BROWSER_HEADLESS")
-            headless = (sys.platform != "win32") if configured is None else configured.strip().lower() in {"1", "true", "yes", "on"}
+            headless = True if configured is None else configured.strip().lower() in {"1", "true", "yes", "on"}
         self._headless = bool(headless)
         self._authorized_hosts: set[str] = set()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cybernova-chromium")
@@ -318,7 +324,7 @@ class BrowserSession:
         if self._closed:
             raise ValueError("browser_session_closed")
         try:
-            return self._executor.submit(self._dispatch, name, args).result(timeout=45)
+            return self._executor.submit(copy_context().run, self._dispatch, name, args).result(timeout=45)
         except FutureTimeout:
             raise ValueError("browser_action_timeout") from None
 
@@ -376,6 +382,8 @@ class BrowserSession:
             ephemeral = os.environ.get("CYBERNOVA_GPT_BROWSER_EPHEMERAL", "").strip().lower() in {
                 "1", "true", "yes", "on",
             }
+            diagnostic_event("browser_launch_start", headless=self._headless,
+                             session_kind="ephemeral" if ephemeral else "persistent")
             if ephemeral:
                 self._browser = self._pw.chromium.launch(
                     headless=self._headless, args=launch_args,
@@ -420,6 +428,9 @@ class BrowserSession:
                     code=1008, reason="Cybernova browser policy",
                 ),
             )
+            diagnostic_event("browser_launch_ready", headless=self._headless,
+                             session_kind="ephemeral" if ephemeral else "persistent",
+                             status="ok")
         pages = list(self._context.pages)
         if not restore_session:
             # A dedicated persistent profile keeps authentication state, but
@@ -831,6 +842,7 @@ class BrowserSession:
             pass
         self._page = self._context = self._browser = self._pw = None
         self._attached_pages.clear()
+        diagnostic_event("browser_shutdown", status="ok")
 
 
 def browser_control_call(name: str, args: dict, session: BrowserSession) -> tuple[dict, bool]:

@@ -35,6 +35,26 @@ class FakeRoute:
 
 
 class BrowserControlTests(unittest.TestCase):
+    def test_default_chromium_is_headless_on_windows_unless_opted_out(self):
+        with patch.dict("os.environ", {"CYBERNOVA_GPT_BROWSER_HEADLESS": ""}):
+            session = BrowserSession()
+            try:
+                self.assertFalse(session._headless)
+            finally:
+                session.close()
+        with patch.dict("os.environ", {"CYBERNOVA_GPT_BROWSER_HEADLESS": "1"}):
+            session = BrowserSession()
+            try:
+                self.assertTrue(session._headless)
+            finally:
+                session.close()
+        with patch.dict("os.environ", {}, clear=True):
+            session = BrowserSession()
+            try:
+                self.assertTrue(session._headless)
+            finally:
+                session.close()
+
     def test_tool_catalog_contains_navigation_interaction_and_approval_submit(self):
         names = {item["name"] for item in BROWSER_CONTROL_TOOLS}
         self.assertEqual(names, set(BROWSER_CONTROL_NAMES))

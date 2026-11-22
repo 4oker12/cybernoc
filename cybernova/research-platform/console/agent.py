@@ -2,6 +2,11 @@
 from __future__ import annotations
 
 import json
+
+try:
+    from .diagnostics import span as diagnostic_span
+except ImportError:
+    from diagnostics import span as diagnostic_span
 import os
 import re
 import secrets
@@ -89,7 +94,8 @@ class MCPClient:
         body = {"jsonrpc": "2.0", "method": method, "id": self.sequence}
         if params is not None:
             body["params"] = params
-        value = self.transport(self.endpoint, body, 14)
+        with diagnostic_span("mcp_rpc", method=method):
+            value = self.transport(self.endpoint, body, 14)
         if not isinstance(value, dict):
             raise BackendError("invalid_mcp_response")
         if "error" in value:
@@ -233,6 +239,12 @@ class Agent:
         self.ollama = ollama
         self.mcp_factory = mcp_factory or (lambda: MCPClient())
         self.local_tool_runtime = local_tool_runtime
+
+    def _model_chat(self, messages, tools=None, **kwargs):
+        with diagnostic_span("model_request",
+                             provider=getattr(self.ollama, "provider", "unknown"),
+                             model=getattr(self.ollama, "model", "unknown")):
+            return self.ollama.chat(messages, tools, **kwargs)
 
     def _call_registered_tool(self, name: str, args: dict, *, mcp=None,
                               authorized_targets=None, user_messages=None,
@@ -397,7 +409,7 @@ class Agent:
         selected_by = "native"
         try:
             for round_no in range(MAX_ROUNDS):
-                result = self.ollama.chat(context, tools if tools and round_no < MAX_ROUNDS - 1 else [])
+                result = self._model_chat(context, tools if tools and round_no < MAX_ROUNDS - 1 else [])
                 record_usage(result)
                 publish_usage()
                 calls = (result.get("tool_calls") or []) if tools_enabled else []
@@ -405,7 +417,7 @@ class Agent:
                     # Some derivative models ignore native tool_calls. The
                     # fallback still asks the active model to SELECT tools, and every tool
                     # goes through exactly the same strict validation.
-                    candidate = self.ollama.chat([
+                    candidate = self._model_chat([
                         {"role": "system", "content":
                             "Ты — основная модель-исследователь Cybernova. По контексту уже собранных наблюдений реши, "
                             "нужны ли следующие реальные инструменты. "
@@ -663,7 +675,7 @@ class Agent:
                 if count >= MAX_CALLS:
                     context.append({"role": "system",
                                     "content": "Лимит инструментов достигнут. Сформируй итог только из наблюдений."})
-                    final = self.ollama.chat(context, [])
+                    final = self._model_chat(context, [])
                     record_usage(final)
                     publish_usage()
                     answer = str(final.get("content") or "")
@@ -716,7 +728,7 @@ class Agent:
              "Разрешённый MCP-вызов " + name + " завершён. "
              "Результат: " + json.dumps(result, ensure_ascii=False)[:MAX_RESULT]},
         ]
-        message = self.ollama.chat(prompt, [])
+        message = self._model_chat(prompt, [])
         raw_usage = message.get("_usage") or {}
         input_tokens = raw_usage.get("input_tokens")
         output_tokens = raw_usage.get("output_tokens")

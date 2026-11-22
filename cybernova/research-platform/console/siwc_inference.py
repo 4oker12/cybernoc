@@ -11,6 +11,11 @@ import re
 from urllib import error, request
 
 try:
+    from .diagnostics import span as diagnostic_span
+except ImportError:
+    from diagnostics import span as diagnostic_span
+
+try:
     from .siwc import RESOURCE, MODEL_NAME, SIWCError, connection
 except ImportError:
     from siwc import RESOURCE, MODEL_NAME, SIWCError, connection
@@ -416,9 +421,11 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
     max_rounds = MAX_TOOL_ROUNDS if tools else 1
 
     for round_index in range(max_rounds):
-        response = _response_once(
-            model, instructions, input_items, token, tools=tools,
-        )
+        with diagnostic_span("model_request", provider="OpenAI.Responses",
+                             model=model, round=round_index + 1):
+            response = _response_once(
+                model, instructions, input_items, token, tools=tools,
+            )
         record_usage(response)
         publish_usage()
         output = response["output"]

@@ -17,7 +17,6 @@ import shutil
 import subprocess
 import sys
 import time
-import traceback
 import uuid
 from collections import OrderedDict
 from threading import RLock
@@ -33,6 +32,11 @@ except ImportError:
     from research_web import RESEARCH_WEB_TOOLS, research_web_call
     from computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
 
+
+try:
+    from .diagnostics import event as diagnostic_event, failure as diagnostic_failure
+except ImportError:
+    from diagnostics import event as diagnostic_event, failure as diagnostic_failure
 
 MAX_TOOL_OUTPUT_CHARS = 50000
 MAX_TERMINAL_COMMAND_CHARS = 20000
@@ -578,6 +582,32 @@ class GPTToolRuntime:
     def call(self, name: str, args: dict, *, authorized_targets=None,
              user_messages=None, enabled_groups=None,
              conversation_key: str | None = None) -> tuple[dict, bool]:
+        """Record tool lifecycle without storing arguments or response content."""
+        start = time.monotonic()
+        diagnostic_event("tool_call_start", tool=name)
+        try:
+            result, failed = self._call_impl(
+                name, args, authorized_targets=authorized_targets,
+                user_messages=user_messages, enabled_groups=enabled_groups,
+                conversation_key=conversation_key)
+        except BaseException as exc:
+            diagnostic_event("tool_call_failed", tool=name,
+                             duration_ms=round((time.monotonic() - start) * 1000),
+                             error_type=type(exc).__name__)
+            raise
+        fields = {"tool": name, "status": "failed" if failed else "ok",
+                  "duration_ms": round((time.monotonic() - start) * 1000)}
+        if isinstance(result, dict):
+            if type(result.get("http_status")) is int:
+                fields["http_status"] = result["http_status"]
+            if failed:
+                fields["error_type"] = str(result.get("error", "tool_failed")).split(":", 1)[0]
+        diagnostic_event("tool_call_completed", **fields)
+        return result, failed
+
+    def _call_impl(self, name: str, args: dict, *, authorized_targets=None,
+                   user_messages=None, enabled_groups=None,
+                   conversation_key: str | None = None) -> tuple[dict, bool]:
         selected = set(normalize_tool_groups(enabled_groups))
         if selected and tool_group_for_name(name) not in selected:
             return {"ok": False, "error": "tool_group_not_enabled"}, True
@@ -651,12 +681,11 @@ class GPTToolRuntime:
         except Exception as exc:
             error_id = uuid.uuid4().hex[:12]
             detail = _SECRET.sub("[REDACTED]", _EMAIL.sub("[REDACTED EMAIL]", str(exc)))
-            rendered = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-            rendered = _SECRET.sub("[REDACTED]", _EMAIL.sub("[REDACTED EMAIL]", rendered))
-            logger.error(
-                "tool_failure id=%s tool=%s type=%s\\n%s",
-                error_id, name, type(exc).__name__, rendered[:20000],
-            )
+            # Raw tracebacks can embed user input and site content. Keep only
+            # traceback frame metadata in the private journal.
+            logger.error("tool_failure id=%s tool=%s type=%s",
+                         error_id, name, type(exc).__name__)
+            diagnostic_failure("console", "tool_" + name, exc, error_id=error_id)
             return {
                 "ok": False,
                 "error": type(exc).__name__ + ":" + detail[:400],

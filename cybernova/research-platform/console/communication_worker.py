@@ -12,6 +12,11 @@ import threading
 import time
 
 try:
+    from .diagnostics import event as diagnostic_event
+except ImportError:
+    from diagnostics import event as diagnostic_event
+
+try:
     from .agent import Agent, MCPClient
     from .communication import CommunicationStore
     from .communication_tools import CommunicationToolClient
@@ -70,6 +75,8 @@ class CommunicationWorker:
         if task is None:
             return None
         task_id = task["task_id"]
+        diagnostic_event("background_task_start", mode="researcher")
+        started = time.monotonic()
         try:
             dialog = self.store.read_dialog(task_id, limit=100)
             current = _history_from_dialog(dialog["messages"])
@@ -110,11 +117,18 @@ class CommunicationWorker:
                     "Qwen requested a tool requiring further approval; "
                     "inspect the result in the Web UI before proceeding.",
                 )
+            diagnostic_event("background_task_finished", mode="researcher",
+                             status=new_status,
+                             duration_ms=round((time.monotonic() - started) * 1000),
+                             tool_calls=outcome.get("tool_calls", 0))
             return {"task_id": task_id, "status": new_status,
                     "message_seq": result["seq"],
                     "tool_calls": outcome.get("tool_calls", 0),
                     "receipts": len(receipts)}
         except Exception as exc:
+            diagnostic_event("background_task_failed", mode="researcher",
+                             status="failed", error_type=type(exc).__name__,
+                             duration_ms=round((time.monotonic() - started) * 1000))
             self.store.append(
                 task_id, "controller", "system",
                 "Qwen worker stopped: " + type(exc).__name__,
@@ -127,9 +141,9 @@ class CommunicationWorker:
         while not self._stop.is_set():
             try:
                 self.run_once()
-            except Exception:
-                # The task and state will be inspected on the next cycle.
-                pass
+            except Exception as exc:
+                diagnostic_event("background_worker_failed",
+                                 status="failed", error_type=type(exc).__name__)
             self._stop.wait(self.interval)
 
     def start(self) -> None:
