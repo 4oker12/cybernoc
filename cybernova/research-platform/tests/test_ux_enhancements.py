@@ -112,7 +112,9 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn("selection-ask", ux)
         self.assertIn("Разбери выделенный фрагмент", ux)
         self.assertNotIn('$("messageInput").disabled=on;', app)
-        self.assertIn('if((state.running && mode==="collab")', app)
+        # A running standalone model must not block the independent shared workspace.
+        self.assertNotIn('if((state.running && mode==="collab")', app)
+        self.assertIn('$("modeCollab").disabled=false;', app)
 
     @unittest.skipUnless(shutil.which("node"), "Node runtime unavailable")
     def test_new_frontend_scripts_have_valid_syntax(self):
