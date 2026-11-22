@@ -1,6 +1,8 @@
 """No-network tests for bounded, persisted two-agent collaboration."""
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from pathlib import Path
 from unittest.mock import patch
 import sys
@@ -94,6 +96,32 @@ class CollaborationTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row["state"], "active")
         self.assertEqual(row["step"], 0)
+
+    def test_two_independent_collaboration_steps_overlap(self):
+        first = self.collab.create("Независимая задача A", "gpt-test", 2)
+        second = self.collab.create("Независимая задача B", "gpt-test", 2)
+        rendezvous = Barrier(2)
+
+        def fake_gpt(model, messages, **kwargs):
+            rendezvous.wait(timeout=5)
+            return {"answer": "Проверка завершена.", "model": model,
+                    "source": "offline", "tool_calls": 0, "tool_events": []}
+
+        with patch.object(server, "communication_store", return_value=self.comm), \
+             patch.object(server, "collaboration_store", return_value=self.collab), \
+             patch.object(server, "profile_settings_store", return_value=self.profile), \
+             patch.object(server, "chatgpt_models", return_value=[{"slug": "gpt-test"}]), \
+             patch.object(server, "chatgpt_chat", side_effect=fake_gpt):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [
+                    pool.submit(server.collaboration_step,
+                                server.CollaborationActionRequest(task_id=first["task_id"])),
+                    pool.submit(server.collaboration_step,
+                                server.CollaborationActionRequest(task_id=second["task_id"])),
+                ]
+                results = [future.result(timeout=8) for future in futures]
+        self.assertEqual({item["actor"] for item in results}, {"chatgpt"})
+        self.assertEqual({item["run"]["step"] for item in results}, {1})
 
     def test_collaboration_locks_are_per_task(self):
         first = server._collaboration_step_lock("cn_task_one_123456")
