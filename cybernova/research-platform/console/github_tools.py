@@ -33,6 +33,10 @@ _SECRET_ASSIGNMENT = re.compile(
     r"(?im)^(\s*[\w.-]*(?:token|secret|password|passwd|api[_-]?key|"
     r"private[_-]?key|authorization|cookie)[\w.-]*\s*[:=]\s*)[^\r\n#]+"
 )
+_SECRET_JSON = re.compile(
+    r"""(?i)(["'][\w.-]*(?:token|secret|password|passwd|api[_-]?key|"
+    r"private[_-]?key|authorization|cookie)[\w.-]*["']\s*:\s*["'])([^"']*)(["'])"""
+)
 
 
 class GitHubToolError(ValueError):
@@ -206,6 +210,7 @@ def _query(path: str, values: dict) -> str:
 
 def _redact_text(value: str) -> str:
     value = _SECRET_TOKEN.sub("[REDACTED TOKEN]", value)
+    value = _SECRET_JSON.sub(r"\1[REDACTED]\3", value)
     return _SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", value)
 
 
@@ -261,7 +266,9 @@ def github_call(name: str, args: dict) -> tuple[dict, bool]:
                 user = _api_get("user", token)
                 return {
                     "ok": True, "api": "github.com", "authenticated": True,
-                    "auth_source": auth_source, "account": user.get("login"),
+                    "auth_source": auth_source,
+                    "gh_cli_available": bool(shutil.which("gh") or shutil.which("gh.exe")),
+                    "account": user.get("login"),
                     "account_type": user.get("type"), "mode": "read_only",
                 }, False
             rate = _api_get("rate_limit")
@@ -269,6 +276,8 @@ def github_call(name: str, args: dict) -> tuple[dict, bool]:
             return {
                 "ok": True, "api": "github.com", "authenticated": False,
                 "auth_source": "anonymous", "public_api": True,
+                "gh_cli_available": bool(shutil.which("gh") or shutil.which("gh.exe")),
+                "auth_hint": "For private repositories, install GitHub CLI and run gh auth login on the Cybernova host, or configure GH_TOKEN/GITHUB_TOKEN outside chat.",
                 "rate_limit_remaining": core.get("remaining"),
                 "rate_limit_limit": core.get("limit"), "mode": "public_read_only",
             }, False
@@ -403,7 +412,7 @@ def github_call(name: str, args: dict) -> tuple[dict, bool]:
                 raise GitHubToolError("github_file_not_utf8_text") from None
             content = _redact_text(content)
             return {"ok": True, "repo": repo, "path": path,
-                    "ref": item.get("git_url") and ref or ref,
+                    "ref": ref,
                     "sha": item.get("sha"), "size_bytes": len(raw),
                     "content": content[:max_chars],
                     "truncated": len(content) > max_chars}, False

@@ -60,6 +60,19 @@ class GitHubToolsTests(unittest.TestCase):
         self.assertEqual(result["mode"], "public_read_only")
         api.assert_called_once_with("rate_limit")
 
+    def test_json_and_source_assignments_are_redacted(self):
+        from console.github_tools import _redact_text
+        secrets = ["ghp_" + "x" * 36, "plain-password-value", "hardcoded-api-key"]
+        source = (
+            '{\n  "github_token": "' + secrets[0] + '",\n'
+            '  "password": "' + secrets[1] + '"\n}\n'
+            'API_KEY = "' + secrets[2] + '"\n'
+        )
+        redacted = _redact_text(source)
+        for secret in secrets:
+            self.assertNotIn(secret, redacted)
+        self.assertIn("[REDACTED]", redacted)
+
     def test_sensitive_file_paths_are_blocked_before_network(self):
         with patch("console.github_tools._api_get") as api:
             result, failed = github_call("github_read_file", {
