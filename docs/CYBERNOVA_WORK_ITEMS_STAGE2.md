@@ -38,6 +38,12 @@ The existing authenticated UI shows compact status cards, dependencies, detailed
 
 The GitHub tests cover dependency gates, concurrency overlap with mocked model calls, duplicate-claim rejection, review and rework, recovery, scope isolation, and browser-control wiring. This does not prove a successful Windows deployment or real ChatGPT/DeepSeek model inference. A local acceptance test must separately check Git/port/PID ownership preflight, the 18795 login, internal health, MCP ListTools, real model responses and actual task-browser separation. Do not merge or deploy solely because CI passes.
 
+## Vast / remote infrastructure boundary
+
+The native launcher starts the local Python supervisor (Tool MCP, Communication MCP, Console API, authenticated Web UI gateway) without starting Vast, SSH, Cloudflare, or an external bridge. Local defaults use Ollama on 127.0.0.1:11434 and Tool MCP on 127.0.0.1:18792. The historical names native.py and tunnel_access.py do not imply remote connectivity.
+
+Remote models remain an explicitly selectable alternative via CYBERNOVA_LLM_PROVIDER=openai_compatible and CYBERNOVA_LLM_BASE_URL; if that URL points to Vast or another external host, model availability then depends on that configured provider. A separately started Vast/SSH port-forward can still conflict with a local Cybernova listener. Always check 18792/18794/18795/18796 ownership before changing or launching anything. CI does not establish the user's actual runtime.env, local port ownership, or remote Vast health.
+
 ## Known limitations
 
 The coordinator is browser-driven rather than a persistent daemon. Closing the browser ends new scheduling. No forced cancellation of already executing shell commands, automatic exponential retry, cross-provider readiness probe or streaming SSE is included here. Rich artifact publications and a larger resource-aware scheduler remain separate extensions.
