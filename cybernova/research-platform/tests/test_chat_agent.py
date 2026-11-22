@@ -228,6 +228,17 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(out["usage"]["requests"], 2)
         self.assertTrue(out["usage"]["complete"])
 
+    def test_missing_output_usage_is_not_reported_as_zero(self):
+        reply = {"role": "assistant", "content": "Answer",
+                 "_usage": {"input_tokens": 17, "cached_tokens": 0}}
+        out = Agent(FakeOllama([reply])).run([], "Hello", tools_enabled=False)
+        usage = out["usage"]
+        self.assertEqual(usage["input_tokens"], 17)
+        self.assertEqual(usage["cached_tokens"], 0)
+        self.assertIsNone(usage["output_tokens"])
+        self.assertIsNone(usage["total_tokens"])
+        self.assertFalse(usage["complete"])
+
     def test_shared_local_tools_remain_available_when_remote_mcp_is_down(self):
         local = FakeLocalToolRuntime()
         lm = FakeOllama([

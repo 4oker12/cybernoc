@@ -47,7 +47,7 @@ try:
     from .developer_tools import DEV_TOOLS
     from .communication_worker import CommunicationWorker
     from .evidence import EvidenceJournal
-    from .diagnostics import configure as configure_diagnostics, failure as log_failure
+    from .diagnostics import configure as configure_diagnostics, failure as log_failure, observe_chat, adapter_error_code
     from .upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from .siwc import connection as chatgpt_connection, SIWCError
     from .siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
@@ -80,7 +80,7 @@ except ImportError:
     from developer_tools import DEV_TOOLS
     from communication_worker import CommunicationWorker
     from evidence import EvidenceJournal
-    from diagnostics import configure as configure_diagnostics, failure as log_failure
+    from diagnostics import configure as configure_diagnostics, failure as log_failure, observe_chat, adapter_error_code
     from upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from siwc import connection as chatgpt_connection, SIWCError
     from siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
@@ -246,7 +246,8 @@ async def localhost_only(request: Request, call_next):
     except Exception as exc:
         # HTTP exceptions already mapped to 4xx by FastAPI are not recorded.
         # Never log the URL query string, request body or Authorization header.
-        log_failure("console", request.method + " " + request.url.path, exc)
+        if request.url.path not in {"/api/chat", "/api/siwc/chat"}:
+            log_failure("console", request.method + " " + request.url.path, exc)
         raise
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Frame-Options"] = "DENY"
@@ -614,6 +615,7 @@ def siwc_chat_thread(thread_id: str):
 
 
 @app.post("/api/siwc/chat")
+@observe_chat("account_gpt", lambda p: ("OpenAI Responses", p.model), _read_usage_progress)
 def siwc_chat_message(payload: ChatGPTMessageRequest):
     """Explicit user turn, no implicit Qwen history/tools or external fetch.
 
@@ -676,7 +678,6 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
         except ProfileSettingsError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from None
         except SIWCError as exc:
-            log_failure("console", "chatgpt_inference", exc, error_id=payload.run_id)
             if user_message_seq is None:
                 raise HTTPException(status_code=409, detail=str(exc)) from None
             partial_answer = (
@@ -686,6 +687,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
             store.finish_exchange(thread_id, partial_answer)
             outcome = {
                 "answer": partial_answer, "source": "chatgpt_plan_responses_partial",
+                "error_code": adapter_error_code(exc),
                 "tool_events": persisted_tool_events,
                 "tool_calls": len(persisted_tool_events),
             }
@@ -696,7 +698,8 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
     return {"thread_id": thread_id, "model": payload.model, "run_id": payload.run_id,
             "answer": outcome["answer"], "source": outcome["source"],
             "tool_events": outcome.get("tool_events", []),
-            "usage": outcome.get("usage")}
+            "usage": outcome.get("usage"),
+            **({"error_code": outcome.get("error_code")} if run_status == "partial" else {})}
 
 
 @app.get("/api/usage-progress")
@@ -924,6 +927,8 @@ def get_research_scope(session_id: str | None = None):
 
 
 @app.post("/api/chat")
+@observe_chat("researcher", lambda p: (getattr(agent.ollama, "provider", "configured LLM"),
+                                        getattr(agent.ollama, "model", "unknown")), _read_usage_progress)
 def chat(payload: ChatRequest):
     sid, state = _session(payload.session_id)
     # Prevent overlapping turns in one session from corrupting model history.
@@ -983,7 +988,6 @@ def chat(payload: ChatRequest):
             )
             run_status = "completed"
         except Exception as exc:
-            log_failure("console", "deepseek_inference", exc, error_id=payload.run_id)
             store.append(task_id, "controller", "system",
                          "Agent failed: " + type(exc).__name__, status="blocked")
             raise HTTPException(status_code=502, detail="agent_failed: " +

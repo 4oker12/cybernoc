@@ -410,7 +410,7 @@ function recordUsage(usage,mode,reply){
   const input=Number.isSafeInteger(usage.input_tokens)?usage.input_tokens:null;
   const output=Number.isSafeInteger(usage.output_tokens)?usage.output_tokens:null;
   const total=Number.isSafeInteger(usage.total_tokens)?usage.total_tokens:
-    (input!==null&&output!==null?input+output:null);
+    (usage.complete!==false&&input!==null&&output!==null?input+output:null);
   receipt.append(
     node("strong","","Токены"),
     node("span","","Вход: "+formatTokens(input)),
@@ -595,7 +595,7 @@ async function send(){
       result.tool_calls+" вызовов MCP":"Ответ без инструментов";
   }catch(exc){
     pending.wrap.classList.remove("working");
-    pending.body.textContent="Ошибка: "+String(exc.message||exc);
+    pending.body.textContent="Ошибка: "+String(exc.message||exc)+" | ID: "+runId;
     $("sendStatus").textContent="Ошибка подключения";
   }finally{
     busy(false,"qwen");await usageWatch;$("messageInput").focus();toBottom();
@@ -731,14 +731,14 @@ async function sendGPT(){
       userMessage.wrap.append(details);
     }
     $("sendStatus").textContent=(result.source==="chatgpt_plan_responses_partial"?
-      "ChatGPT прервал цикл · частичные результаты сохранены":
+      "ChatGPT прервал цикл · частичные результаты сохранены | ID: "+runId:
       "Ответ ChatGPT · диалог сохранён")+
       (result.tool_events && result.tool_events.length ? " · инструментов: "+result.tool_events.length : "");
     void refreshGPTThreads();
   void refreshCollabRuns();
   }catch(err){
     pending.wrap.classList.remove("working");
-    pending.body.textContent="Ошибка: "+String(err.message||err);
+    pending.body.textContent="Ошибка: "+String(err.message||err)+" | ID: "+runId;
     $("sendStatus").textContent="Ошибка GPT";
   }finally{busy(false,"gpt");await usageWatch;$("messageInput").focus();toBottom();}
 }

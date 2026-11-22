@@ -216,7 +216,12 @@ class OpenAICompatibleClient:
             output_tokens = raw_usage.get("completion_tokens", raw_usage.get("output_tokens"))
             prompt_tokens = prompt_tokens if type(prompt_tokens) is int and prompt_tokens >= 0 else None
             output_tokens = output_tokens if type(output_tokens) is int and output_tokens >= 0 else None
+            details = raw_usage.get("prompt_tokens_details")
+            cached = raw_usage.get("prompt_cache_hit_tokens")
+            if cached is None and isinstance(details, dict):
+                cached = details.get("cached_tokens")
             response["_usage"] = {
+                "cached_tokens": cached if type(cached) is int and cached >= 0 else None,
                 "input_tokens": prompt_tokens,
                 "output_tokens": output_tokens,
                 "total_tokens": raw_usage.get("total_tokens")

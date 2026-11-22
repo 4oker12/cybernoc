@@ -68,7 +68,7 @@ class SignInTests(unittest.TestCase):
         self.assertEqual(status["email"], "test@example.test")
         self.assertNotIn("access_token", str(status))
         stored = self.root / "siwc" / "connection.json"
-        data = json.loads(stored.read_text())
+        data = json.loads(stored.read_text(encoding="utf-8"))
         self.assertEqual(data["client_id"], "oaiapp_test123")
         self.assertEqual(data["refresh_token"], "refresh-123")
         if os.name != "nt":
@@ -154,8 +154,8 @@ class SignInTests(unittest.TestCase):
         self.assertFalse(allowed_path("/auth/callback", "POST"))
 
     def test_browser_wiring_and_explicit_upload_only(self):
-        html = (ROOT / "console/static/index.html").read_text()
-        js = (ROOT / "console/static/app.js").read_text()
+        html = (ROOT / "console/static/index.html").read_text(encoding="utf-8")
+        js = (ROOT / "console/static/app.js").read_text(encoding="utf-8")
         self.assertIn('data-oai-siwc-button', html)
         self.assertIn('id="chatgptModel"', html)
         self.assertIn("connectChatGPT", js)

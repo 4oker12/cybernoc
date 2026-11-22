@@ -81,11 +81,68 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertEqual(item["level"], "ERROR")
             self.assertEqual(item["logger"], "cybernova.failure")
             self.assertTrue(item["frames"])
+            self.assertNotIn("exception", item)
             self.assertIn("run-safe-id", item["message"])
             self.assertNotIn("veryprivate", report)
             self.assertNotIn("topsecret123", report)
             self.assertTrue((folder / "console.jsonl").is_file())
             self.assertFalse((folder / "supervisor.jsonl").exists())
+
+    def test_chat_turns_record_usage_and_adapter_status_without_payloads(self):
+        from types import SimpleNamespace
+        run = SimpleNamespace(run_id="a" * 32, message="private prompt")
+        observe = diagnostics.observe_chat("researcher", lambda p: ("DeepSeek", "test-model"),
+                                           lambda run_id: {})
+
+        @observe
+        def ok(payload):
+            return {"answer": "private answer", "usage": {"input_tokens": 19, "cached_tokens": 0}}
+
+        @observe
+        def fail(payload):
+            try:
+                try:
+                    raise OSError("private upstream body")
+                except OSError:
+                    raise ValueError("llm_http_429") from None
+            except ValueError as exc:
+                raise RuntimeError("private wrapper") from exc
+
+        with self.journal():
+            ok(run)
+            with self.assertRaises(RuntimeError):
+                fail(run)
+            report = diagnostics.export_jsonl().decode()
+        self.assertNotIn("private", report)
+        success, error = [json.loads(line)["chat_turn"] for line in report.splitlines()[1:]]
+        self.assertEqual(success["run_id"], run.run_id)
+        self.assertEqual(success["cached_tokens"], 0)
+        self.assertIsNone(success["output_tokens"])
+        self.assertEqual(error["upstream_http_status"], 429)
+        self.assertEqual(error["stage"], "provider_http")
+
+    def test_account_gpt_partial_event_omits_response_text_and_uses_progress(self):
+        from types import SimpleNamespace
+        run = SimpleNamespace(run_id="b" * 32)
+
+        @diagnostics.observe_chat("account_gpt", lambda p: ("OpenAI Responses", "test-model"),
+                                  lambda run_id: {"usage": {"input_tokens": 21}})
+        def partial(payload):
+            return {"answer": "arbitrary response fragment",
+                    "source": "chatgpt_plan_responses_partial",
+                    "error_code": "gpt_stream_incomplete"}
+
+        with self.journal():
+            partial(run)
+            report = diagnostics.export_jsonl().decode()
+        self.assertNotIn("arbitrary response fragment", report)
+        item = json.loads(report.splitlines()[1])["chat_turn"]
+        self.assertEqual(item["run_id"], run.run_id)
+        self.assertEqual(item["provider"], "OpenAI Responses")
+        self.assertEqual(item["status"], "partial")
+        self.assertEqual(item["stage"], "provider_stream")
+        self.assertEqual(item["input_tokens"], 21)
+        self.assertIsNone(item["cached_tokens"])
 
     def test_export_merges_services_without_leaking_unlisted_files(self):
         with self.temp_folder() as folder:
@@ -109,6 +166,19 @@ class DiagnosticsTests(unittest.TestCase):
             )
             self.assertNotIn("secreta", str(rows))
             self.assertNotIn("SHOULD_NOT_EXPORT", str(rows))
+
+    def test_export_drops_legacy_exception_text_and_nested_payload_fields(self):
+        with self.temp_folder() as folder:
+            row = {"component": "console", "message": "chat turn failed",
+                   "exception": "legacy private data", "chat_turn": {
+                       "run_id": "f" * 32, "status": "failed", "input_tokens": 0,
+                       "prompt": "private prompt", "error_code": "private upstream body"}}
+            (folder / "console.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+            report = diagnostics.export_jsonl().decode()
+        self.assertNotIn("private", report)
+        chat = json.loads(report.splitlines()[1])["chat_turn"]
+        self.assertEqual(chat["input_tokens"], 0)
+        self.assertIsNone(chat["error_code"])
 
     def test_error_logs_rotate_below_a_bounded_total(self):
         with self.journal() as folder:

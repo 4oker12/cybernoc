@@ -147,6 +147,8 @@ def _normalized_usage(raw: object) -> dict:
     raw = raw if isinstance(raw, dict) else {}
     input_tokens = raw.get("input_tokens")
     output_tokens = raw.get("output_tokens")
+    details = raw.get("input_tokens_details")
+    cached = details.get("cached_tokens") if isinstance(details, dict) else None
     total_tokens = raw.get("total_tokens")
     input_tokens = input_tokens if type(input_tokens) is int and input_tokens >= 0 else None
     output_tokens = output_tokens if type(output_tokens) is int and output_tokens >= 0 else None
@@ -157,6 +159,7 @@ def _normalized_usage(raw: object) -> dict:
     return {
         "input_tokens": input_tokens, "output_tokens": output_tokens,
         "total_tokens": total_tokens, "provider": "OpenAI Responses",
+        "cached_tokens": cached if type(cached) is int and cached >= 0 else None,
     }
 
 
@@ -364,20 +367,26 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
     tool_events = []
     total_calls = 0
     usage_totals = {"input_tokens": 0, "output_tokens": 0,
-                    "requests": 0, "measured_requests": 0}
+                    "requests": 0, "measured_requests": 0, "cached_tokens": 0, "cache_reports": 0,
+                    "input_reports": 0, "output_reports": 0}
 
     def record_usage(response):
         usage_totals["requests"] += 1
         raw = response.get("usage") if isinstance(response, dict) else None
         if not isinstance(raw, dict):
             return
-        measured = False
+        reported = 0
         for key in ("input_tokens", "output_tokens"):
             value = raw.get(key)
             if type(value) is int and value >= 0:
                 usage_totals[key] += value
-                measured = True
-        if measured:
+                usage_totals[key.split("_", 1)[0] + "_reports"] += 1
+                reported += 1
+        cached = raw.get("cached_tokens")
+        if type(cached) is int and cached >= 0:
+            usage_totals["cached_tokens"] += cached
+            usage_totals["cache_reports"] += 1
+        if reported == 2:
             usage_totals["measured_requests"] += 1
 
     def publish_usage():
@@ -388,16 +397,19 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                 pass
 
     def usage_report():
-        measured = usage_totals["measured_requests"] > 0
+        available = bool(usage_totals["input_reports"] or usage_totals["output_reports"])
+        complete = bool(usage_totals["requests"]) and usage_totals["measured_requests"] == usage_totals["requests"]
         return {
-            "available": measured,
-            "input_tokens": usage_totals["input_tokens"] if measured else None,
-            "output_tokens": usage_totals["output_tokens"] if measured else None,
+            "available": available,
+            "input_tokens": usage_totals["input_tokens"] if usage_totals["input_reports"] else None,
+            "output_tokens": usage_totals["output_tokens"] if usage_totals["output_reports"] else None,
             "total_tokens": (usage_totals["input_tokens"] + usage_totals["output_tokens"])
-                if measured else None,
+                if complete else None,
+            "cached_tokens": usage_totals["cached_tokens"]
+                if usage_totals["requests"] and usage_totals["cache_reports"] == usage_totals["requests"] else None,
             "requests": usage_totals["requests"],
             "measured_requests": usage_totals["measured_requests"],
-            "complete": measured and usage_totals["measured_requests"] == usage_totals["requests"],
+            "complete": complete,
             "provider": "OpenAI Responses",
         }
 

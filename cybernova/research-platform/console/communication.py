@@ -6,6 +6,7 @@ No network, Ollama, or MCP dependency in this module.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -69,12 +70,17 @@ class CommunicationStore:
             raise CommunicationError("database_path_symlink_forbidden")
         self._setup()
 
-    def _connection(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connection(self):
         db = sqlite3.connect(str(self.path), timeout=10, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=10000")
-        db.execute("PRAGMA foreign_keys=ON")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=10000")
+            db.execute("PRAGMA foreign_keys=ON")
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def _setup(self) -> None:
         with self._lock:

@@ -1,5 +1,6 @@
 """Regression coverage for independent GPT conversations and readable UI."""
 from __future__ import annotations
+import gc
 import json
 from pathlib import Path
 import shutil
@@ -20,6 +21,7 @@ class GPTConversationTests(unittest.TestCase):
     def setUp(self):
         tmp=tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
+        self.addCleanup(gc.collect)
         self.path=Path(tmp.name)/"comms.sqlite3"
         self.qwen=communication.CommunicationStore(self.path)
         self.store=siwc_chat_store.GPTChatStore(self.path)
@@ -37,6 +39,18 @@ class GPTConversationTests(unittest.TestCase):
         self.assertEqual(len(self.qwen.read_dialog(task["task_id"])["messages"]),0)
         reopened=siwc_chat_store.GPTChatStore(self.path)
         self.assertEqual(len(reopened.get_thread(tid)["messages"]),4)
+
+    def test_gpt_tool_receipts_are_visible_but_not_replayed_in_model_context(self):
+        thread_id = self.store.save_exchange(None, "gpt-test", "Look it up", "Short answer")
+        self.store.save_tool_events(thread_id, [{
+            "name": "browser_snapshot", "arguments": {},
+            "result": {"text": "OLD_RAW_TOOL_OUTPUT"},
+        }])
+        self.assertIn("OLD_RAW_TOOL_OUTPUT", json.dumps(self.store.get_thread(thread_id)))
+        self.assertEqual(self.store.context(thread_id), [
+            {"role": "user", "content": "Look it up"},
+            {"role": "assistant", "content": "Short answer"},
+        ])
 
     def test_gpt_api_uses_only_its_own_context_without_mcp(self):
         conversations=[]
@@ -98,9 +112,9 @@ class GPTConversationTests(unittest.TestCase):
         self.assertFalse(allowed_path("/api/siwc/tokens","GET"))
 
     def test_markup_is_loaded_once_and_has_no_html_execution(self):
-        html=(ROOT/"console/static/index.html").read_text()
-        js=(ROOT/"console/static/markdown.js").read_text()
-        app=(ROOT/"console/static/app.js").read_text()
+        html=(ROOT/"console/static/index.html").read_text(encoding="utf-8")
+        js=(ROOT/"console/static/markdown.js").read_text(encoding="utf-8")
+        app=(ROOT/"console/static/app.js").read_text(encoding="utf-8")
         self.assertEqual(html.count('src="/static/markdown.js"'),1)
         self.assertNotIn("innerHTML",js.split("(function () {",1)[1])
         self.assertIn("CybernovaMarkdown.render",app)

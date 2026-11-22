@@ -8,6 +8,9 @@ tool arguments or response bodies are intentionally recorded.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from functools import wraps
+from inspect import signature
+import time
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -16,6 +19,10 @@ from pathlib import Path
 import re
 import threading
 import traceback
+
+CHAT_LOG = logging.getLogger("cybernova.chat_turn")
+CHAT_LOG.setLevel(logging.INFO)
+CHAT_LOG.addHandler(logging.NullHandler())
 
 MAX_FILE_BYTES = 256 * 1024
 BACKUP_COUNT = 2
@@ -77,10 +84,12 @@ class JSONLineFormatter(logging.Formatter):
             "message": scrub(record.getMessage()),
             "process_id": record.process,
         }
+        if record.name == CHAT_LOG.name and hasattr(record, "chat_turn"):
+            data["chat_turn"] = record.chat_turn
         if record.exc_info and record.exc_info[1]:
             exception = record.exc_info[1]
             data["exception_type"] = type(exception).__name__
-            data["exception"] = scrub(exception, 600)
+            # Exception messages can contain arbitrary user or provider payloads.
             frames = traceback.extract_tb(record.exc_info[2])
             data["frames"] = [
                 f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
@@ -90,7 +99,7 @@ class JSONLineFormatter(logging.Formatter):
 
 
 def configure(component: str) -> None:
-    """Attach one ERROR-only rotating handler per *process*; no stdout changes."""
+    """Attach one rotating handler per *process*; no stdout changes."""
     if component not in COMPONENTS:
         raise ValueError("unknown_diagnostics_component")
     key = (os.getpid(), component)
@@ -103,7 +112,11 @@ def configure(component: str) -> None:
             folder / (component + ".jsonl"),
             maxBytes=MAX_FILE_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8",
         )
-        handler.setLevel(logging.ERROR)
+        handler.setLevel(logging.INFO if component == "console" else logging.ERROR)
+        if component == "console":
+            handler.addFilter(lambda r: r.levelno >= logging.ERROR or r.name == CHAT_LOG.name)
+        else:
+            handler.addFilter(lambda r: r.name != CHAT_LOG.name)
         handler.setFormatter(JSONLineFormatter(component))
         logging.getLogger().addHandler(handler)
         try:
@@ -123,6 +136,128 @@ def failure(component: str, operation: str, exc: BaseException, *,
         scrub(operation, 100), safe_type, identifier,
         exc_info=(type(exc), exc, exc.__traceback__),
     )
+
+
+_ADAPTER_CODE = re.compile(
+    r"(?:gpt|llm|models)_http_[1-5][0-9]{2}|"
+    r"gpt_(?:stream_(?:incomplete|too_large)|transport_unavailable|"
+    r"response_(?:failed|empty)|reply_too_large|tool_calling_unsupported)|"
+    r"llm_(?:transport_(?:URLError|TimeoutError|OSError|ValueError)|"
+    r"response_too_large|choices_missing|message_missing)"
+)
+
+
+def adapter_error_code(exc):
+    value = exc.args[0] if exc.args else None
+    return value if isinstance(value, str) and _ADAPTER_CODE.fullmatch(value) else None
+
+
+def _chat_error(exc):
+    # urllib exceptions may be hidden by a stable adapter error, which may
+    # itself be wrapped by an HTTP exception. Keep the first known code.
+    chain = set()
+    root = exc
+    while exc is not None and id(exc) not in chain:
+        chain.add(id(exc))
+        root = exc
+        code = adapter_error_code(exc)
+        if code is not None:
+            return exc, code
+        exc = exc.__cause__ or exc.__context__
+    return root, None
+
+
+_CHAT_TOKEN_FIELDS = ("input_tokens", "output_tokens", "cached_tokens", "total_tokens",
+                      "requests", "measured_requests")
+
+
+def _export_chat_turn(fields):
+    if not isinstance(fields, dict):
+        return None
+    run_id = fields.get("run_id")
+    if not isinstance(run_id, str) or not re.fullmatch(r"[0-9a-f]{32}", run_id):
+        return None
+    result = {"run_id": run_id}
+    for key in (*_CHAT_TOKEN_FIELDS, "duration_ms", "tool_errors", "http_status", "upstream_http_status"):
+        value = fields.get(key)
+        result[key] = value if type(value) is int and value >= 0 else None
+    for key, limit in (("provider", 80), ("model", 160)):
+        value = fields.get(key)
+        result[key] = scrub(value, limit) if isinstance(value, str) else None
+    for key, allowed in (
+        ("mode", ("account_gpt", "researcher")),
+        ("status", ("failed", "partial", "completed")),
+        ("stage", ("chat_turn", "provider_http", "provider_stream", "provider_transport", "provider_response")),
+    ):
+        value = fields.get(key)
+        result[key] = value if value in allowed else None
+    for key, pattern in (("error_type", re.compile(r"[A-Za-z_][A-Za-z_0-9]{0,79}")),
+                         ("error_code", _ADAPTER_CODE)):
+        value = fields.get(key)
+        result[key] = value if isinstance(value, str) and pattern.fullmatch(value) else None
+    result["usage_complete"] = fields.get("usage_complete") if type(fields.get("usage_complete")) is bool else None
+    return result
+
+
+def observe_chat(mode, backend, latest_usage):
+    """One metadata-only terminal event per chat turn, including partial turns."""
+    def decorate(func):
+        @wraps(func)
+        def wrapped(payload):
+            start = time.monotonic()
+            result = error = None
+            try:
+                result = func(payload)
+                return result
+            except Exception as exc:
+                error = exc
+                raise
+            finally:
+                try:
+                    valid_run_id = re.fullmatch(r"[0-9a-f]{32}", payload.run_id) is not None
+                    provider, model = backend(payload)
+                    result = result if isinstance(result, dict) else {}
+                    progress = latest_usage(payload.run_id) or {}
+                    usage = result.get("usage") or progress.get("usage") or {}
+                    partial = result.get("source") == "chatgpt_plan_responses_partial"
+                    status = "failed" if error is not None else "partial" if partial else "completed"
+                    root, code = _chat_error(error) if error is not None else (None, result.get("error_code"))
+                    stage, upstream = "chat_turn", None
+                    if isinstance(code, str) and _ADAPTER_CODE.fullmatch(code):
+                        if "_http_" in code:
+                            stage, upstream = "provider_http", int(code.rsplit("_", 1)[1])
+                        elif "_stream_" in code:
+                            stage = "provider_stream"
+                        elif "_transport_" in code:
+                            stage = "provider_transport"
+                        else:
+                            stage = "provider_response"
+                    else:
+                        code = None
+                    fields = dict(run_id=payload.run_id, mode=mode, provider=scrub(provider, 80),
+                                  model=scrub(model, 160), status=status, stage=stage,
+                                  duration_ms=round((time.monotonic()-start)*1000),
+                                  error_type=(type(root).__name__ if root is not None else
+                                              "SIWCError" if partial else None),
+                                  error_code=code, upstream_http_status=upstream,
+                                  http_status=getattr(error, "status_code", 500) if error else 200)
+                    events = result.get("tool_events", result.get("events", []))
+                    if isinstance(events, list):
+                        fields["tool_errors"] = sum(
+                            event.get("is_error") is True for event in events if isinstance(event, dict)
+                        ) if result else None
+                    fields["usage_complete"] = usage.get("complete")
+                    for key in _CHAT_TOKEN_FIELDS:
+                        value = usage.get(key)
+                        fields[key] = value if type(value) is int and value >= 0 else None
+                    if valid_run_id:
+                        CHAT_LOG.log(logging.INFO if status == "completed" else logging.ERROR,
+                                     "chat turn %s", status, extra={"chat_turn": fields})
+                except Exception:
+                    pass  # A broken journal must not break chat.
+        wrapped.__signature__ = signature(func, eval_str=True)
+        return wrapped
+    return decorate
 
 
 def export_jsonl() -> bytes:
@@ -152,13 +287,15 @@ def export_jsonl() -> bytes:
                                 key: value for key, value in obj.items()
                                 if key in {"time", "component", "level", "logger",
                                            "message", "process_id", "exception_type",
-                                           "exception", "frames"}
+                                           "frames", "chat_turn"}
                             }
                             if item.get("component") != component:
                                 continue
                             item["message"] = scrub(item.get("message", ""))
-                            if "exception" in item:
-                                item["exception"] = scrub(item["exception"], 600)
+                            if "chat_turn" in item:
+                                chat_turn = _export_chat_turn(item.pop("chat_turn"))
+                                if component == "console" and chat_turn is not None:
+                                    item["chat_turn"] = chat_turn
                             if isinstance(item.get("frames"), list):
                                 item["frames"] = [scrub(v, 150) for v in item["frames"][:16]]
                             entries.append(item)
