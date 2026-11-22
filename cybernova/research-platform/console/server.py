@@ -469,8 +469,10 @@ def collaboration_resume(payload: CollaborationActionRequest):
 @app.post("/api/collab/finish")
 def collaboration_finish(payload: CollaborationActionRequest):
     try:
-        return collaboration_store().finish(payload.task_id)
-    except (CollaborationError, CommunicationError) as exc:
+        run = collaboration_store().finish(payload.task_id)
+        gpt_tool_runtime.close_session(payload.task_id)
+        return run
+    except (CollaborationError, CommunicationError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
