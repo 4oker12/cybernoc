@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import subprocess
 from threading import RLock
 import time
 from urllib import request, error, parse
@@ -37,8 +38,8 @@ try:
     from .research_web import research_web_call
     from .collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
     from .gpt_tool_runtime import (
-        runtime as gpt_tool_runtime, extract_user_targets,
-        normalize_tool_groups, tool_group_summary,
+        runtime as gpt_tool_runtime, deepseek_runtime as deepseek_tool_runtime,
+        extract_user_targets, normalize_tool_groups, tool_group_summary,
     )
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
@@ -69,8 +70,8 @@ except ImportError:
     from research_web import research_web_call
     from collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
     from gpt_tool_runtime import (
-        runtime as gpt_tool_runtime, extract_user_targets,
-        normalize_tool_groups, tool_group_summary,
+        runtime as gpt_tool_runtime, deepseek_runtime as deepseek_tool_runtime,
+        extract_user_targets, normalize_tool_groups, tool_group_summary,
     )
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
@@ -87,6 +88,32 @@ except ImportError:
     from model_settings import ModelSettingsError, apply_model_settings, get_model_settings
 
 ROOT = Path(__file__).resolve().parent
+
+
+@lru_cache(maxsize=1)
+def _source_commit() -> str:
+    configured = os.environ.get("CYBERNOVA_SOURCE_COMMIT", "").strip()
+    if configured and configured.lower() not in {"unknown", "uncommitted"}:
+        return configured
+    repository = Path(
+        os.environ.get("CYBERNOVA_DEV_SOURCE") or ROOT.parents[3]
+    ).expanduser()
+    try:
+        revision = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True, timeout=3,
+        ).stdout.strip()
+        if len(revision) != 40 or any(char not in "0123456789abcdef" for char in revision.lower()):
+            return "unknown"
+        dirty = subprocess.run(
+            ["git", "-C", str(repository), "status", "--porcelain"],
+            check=True, capture_output=True, text=True, timeout=3,
+        ).stdout
+        return "uncommitted:" + revision[:12] if dirty.strip() else revision
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
 MAX_SESSIONS = 24
 SESSION_TTL_SECONDS = 7200
 MAX_HISTORY = 16
@@ -94,7 +121,7 @@ sessions: OrderedDict[str, dict] = OrderedDict()
 sessions_lock = RLock()
 run_usage_progress: OrderedDict[str, dict] = OrderedDict()
 run_usage_lock = RLock()
-agent = Agent(local_tool_runtime=gpt_tool_runtime)
+agent = Agent(local_tool_runtime=deepseek_tool_runtime)
 
 
 def _begin_usage_progress(run_id: str) -> None:
@@ -187,6 +214,7 @@ async def lifespan(app):
     finally:
         if worker is not None:
             worker.stop()
+        deepseek_tool_runtime.close()
         gpt_tool_runtime.close()
 
 
@@ -763,7 +791,7 @@ def status():
     ))
     return {
         "model": getattr(agent.ollama, "model", MODEL),
-        "source_commit": os.environ.get("CYBERNOVA_SOURCE_COMMIT","unknown"),
+        "source_commit": _source_commit(),
         "ollama_ready": _ollama_health() if os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama") == "ollama" else False,
         "model_provider": os.environ.get("CYBERNOVA_LLM_PROVIDER", "ollama"),
         "model_remote_configured": os.environ.get("CYBERNOVA_LLM_PROVIDER") == "openai_compatible",
