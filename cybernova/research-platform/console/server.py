@@ -1,6 +1,6 @@
 """Cybernova first-party local browser chat console.
 
-Run only on loopback, reached via authenticated SSH port forwarding.
+Run only on loopback; the native Windows UI connects through the authenticated local gateway on 127.0.0.1:18795.
 No reverse proxy exposure, signup, credentials, database or production access.
 """
 from __future__ import annotations
