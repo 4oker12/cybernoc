@@ -12,7 +12,7 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
     gpt:{input:0,output:0,total:0,measuredTurns:0}
   },
   lastUsage:{qwen:null,gpt:null},
-  collabRun:null,collabLoopTasks:new Set(),collabStopRequests:new Set()};
+  collabRun:null,collabLoopTasks:new Set(),collabStopRequests:new Set(),collabActivity:new Map()};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка интерфейса",
@@ -1403,6 +1403,41 @@ function renderCollabEntry(message){
   $("collabLog").append(article);
 }
 
+function renderCollabActivity(taskId, activity){
+  const log=$("collabLog");
+  log.querySelector(".collab-activity")?.remove();
+  if(!activity)return;
+  const receipts=activity.tool_receipts||[], progress=activity.progress||[];
+  if(!receipts.length&&!progress.length)return;
+  const details=node("details","collab-activity");
+  const summary=node("summary","collab-activity-summary",
+    "Ход работы · "+receipts.length+" действий · "+progress.length+" обновлений");
+  const list=node("div","collab-activity-list");
+  for(const item of progress){
+    list.append(node("p","collab-activity-item",
+      "DeepSeek · "+String(item.body||"").slice(0,600)));
+  }
+  for(const item of receipts){
+    const status=item.is_error?"ошибка / не выполнено":
+      item.event_type==="approval_required"?"ожидает разрешения":"выполнено";
+    const row=node("p","collab-activity-item",
+      String(item.tool_name||"Инструмент")+" · "+status);
+    if(item.created_at)row.title=item.created_at;
+    list.append(row);
+  }
+  details.append(summary,list);
+  log.append(details);
+}
+async function refreshCollabActivity(taskId){
+  try{
+    const response=await fetch("/api/collab/activity?task_id="+encodeURIComponent(taskId),
+      {cache:"no-store"});
+    if(!response.ok)return;
+    const activity=await response.json();
+    state.collabActivity.set(taskId,activity);
+    if(state.collabRun?.task_id===taskId)renderCollabActivity(taskId,activity);
+  }catch(_){}
+}
 function renderCollabRun(run){
   if(!run)return;
   state.collabRun=run;
@@ -1435,6 +1470,7 @@ function renderCollabRun(run){
       log.append(node("p","collab-notice",m.body));
     }
   }
+  renderCollabActivity(run.task_id,state.collabActivity.get(run.task_id));
   toBottom();
 }
 async function refreshCollabRuns(){
@@ -1500,6 +1536,8 @@ async function continueCollab(taskId=state.collabRun?.task_id){
   state.collabLoopTasks.add(taskId);
   state.collabStopRequests.delete(taskId);
   let run=null;
+  const activityTimer=setInterval(()=>{void refreshCollabActivity(taskId);},1200);
+  void refreshCollabActivity(taskId);
   try{
     const initial=await fetch("/api/collab/run?task_id="+encodeURIComponent(taskId),{cache:"no-store"});
     run=await initial.json();
@@ -1530,8 +1568,10 @@ async function continueCollab(taskId=state.collabRun?.task_id){
       }
     }catch(_){}
   }finally{
+    clearInterval(activityTimer);
     state.collabLoopTasks.delete(taskId);
     if(state.collabRun?.task_id===taskId&&run)renderCollabRun(run);
+    void refreshCollabActivity(taskId);
     void refreshCollabRuns();
   }
 }
