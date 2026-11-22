@@ -86,7 +86,7 @@ class BrowserControlTests(unittest.TestCase):
             preferences = default / "Preferences"
             original = {
                 "profile": {"exit_type": "Normal", "name": "Cybernova"},
-                "session": {"restore_on_startup": 5, "startup_urls": ["https://example.org"]},
+                "session": {"restore_on_startup": 1, "startup_urls": ["https://example.org"]},
                 "intl": {"accept_languages": "ru,en"},
             }
             preferences.write_text(json.dumps(original), encoding="utf-8")
@@ -98,11 +98,11 @@ class BrowserControlTests(unittest.TestCase):
             backup = json.loads(
                 (default / "Preferences.cybernova-backup").read_text(encoding="utf-8")
             )
-            self.assertEqual(updated["session"]["restore_on_startup"], 1)
+            self.assertEqual(updated["session"]["restore_on_startup"], 5)
             self.assertEqual(updated["session"]["startup_urls"], ["https://example.org"])
             self.assertEqual(updated["profile"], original["profile"])
             self.assertEqual(updated["intl"], original["intl"])
-            self.assertEqual(backup["session"]["restore_on_startup"], 5)
+            self.assertEqual(backup["session"]["restore_on_startup"], 1)
             self.assertEqual(cookies.read_bytes(), b"preserve-existing-cookie-database")
             self.assertFalse(_disable_profile_session_restore(profile))
 
