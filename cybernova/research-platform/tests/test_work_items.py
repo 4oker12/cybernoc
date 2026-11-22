@@ -133,6 +133,34 @@ class WorkItemTests(unittest.TestCase):
         self.work.retry(task_id, items[0]["item_id"])
         self.assertEqual(self.work.get_item(task_id, items[0]["item_id"])["state"], "rework")
 
+    def test_manual_recovery_unblocks_parent_without_replaying_tools(self):
+        run = self.create()
+        task_id = run["task_id"]
+        items = self.work.create_plan(task_id, sample_plan())
+        self.work.claim(task_id, items[0]["item_id"])
+        self.work.recover_interrupted()
+        self.comm.set_state(task_id, "blocked")
+        self.assertEqual(self.collab.read(task_id, recover=False)["state"], "blocked")
+        parent = self.work.recover_task(task_id)
+        self.assertEqual(parent["state"], "paused")
+        self.assertEqual(self.comm.get_task(task_id)["status"], "idle")
+        self.assertEqual(self.work.get_item(task_id, items[0]["item_id"])["state"],
+                         "blocked")
+        self.collab.resume(task_id)
+        with self.assertRaisesRegex(WorkItemError, "not_claimable"):
+            self.work.claim(task_id, items[0]["item_id"])
+        self.work.retry(task_id, items[0]["item_id"])
+        self.assertEqual(self.work.claim(task_id, items[0]["item_id"])[1], "research")
+
+    def test_recovery_denies_uncertain_live_execution(self):
+        run = self.create()
+        task_id = run["task_id"]
+        items = self.work.create_plan(task_id, sample_plan())
+        self.work.claim(task_id, items[0]["item_id"])
+        self.comm.set_state(task_id, "blocked")
+        with self.assertRaisesRegex(WorkItemError, "inflight_unknown"):
+            self.work.recover_task(task_id)
+
     def test_pause_finish_does_not_autoschedule_or_replay_inflight(self):
         run = self.create()
         task_id = run["task_id"]
@@ -166,7 +194,8 @@ class WorkItemTests(unittest.TestCase):
                 with guard:
                     FakeAgent.count += 1
                     seq = FakeAgent.count
-                    seen.append({"session": kwargs.get("session_id"), "prompt": prompt})
+                    seen.append({"session": kwargs.get("session_id"), "prompt": prompt,
+                                 "trusted": kwargs.get("trusted_user_messages")})
                 if seq <= 2:
                     rendezvous.wait(timeout=5)
                 return {"answer": "Лабораторный результат " + str(seq),
@@ -210,6 +239,13 @@ class WorkItemTests(unittest.TestCase):
             self.assertEqual({x["session"] for x in seen},
                              {i["item_id"] for i in items[:2]})
             self.assertTrue(all("новое уточнение" in x["prompt"] for x in seen))
+            self.assertTrue(all(
+                "новое уточнение" in x["trusted"][1]["content"] for x in seen
+            ))
+            self.assertTrue(all(
+                x["trusted"][0]["content"] == "Проверить тестовую лабораторию"
+                for x in seen
+            ))
             self.assertFalse(self.work.get_item(task_id, items[2]["item_id"])["ready"])
             for item in items[:2]:
                 result = client.post("/api/collab/items/step", json={
@@ -241,6 +277,7 @@ class WorkItemTests(unittest.TestCase):
             ("/api/collab/items/plan", "POST"),
             ("/api/collab/items/step", "POST"),
             ("/api/collab/items/retry", "POST"),
+            ("/api/collab/items/recover", "POST"),
         ]:
             self.assertTrue(allowed_path(url, method), url)
         self.assertFalse(allowed_path("/api/collab/items/remove", "POST"))
