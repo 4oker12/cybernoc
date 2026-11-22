@@ -6,6 +6,7 @@ on:
       - feature/full-shell-computer-discovery
     paths:
       - cybernova/research-platform/**
+      - AGENTS.md
       - .github/workflows/cybernova-windows-readonly-smoke.yml
 
 concurrency:
