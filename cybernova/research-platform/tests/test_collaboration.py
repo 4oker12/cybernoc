@@ -86,11 +86,12 @@ class CollaborationTests(unittest.TestCase):
 
     def test_tool_activity_receipt_is_persisted_incrementally(self):
         run = self.collab.create("Проверить локальную активность", "gpt-test", 1)
-        server._record_collaboration_tool_event(run["task_id"], {
-            "type": "tool_result", "name": "http_get",
-            "arguments": {"url": "https://example.org/"},
-            "result": {"status": 200}, "is_error": False,
-        })
+        with patch.object(server, "communication_store", return_value=self.comm):
+            server._record_collaboration_tool_event(run["task_id"], {
+                "type": "tool_result", "name": "http_get",
+                "arguments": {"url": "https://example.org/"},
+                "result": {"status": 200}, "is_error": False,
+            })
         receipts = EvidenceJournal(self.comm).list_tool_receipts(run["task_id"])
         self.assertEqual(len(receipts), 1)
         self.assertEqual(receipts[0]["tool_name"], "http_get")
