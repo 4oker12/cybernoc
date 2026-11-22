@@ -30,9 +30,9 @@ except ImportError:
     )
 
 try:
-    from .agent_profile import AGENT_PROFILE
+    from .agent_profile import AGENT_PROFILE, AGENT_PROFILE_TEXT_ONLY
 except ImportError:
-    from agent_profile import AGENT_PROFILE
+    from agent_profile import AGENT_PROFILE, AGENT_PROFILE_TEXT_ONLY
 
 OLLAMA_URL = os.environ.get("CYBERNOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MCP_URL = os.environ.get("CYBERNOVA_MCP_URL", "http://127.0.0.1:18792/mcp")
@@ -49,6 +49,7 @@ OFFLINE_TOOLS = frozenset({
 })
 ACTIVE_TOOLS = frozenset({"http_get"})
 BASE_SYSTEM = AGENT_PROFILE
+BASE_SYSTEM_TEXT_ONLY = AGENT_PROFILE_TEXT_ONLY
 
 
 class BackendError(RuntimeError):
@@ -259,7 +260,7 @@ class Agent:
     def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True,
             scope: dict | None = None, user_context: str = "",
             profile_instructions: str = "", tool_groups: list[str] | None = None,
-            on_usage=None) -> dict:
+            tools_enabled: bool = True, on_usage=None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
         selected_groups = normalize_tool_groups(tool_groups or [])
@@ -310,7 +311,8 @@ class Agent:
             }
         # Only client-visible role/content history enters the model; never forward
         # hidden arguments or previous tool outputs as executable instructions.
-        context = [{"role": "system", "content": BASE_SYSTEM}]
+        context = [{"role": "system", "content":
+                    BASE_SYSTEM if tools_enabled else BASE_SYSTEM_TEXT_ONLY}]
         if user_context:
             context.append({"role": "system", "content": user_context[:8500]})
         if profile_instructions:
@@ -351,31 +353,33 @@ class Agent:
         )
         mcp = None
         remote_rows = []
-        try:
-            mcp = self.mcp_factory()
-            remote_rows = mcp.initialize()
-        except (BackendError, ToolPolicyError) as exc:
-            events.append({"type": "mcp_error", "message": str(exc)[:240]})
-        local_rows = (
-            self.local_tool_runtime.mcp_tools(selected_groups)
-            if self.local_tool_runtime is not None else []
-        )
-        if selected_groups:
-            remote_rows = filter_tool_rows(remote_rows, selected_groups)
-        local_names = {row["name"] for row in local_rows}
-        combined_rows = local_rows + [
-            row for row in remote_rows
-            if isinstance(row, dict)
-            and row.get("name") not in local_names
-            and not (self.local_tool_runtime is not None and row.get("name") == "browser_open")
-        ]
-        try:
-            registered = discovered_tools(combined_rows)
-            descriptors = {t["name"]: t for t in registered}
-            tools = _tool_schema(registered)
-        except ToolPolicyError as exc:
-            events.append({"type": "tool_catalog_error", "message": str(exc)[:240]})
-            descriptors, tools = {}, []
+        descriptors, tools = {}, []
+        if tools_enabled:
+            try:
+                mcp = self.mcp_factory()
+                remote_rows = mcp.initialize()
+            except (BackendError, ToolPolicyError) as exc:
+                events.append({"type": "mcp_error", "message": str(exc)[:240]})
+            local_rows = (
+                self.local_tool_runtime.mcp_tools(selected_groups)
+                if self.local_tool_runtime is not None else []
+            )
+            if selected_groups:
+                remote_rows = filter_tool_rows(remote_rows, selected_groups)
+            local_names = {row["name"] for row in local_rows}
+            combined_rows = local_rows + [
+                row for row in remote_rows
+                if isinstance(row, dict)
+                and row.get("name") not in local_names
+                and not (self.local_tool_runtime is not None and row.get("name") == "browser_open")
+            ]
+            try:
+                registered = discovered_tools(combined_rows)
+                descriptors = {t["name"]: t for t in registered}
+                tools = _tool_schema(registered)
+            except ToolPolicyError as exc:
+                events.append({"type": "tool_catalog_error", "message": str(exc)[:240]})
+                descriptors, tools = {}, []
         count, gets, executed = 0, 0, 0
         selected_by = "native"
         try:
@@ -383,7 +387,7 @@ class Agent:
                 result = self.ollama.chat(context, tools if tools and round_no < MAX_ROUNDS - 1 else [])
                 record_usage(result)
                 publish_usage()
-                calls = result.get("tool_calls") or []
+                calls = (result.get("tool_calls") or []) if tools_enabled else []
                 if (not calls and round_no == 0 and force_tools and tools):
                     # Some derivative models ignore native tool_calls. The
                     # fallback still asks the active model to SELECT tools, and every tool
