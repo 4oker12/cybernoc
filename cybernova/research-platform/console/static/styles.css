@@ -631,3 +631,20 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
 @media(max-width:680px){
   .collab-activity{margin-left:0;max-width:100%}
 }
+
+/* Bounded work-item planner: compact, transparent status and optional details. */
+.collab-work-panel{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.collab-work-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.collab-work-actions button{margin:0}
+.collab-work-actions .muted{font-size:12px;flex:1;min-width:160px}
+.collab-work-items{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr));gap:10px}
+.collab-work-card{border:1px solid var(--line);border-radius:9px;padding:12px;min-width:0}
+.collab-work-heading{display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px;font-size:13px}
+.collab-work-heading strong{font-weight:650;line-height:1.5;max-width:100%;overflow-wrap:anywhere}
+.collab-work-state{font-size:11px;color:var(--muted);font-weight:600}
+.collab-work-meta{font-size:11px;line-height:1.5;color:var(--muted);margin:7px 0}
+.collab-work-details{font-size:12px;margin:7px 0;overflow-wrap:anywhere}
+.collab-work-details summary{color:var(--muted);font-weight:600;cursor:pointer;line-height:1.4}
+.collab-work-details p{white-space:pre-wrap;line-height:1.6;padding:7px;margin:5px 0;border-radius:6px;background:var(--bg)}
+.collab-work-card button{margin-top:8px}
+@media(max-width:680px){.collab-work-panel{padding:9px}.collab-work-items{grid-template-columns:1fr}}
