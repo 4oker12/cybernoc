@@ -74,7 +74,7 @@ def ip_network_summary(cidr: str) -> dict:
 
 @mcp.tool()
 def local_webui_health() -> dict:
-    """Inspect only local WebUI service availability."""
+    """Check the local Cybernova Console API and its MCP readiness."""
     return check_local_webui()
 
 
