@@ -221,3 +221,16 @@ The following are priorities, not claims that they are already implemented:
 The file `docs/CHATGPT_PROJECT_INSTRUCTIONS.md` contains the concise text intended for the ChatGPT Project's **Project Instructions** field. A GitHub commit does not modify that ChatGPT setting. Paste the file contents into the CyberNoc Project settings manually, then keep it synchronized with `AGENTS.md`.
 
 The detailed repository rules are in `AGENTS.md`. The historical architecture notes under `docs/architecture/` should be read with their dates and stated scope; do not treat a dated statement about an earlier empty repository or a target-only design as the current runtime status.
+
+## 13. Latest GitHub state — 2026-11-22
+
+This section supersedes earlier **GitHub** branch/PR snapshots above. It does not supersede the last observed **local laptop** state.
+
+- `main`: `88455bfc39d1e8a159682afd17e01eac932c4a76` — Browser Intelligence is merged.
+- PR #23 (Browser Intelligence) is merged into `main`. Its final Research Platform Quality Gate and Windows Readonly Integration Smoke both passed.
+- PR #21 is now based on `main`, not `feature/account-gpt-local-tools`. Its current purpose is the shared agent operating contract, bounded loader for both model paths, synchronized project instructions/master context, and safe Windows updater. The shell / Computer Discovery runtime code already exists in `main`; do not describe it as new code in PR #21.
+- PR #21 head at the time of this update: `19b00fe4f7ac9c23208e46673708c74e7f3e47da`. Research Platform Quality Gate passed on its immediately preceding code-equivalent commit `62fb0b6f1e7a7f475d6ae148d60dfd7ddd824647` (342 tests and catalog/scope checks). New Quality Gate and Windows Readonly Integration Smoke runs were started for `19b00fe`; check their final results before marking the PR ready or merging.
+- PR #22 (Quick Send v3.0.2) is independently based on `main`, not PR #21. Its diff is limited to the seven Quick Send extension/package files. It is mergeable, but no GitHub Actions run is configured/reported for that branch; the stated local package tests are not CI evidence.
+- `feature/account-gpt-local-tools` is an ancestor of current `main`; it is not the base for new work. Do not revive it as a new integration target.
+- No GitHub change proves that the user's Windows laptop has pulled or run these revisions. The last recorded local observation remains branch `feature/full-shell-computer-discovery`, local HEAD `28e4a35` on 2026-11-21. Recheck local root, branch, status, origin, HEAD and port/PID ownership before any local update or restart.
+- PR #21 and PR #22 remain open drafts. Neither has been merged by this update.
