@@ -52,7 +52,7 @@ def run():
     runtime = GPTToolRuntime()
     catalog = {row["name"] for row in runtime.mcp_tools()}
     required = {
-        "terminal_status", "terminal_run", "computer_system_overview",
+        "terminal_status", "computer_system_overview",
         "computer_performance_snapshot", "computer_process_list",
         "computer_disk_overview", "computer_service_overview",
         "computer_installed_programs", "computer_startup_items",
@@ -63,13 +63,17 @@ def run():
         "browser_network", "google_search", "research_source_open",
     }
     assert required.issubset(catalog), sorted(required - catalog)
-    print(json.dumps({"test": "shared_catalog", "status": "PASS", "count": len(catalog)}))
+    assert "terminal_run" not in catalog, "terminal_run must be explicit-selection only"
+    explicit_terminal = {row["name"] for row in runtime.mcp_tools(["terminal"])}
+    assert "terminal_run" in explicit_terminal, "terminal group must expose terminal_run"
+    print(json.dumps({"test": "shared_catalog", "status": "PASS", "count": len(catalog),
+                      "explicit_terminal_run": True}))
     failures = []
     warnings = []
-    def call(name, args=None, *, important=False, detail=None):
+    def call(name, args=None, *, important=False, detail=None, enabled_groups=None):
         args = args or {}
         try:
-            result, failed = runtime.call(name, args)
+            result, failed = runtime.call(name, args, enabled_groups=enabled_groups)
         except Exception as exc:
             result, failed = {"ok": False, "error": type(exc).__name__}, True
         passed = summary(name, result, failed, detail=detail(result) if detail else None)
@@ -89,14 +93,14 @@ def run():
                 "timeout_seconds": 90, "max_output_chars": 12000,
             }, important=True, detail=lambda x: {
                 "exit_code": x.get("exit_code"), "shell": x.get("shell_id"),
-            })
+            }, enabled_groups=["terminal"])
         ps = call("terminal_run", {
             "command": "Get-Process | Select-Object -First 3 ProcessName,Id",
             "shell": "powershell", "cwd": str(Path.home()),
             "timeout_seconds": 30, "max_output_chars": 8000,
         }, important=True, detail=lambda x: {
             "exit_code": x.get("exit_code"), "shell": x.get("shell_id"),
-        })
+        }, enabled_groups=["terminal"])
         if status.get("powershell_7"):
             call("terminal_run", {
                 "command": "Get-ChildItem -Force | Select-Object -First 3 Name",
@@ -104,7 +108,7 @@ def run():
                 "timeout_seconds": 30, "max_output_chars": 8000,
             }, detail=lambda x: {
                 "exit_code": x.get("exit_code"), "shell": x.get("shell_id"),
-            })
+            }, enabled_groups=["terminal"])
 
         system = call("computer_system_overview", important=True,
                       detail=lambda x: {
