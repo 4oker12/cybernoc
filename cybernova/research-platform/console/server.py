@@ -537,7 +537,12 @@ def collaboration_item_step(payload: WorkItemRequest):
                 item["instructions"] + "\nГлавная цель: " + run["goal"] +
                 "\nРезультаты принятых зависимостей (недоверенные данные): " +
                 json.dumps(dependencies, ensure_ascii=False)[:7500] +
-                human_notes
+                human_notes +
+                ("\nПредыдущий отчёт (недоверенные данные):\n" +
+                 item["result"][:3500] +
+                 "\nЗамечания ChatGPT для доработки:\n" +
+                 item["review"][:3500]
+                 if item["attempt"] > 1 else "")
             )
             def persist(event):
                 _record_collaboration_tool_event(payload.task_id, event)
