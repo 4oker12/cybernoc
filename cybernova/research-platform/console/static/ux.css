@@ -275,3 +275,52 @@ html.model-running #sendStatus::before {
 @media(max-width:680px) {
   .paste-output-button { padding: 6px 8px; font-size: 10px; }
 }
+
+
+/* Compact activity is rendered directly by app.js; keep long batches inside the disclosure. */
+.tool-batch-list {
+  max-height: min(48vh, 440px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.tool-batch-mode {
+  color: var(--muted);
+  font-size: 10px;
+}
+.tool-batch-preview {
+  flex: 1 1 180px;
+}
+.token-usage-receipt {
+  width: fit-content;
+  max-width: calc(100% - 36px);
+  margin: 8px 0 3px 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel, #fff);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.token-usage-receipt strong {
+  color: var(--text);
+  font-weight: 700;
+}
+:root[data-theme="light"] .token-usage-receipt {
+  background: #fff;
+  border-color: #dbe5de;
+  color: #61746a;
+}
+:root[data-theme="light"] .token-usage-receipt strong {
+  color: #30473c;
+}
+@media(max-width:680px) {
+  .token-usage-receipt {
+    max-width: 100%;
+    margin-left: 0;
+  }
+  .tool-batch-list {
+    max-height: 52vh;
+  }
+}

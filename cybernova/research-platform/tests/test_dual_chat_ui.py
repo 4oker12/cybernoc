@@ -125,7 +125,8 @@ class DualChatTests(unittest.TestCase):
                        'data-profile-tab="chatgpt"','/static/markdown.js','/static/ux.css',
                        '/static/model-settings.js','/static/ux.js'):
             self.assertIn(marker,html)
-        self.assertEqual(html.count('src="/static/markdown.js"'),1)
+        self.assertEqual(html.count('src="/static/markdown.js?v=20261122-ui1"'),1)
+        self.assertIn("function buildToolBatch",js)
         self.assertIn('async function sendGPT()',js)
         self.assertIn('setFormatted(pending.body,result.answer',js)
         self.assertIn("qwenRunning:false", js)

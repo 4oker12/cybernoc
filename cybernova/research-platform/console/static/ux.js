@@ -10,6 +10,10 @@
 
   function compactToolGroups(root) {
     root.querySelectorAll(".inline-tools:not([data-compact])").forEach(container => {
+      if (container.firstElementChild?.classList?.contains("tool-batch")) {
+        container.dataset.compact = "true";
+        return;
+      }
       const items = Array.from(container.children).filter(item => item.tagName === "DETAILS");
       if (!items.length) return;
       const errors = items.filter(item => /ошибка/i.test(item.querySelector("summary")?.textContent || "")).length;

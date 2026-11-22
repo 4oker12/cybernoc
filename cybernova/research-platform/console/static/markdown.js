@@ -46,9 +46,17 @@
     if(!m)return null;
     return {title:m[1],detail:m[2]||"",kind:/рекомендац/i.test(m[1])?"recommendation":/шаг|провер/i.test(m[1])?"steps":/критери/i.test(m[1])?"criteria":"finding"};
   }
+  function normalizeAssistantText(value){
+    const text=String(value??"");
+    const marker=/(?:<|‹|&lt;)\s*\|\s*(?:\|\s*)?DSML\b/i.exec(text);
+    const hasToolCall=/\binvoke\s+name\s*=/i.test(text);
+    if(!marker||text.slice(0,marker.index).trim()||!hasToolCall)return text;
+    return "Модель вернула служебный протокол вызова инструмента вместо обычного ответа. "+
+      "Техническая строка скрыта; фактические вызовы, если они выполнялись, находятся в блоке «Инструменты».";
+  }
   function render(value){
     const root=el("div","md-content");
-    const lines=String(value||"").replace(/\r\n?/g,"\n").split("\n");
+    const lines=normalizeAssistantText(value).replace(/\r\n?/g,"\n").split("\n");
     let i=0,blocks=0;
     while(i<lines.length && blocks<2000){
       blocks++;
@@ -130,5 +138,5 @@
     }
     return root;
   }
-  window.CybernovaMarkdown={render};
+  window.CybernovaMarkdown={render,normalizeAssistantText};
 })();
