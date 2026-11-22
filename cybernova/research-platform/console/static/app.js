@@ -15,7 +15,7 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,qwenRunning:fals
   collabRun:null,collabLooping:false,collabStopRequested:false};
 const descriptions={
   gateway_status:"Шлюз MCP",
-  local_webui_health:"Проверка интерфейса",
+  local_webui_health:"Проверка Console API / MCP",
   http_get:"Публичный GET",
   http_header_review:"Анализ HTTP-заголовков",
   ip_network_summary:"Расчёт подсети",
