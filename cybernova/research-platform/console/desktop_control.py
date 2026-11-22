@@ -82,13 +82,13 @@ class DesktopController:
         refs = {}
         output = []
         foreground = adapter.foreground()
-        for handle, pid, started, title, executable in adapter.windows():
+        for handle, pid, started, title, executable, instance in adapter.windows():
             if len(output) >= 50:
                 break
             key = str(len(output) + 1)
-            if started is not None:
-                refs[key] = (handle, pid, started, executable)
-            output.append({"window_id": key if started is not None else None, "handle": handle, "pid": pid,
+            if started is not None and instance:
+                refs[key] = (handle, pid, started, executable, instance)
+            output.append({"window_id": key if key in refs else None, "handle": handle, "pid": pid,
                            "title": self._label(title, 160), "executable": self._label(executable, 80),
                            "active": handle == foreground})
         snapshot = secrets.token_hex(16)
@@ -105,12 +105,15 @@ class DesktopController:
         omitted = False
         deadline = self.clock() + 3
         # Breadth-first with lazy sibling enumeration; no unbounded descendants().
-        while pending and len(entries) < limit and self.clock() < deadline:
+        while pending and self.clock() < deadline:
             iterator, ancestors, parent, level = pending[0]
             node = next(iterator, None)
             if node is None:
                 pending.popleft()
                 continue
+            if len(entries) == limit:
+                omitted = True
+                break
             lineage = ancestors + (node.identity,)
             key = str(len(entries) + 1)
             entries.append((key, parent, node, lineage))
@@ -118,8 +121,8 @@ class DesktopController:
                 continue
             if level < depth:
                 pending.append((iter(adapter.children(node)), lineage, key, level + 1))
-            else:
-                omitted = True
+            elif not omitted:
+                omitted = adapter.has_children(node)
         return entries, foreground, omitted or bool(pending)
 
     @staticmethod
@@ -240,9 +243,11 @@ class DesktopController:
                 if action == "invoke":
                     # A generic provider cannot prove what a button did. Require a changed
                     # tree/foreground, and report only that observable change.
+                    if not adapter.valid(window):
+                        break
                     if adapter.foreground() != window[0]:
                         verified = True
-                    elif adapter.valid(window):
+                    else:
                         after, _, _ = self._tree(adapter, window, snapshot[2], snapshot[3])
                         verified = self._signature(before) != self._signature(after)
                     evidence = "ui_state_changed" if verified else evidence

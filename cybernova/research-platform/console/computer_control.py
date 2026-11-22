@@ -229,7 +229,7 @@ DESKTOP_TOOL_NAMES = frozenset(item["name"] for item in DESKTOP_TOOL_SPECS)
 COMPUTER_TOOLS.extend(DESKTOP_TOOL_SPECS)
 COMPUTER_TOOLS.append(_tool(
     "computer_process_inventory",
-    "Read-only local Windows process tree and optional local listeners (TCP listen and bound UDP). No remote probing or raw argv. Start with after_pid=-1 and follow next_after_pid.",
+    "Read-only local Windows process tree. Optional TCP listeners and bound UDP endpoints are limited to the current process page; the unowned count is system-wide. Command lines are not collected. Start with after_pid=-1 and follow next_after_pid.",
     {"after_pid": {**INTEGER, "minimum": -1, "maximum": 0xFFFFFFFF},
      "limit": {**INTEGER, "minimum": 1, "maximum": 50}, "listeners": {"type": "boolean"}},
     ["after_pid", "limit", "listeners"],

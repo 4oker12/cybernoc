@@ -21,8 +21,8 @@ ACT = 'computer_desktop_act'
 
 class FakeDesktop:
     def __init__(self):
-        self.window = (100, 20, 1.0, 'editor.exe')
-        self.other = (200, 21, 2.0, 'editor.exe')
+        self.window = (100, 20, 1.0, 'editor.exe', 101)
+        self.other = (200, 21, 2.0, 'editor.exe', 201)
         self.active = 100
         self.nodes = [Node((1,), 20, 'Pane'), Node((2,), 20, 'TabItem', 'General', 'GeneralTab'),
                       Node((3,), 20, 'Edit', 'Search', 'SearchBox', focused=True, focusable=True),
@@ -33,8 +33,8 @@ class FakeDesktop:
         self.text = None
 
     def windows(self):
-        for handle, pid, start, exe in (self.window, self.other):
-            yield handle, pid, start, 'Same title', exe
+        for handle, pid, start, exe, instance in (self.window, self.other):
+            yield handle, pid, start, 'Same title', exe, instance
 
     def foreground(self):
         return self.active
@@ -54,6 +54,9 @@ class FakeDesktop:
             yield from self.nodes[1:]
         if node.protected:
             raise AssertionError('protected subtree traversed')
+
+    def has_children(self, node):
+        return next(self.children(node), None) is not None
 
     def perform(self, window, node, action, text):
         self.performed.append(action)
@@ -108,6 +111,45 @@ class DesktopTests(unittest.TestCase):
         protected = next(row for row in tree['elements'] if row['protected'])
         self.assertFalse(protected['action_target'])
 
+    def test_depth_and_node_limits_report_only_omitted_nodes(self):
+        windows = self.controller.call(WINDOWS, {})
+        for depth, limit, count, truncated in ((0, 20, 1, True), (1, 20, 2, True),
+                                               (2, 20, 8, False), (2, 8, 8, False), (2, 7, 7, True)):
+            with self.subTest(depth=depth, limit=limit):
+                result = self.controller.call(TREE, dict(snapshot_id=windows['snapshot_id'],
+                                                        window_id='1', depth=depth, limit=limit))
+                self.assertTrue(result['ok'])
+                self.assertEqual(len(result['elements']), count)
+                self.assertIs(result['truncated'], truncated)
+        self.desktop.nodes.clear()
+        result = self.controller.call(TREE, dict(snapshot_id=windows['snapshot_id'],
+                                                window_id='1', depth=0, limit=1))
+        self.assertTrue(result['ok'])
+        self.assertFalse(result['truncated'])
+
+    def test_reused_hwnd_in_same_process_rejects_both_approvals(self):
+        windows = self.controller.call(WINDOWS, {})
+        activate = self.controller.call(PREPARE, dict(snapshot_id=windows['snapshot_id'],
+                                                       target_id='1', action='activate'))
+        tree = self.snapshot()
+        edit = self.prepare(tree, self.edit(tree), 'set_text')
+        self.desktop.window = (*self.desktop.window[:4], 102)
+        fresh = self.controller.call(WINDOWS, {})
+        self.assertEqual(windows['windows'], fresh['windows'])
+        for approval, phrase in ((activate, activate['required_user_confirmation']),
+                                 (edit, f"Approve desktop {edit['approval_id']}: example")):
+            result = self.controller.call(ACT, {'approval_id': approval['approval_id']}, phrase)
+            self.assertEqual(result, {'ok': False, 'error': 'desktop_window_unavailable_or_stale'})
+        self.assertEqual(self.desktop.performed, [])
+
+    def test_window_without_instance_marker_has_no_actionable_reference(self):
+        self.desktop.window = (*self.desktop.window[:4], None)
+        windows = self.controller.call(WINDOWS, {})
+        self.assertIsNone(windows['windows'][0]['window_id'])
+        result = self.controller.call(PREPARE, dict(snapshot_id=windows['snapshot_id'],
+                                                    target_id='1', action='activate'))
+        self.assertEqual(result['error'], 'desktop_window_unavailable_or_stale')
+
     def test_exact_user_approved_text_input_and_fresh_state(self):
         tree = self.snapshot()
         approval = self.prepare(tree, self.edit(tree), 'set_text')
@@ -143,7 +185,7 @@ class DesktopTests(unittest.TestCase):
                 self.assertFalse(self.prepare(tree, edit, 'set_text')['ok'])
                 self.desktop.nodes[2] = node
         ticket = self.prepare(tree, edit, 'set_text')['approval_id']
-        self.desktop.window = (100, 20, 2.0, 'editor.exe')
+        self.desktop.window = (100, 20, 2.0, 'editor.exe', 101)
         self.assertFalse(self.controller.call(ACT, {'approval_id': ticket},
                                               f'Approve desktop {ticket}: example')['ok'])
         self.assertEqual(self.desktop.performed, [])
@@ -190,6 +232,58 @@ class DesktopTests(unittest.TestCase):
                                             user_messages=[{'role': 'user', 'content': phrase}])
             self.assertFalse(failed)
             self.assertTrue(receipt['verified'])
+
+
+class WindowsAdapterIdentityTests(unittest.TestCase):
+    def test_validation_does_not_stamp_a_new_window_with_a_reused_handle(self):
+        adapter = WindowsUIA.__new__(WindowsUIA)
+        identity = (100, 20, 1.0, 'editor.exe')
+        props = {}
+        writes = []
+        adapter._identity = lambda handle: identity
+        adapter._get_prop = lambda handle, name: props.get((handle, name))
+
+        def set_prop(handle, name, value):
+            writes.append(value)
+            props[handle, name] = value
+            return True
+
+        adapter._set_prop = set_prop
+        with patch('console.windows_uia.secrets.randbits', side_effect=[10, 11]):
+            old = (*identity, adapter._instance_for_snapshot(100))
+            self.assertTrue(adapter.valid(old))
+            self.assertEqual(adapter._instance_for_snapshot(100), old[-1])
+            props.clear()  # USER32 properties disappear with the native window.
+            self.assertFalse(adapter.valid(old))
+            self.assertEqual(writes, [11])
+            fresh = (*identity, adapter._instance_for_snapshot(100))
+            self.assertTrue(adapter.valid(fresh))
+            self.assertFalse(adapter.valid(old))
+            self.assertEqual(writes, [11, 12])
+
+    def test_activation_rechecks_marker_after_restore(self):
+        adapter = WindowsUIA.__new__(WindowsUIA)
+        identity = (100, 20, 1.0, 'editor.exe')
+        instance = 11
+        activated = []
+        adapter._identity = lambda handle: identity
+        adapter._get_prop = lambda handle, name: instance
+
+        def restore(handle, mode):
+            nonlocal instance
+            instance = 12
+
+        adapter.gui = SimpleNamespace(IsIconic=lambda handle: True, ShowWindow=restore,
+                                      SetForegroundWindow=activated.append, error=OSError)
+        with self.assertRaisesRegex(ValueError, 'desktop_window_unavailable_or_stale'):
+            adapter.perform((*identity, instance), None, 'activate', None)
+        self.assertEqual(activated, [])
+
+    def test_depth_probe_does_not_read_child_properties(self):
+        adapter = WindowsUIA.__new__(WindowsUIA)
+        adapter.walker = SimpleNamespace(GetFirstChildElement=lambda raw: object() if raw else None)
+        self.assertTrue(adapter.has_children(Node((1,), 20, 'Pane', raw=object())))
+        self.assertFalse(adapter.has_children(Node((2,), 20, 'Pane')))
 
 
 class WindowsAdapterPrivacyTests(unittest.TestCase):
@@ -267,12 +361,15 @@ class InventoryTests(unittest.TestCase):
         proc, = result['processes']
         self.assertEqual((proc['pid'], proc['tree_parent_pid'], proc['memory_bytes']), (5, 2, 123))
         self.assertEqual(proc['cpu_percent_one_core'], 0)
-        self.assertEqual(proc['command_line'], '"test.exe" [arguments withheld]')
+        self.assertNotIn('command_line', proc)
+        self.assertEqual(result['command_line_status'], 'not_collected')
+        self.assertEqual(result['listener_scope'], 'current_process_page')
         self.assertEqual({(p['protocol'], p['ip_version'], p['port']) for p in result['listeners']},
                          {('tcp', 6, 8020), ('udp', 4, 8021)})
         self.assertTrue(all(p['pid'] == 5 and p['executable_path'] == proc['executable_path']
                             for p in result['listeners']))
         self.assertEqual(result['unowned_listener_count'], 1)
+        self.assertEqual(result['unowned_listener_scope'], 'system_wide')
 
 
 if __name__ == '__main__':

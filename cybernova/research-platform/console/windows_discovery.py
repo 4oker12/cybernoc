@@ -1,7 +1,6 @@
 """Read-only process and local listener inventory; no remote connections are made."""
 from __future__ import annotations
 
-import ntpath
 import socket
 import time
 from collections import Counter
@@ -83,9 +82,6 @@ def process_inventory(api, *, after_pid, limit, listeners, clean, sensitive):
             "pid": pid, "parent_pid": row["parent_pid"], "tree_parent_pid": edges.get(pid),
             "tree_child_count": child_counts[pid], "name": clean(name)[:120] if name else None,
             "executable_path": exe,
-            # Arbitrary positional arguments, URLs and inline scripts can all contain secrets.
-            # Do not collect argv; this is an executable-only representation, not raw argv.
-            "command_line": f'"{ntpath.basename(exe)}" [arguments withheld]' if exe else None,
             "started_at_utc": datetime.fromtimestamp(started, timezone.utc).isoformat() if started is not None else None,
             "cpu_percent_one_core": cpu, "memory_bytes": mem.rss if mem else None,
         })
@@ -125,5 +121,7 @@ def process_inventory(api, *, after_pid, limit, listeners, clean, sensitive):
                        for pid, protocol, version, ip, port in sockets[:100]]
     return {"ok": True, "processes": output, "processes_observed": len(rows),
             "next_after_pid": page[-1]["pid"] if len(candidates) > limit else None,
-            "listeners": sockets, "listener_status": endpoint_status,
-            "listener_list_truncated": truncated, "unowned_listener_count": counts["unowned"]}
+            "command_line_status": "not_collected",
+            "listeners": sockets, "listener_scope": "current_process_page", "listener_status": endpoint_status,
+            "listener_list_truncated": truncated, "unowned_listener_count": counts["unowned"],
+            "unowned_listener_scope": "system_wide"}
