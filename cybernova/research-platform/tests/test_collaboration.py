@@ -78,6 +78,23 @@ class CollaborationTests(unittest.TestCase):
         self.assertTrue(any("дополнительный вывод" in item["content"]
                             for item in mentor_history))
 
+    def test_live_user_message_does_not_trigger_interrupted_run_recovery(self):
+        run = self.collab.create("Проверить гонку записи", "gpt-test", 2)
+        task_id = run["task_id"]
+        # Simulate the small interval after a model message is committed but
+        # before CollaborationStore.advance updates the step cursor.
+        self.comm.append(task_id, "chatgpt", "feedback",
+                         "Ответ модели уже записан", status="running")
+        updated = self.collab.user_message(task_id, "Добавь ещё один критерий.")
+        self.assertEqual(updated["state"], "active")
+        with self.comm._connection() as db:
+            row = db.execute(
+                "SELECT state,step FROM collaboration_runs WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        self.assertEqual(row["state"], "active")
+        self.assertEqual(row["step"], 0)
+
     def test_collaboration_locks_are_per_task(self):
         first = server._collaboration_step_lock("cn_task_one_123456")
         self.assertIs(first, server._collaboration_step_lock("cn_task_one_123456"))
