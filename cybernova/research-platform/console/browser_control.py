@@ -262,9 +262,9 @@ def _disable_profile_session_restore(profile_dir: Path) -> bool:
             session = {}
         if not isinstance(session, dict):
             raise ValueError("browser_profile_session_preferences_invalid")
-        if session.get("restore_on_startup") == 1:
+        if session.get("restore_on_startup") == 5:
             return False
-        session["restore_on_startup"] = 1  # Open a new tab, never restore old tabs.
+        session["restore_on_startup"] = 5  # Chromium: open the New Tab Page, not the last session.
         payload["session"] = session
         backup = preferences.with_name("Preferences.cybernova-backup")
         if not backup.exists():
