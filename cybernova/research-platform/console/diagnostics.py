@@ -8,7 +8,9 @@ tool arguments or response bodies are intentionally recorded.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextvars import ContextVar
 from functools import wraps
+from contextlib import contextmanager
 from inspect import signature
 import time
 import json
@@ -23,9 +25,24 @@ import traceback
 CHAT_LOG = logging.getLogger("cybernova.chat_turn")
 CHAT_LOG.setLevel(logging.INFO)
 CHAT_LOG.addHandler(logging.NullHandler())
+TIMELINE_LOG = logging.getLogger("cybernova.timeline")
+TIMELINE_LOG.setLevel(logging.INFO)
+TIMELINE_LOG.addHandler(logging.NullHandler())
+RUN_CONTEXT = ContextVar("cybernova_diagnostic_run", default=None)
+BOOT_ID = os.urandom(8).hex()
+_TIMELINE_STRINGS = frozenset({
+    "event", "mode", "module", "stage", "status", "tool", "provider", "model",
+    "error_type", "error_code", "method", "session_kind",
+})
+_TIMELINE_INTS = frozenset({
+    "duration_ms", "http_status", "upstream_http_status", "pid", "exit_code",
+    "round", "tool_calls", "input_tokens", "output_tokens",
+})
+_TIMELINE_BOOLS = frozenset({"headless"})
+_SAFE_LABEL = re.compile(r"[A-Za-z0-9_.:-]{1,160}")
 
-MAX_FILE_BYTES = 256 * 1024
-BACKUP_COUNT = 2
+MAX_FILE_BYTES = 512 * 1024
+BACKUP_COUNT = 3
 MAX_TEXT = 3000
 COMPONENTS = frozenset({
     "supervisor", "console", "tool-mcp", "communication-mcp", "access-gateway"
@@ -86,6 +103,8 @@ class JSONLineFormatter(logging.Formatter):
         }
         if record.name == CHAT_LOG.name and hasattr(record, "chat_turn"):
             data["chat_turn"] = record.chat_turn
+        if record.name == TIMELINE_LOG.name and hasattr(record, "timeline"):
+            data["timeline"] = record.timeline
         if record.exc_info and record.exc_info[1]:
             exception = record.exc_info[1]
             data["exception_type"] = type(exception).__name__
@@ -112,11 +131,12 @@ def configure(component: str) -> None:
             folder / (component + ".jsonl"),
             maxBytes=MAX_FILE_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8",
         )
-        handler.setLevel(logging.INFO if component == "console" else logging.ERROR)
-        if component == "console":
-            handler.addFilter(lambda r: r.levelno >= logging.ERROR or r.name == CHAT_LOG.name)
-        else:
-            handler.addFilter(lambda r: r.name != CHAT_LOG.name)
+        handler.setLevel(logging.INFO)
+        handler.addFilter(
+            lambda r: r.levelno >= logging.ERROR
+            or r.name == TIMELINE_LOG.name
+            or (component == "console" and r.name == CHAT_LOG.name)
+        )
         handler.setFormatter(JSONLineFormatter(component))
         logging.getLogger().addHandler(handler)
         try:
@@ -124,6 +144,59 @@ def configure(component: str) -> None:
         except OSError:
             pass
         _CONFIGURED.add(key)
+
+
+def _clean_timeline(value):
+    """Export-allowlisted metadata. Never record prompts, URLs or raw tool arguments."""
+    if not isinstance(value, dict):
+        return None
+    result = {}
+    for key in _TIMELINE_STRINGS:
+        raw = value.get(key)
+        if isinstance(raw, str) and _SAFE_LABEL.fullmatch(raw):
+            result[key] = raw
+    for key in _TIMELINE_INTS:
+        raw = value.get(key)
+        if type(raw) is int and -2147483648 <= raw <= 2147483647:
+            result[key] = raw
+    for key in _TIMELINE_BOOLS:
+        raw = value.get(key)
+        if type(raw) is bool:
+            result[key] = raw
+    for key in ("run_id", "boot_id"):
+        raw = value.get(key)
+        if isinstance(raw, str) and re.fullmatch(r"[0-9a-f]{16,32}", raw):
+            result[key] = raw
+    return result if "event" in result else None
+
+
+def event(name: str, **fields) -> None:
+    """Single privacy-controlled timeline event, correlated with the active chat turn."""
+    try:
+        data = {"event": name, "boot_id": BOOT_ID, **fields}
+        run_id = RUN_CONTEXT.get()
+        if isinstance(run_id, str):
+            data["run_id"] = run_id
+        clean = _clean_timeline(data)
+        if clean is not None:
+            TIMELINE_LOG.info("event %s", clean["event"], extra={"timeline": clean})
+    except Exception:
+        pass  # Diagnostics must never affect tool execution.
+
+
+@contextmanager
+def span(name: str, **fields):
+    """Duration/status without leaking exception messages or tool payloads."""
+    started = time.monotonic()
+    event(name + "_start", **fields)
+    try:
+        yield
+    except BaseException as exc:
+        event(name + "_failure", **fields, duration_ms=round((time.monotonic() - started) * 1000),
+              error_type=type(exc).__name__)
+        raise
+    else:
+        event(name + "_complete", **fields, duration_ms=round((time.monotonic() - started) * 1000))
 
 
 def failure(component: str, operation: str, exc: BaseException, *,
@@ -206,6 +279,9 @@ def observe_chat(mode, backend, latest_usage):
         def wrapped(payload):
             start = time.monotonic()
             result = error = None
+            run_id = getattr(payload, "run_id", None)
+            token = RUN_CONTEXT.set(run_id if isinstance(run_id, str) else None)
+            event("chat_start", mode=mode)
             try:
                 result = func(payload)
                 return result
@@ -253,8 +329,14 @@ def observe_chat(mode, backend, latest_usage):
                     if valid_run_id:
                         CHAT_LOG.log(logging.INFO if status == "completed" else logging.ERROR,
                                      "chat turn %s", status, extra={"chat_turn": fields})
+                    event("chat_finished", mode=mode, status=status,
+                          duration_ms=fields["duration_ms"],
+                          error_type=fields["error_type"] or "none",
+                          error_code=fields["error_code"] or "none")
                 except Exception:
                     pass  # A broken journal must not break chat.
+                finally:
+                    RUN_CONTEXT.reset(token)
         wrapped.__signature__ = signature(func, eval_str=True)
         return wrapped
     return decorate
@@ -287,7 +369,7 @@ def export_jsonl() -> bytes:
                                 key: value for key, value in obj.items()
                                 if key in {"time", "component", "level", "logger",
                                            "message", "process_id", "exception_type",
-                                           "frames", "chat_turn"}
+                                           "frames", "chat_turn", "timeline"}
                             }
                             if item.get("component") != component:
                                 continue
@@ -296,6 +378,10 @@ def export_jsonl() -> bytes:
                                 chat_turn = _export_chat_turn(item.pop("chat_turn"))
                                 if component == "console" and chat_turn is not None:
                                     item["chat_turn"] = chat_turn
+                            if "timeline" in item:
+                                timeline = _clean_timeline(item.pop("timeline"))
+                                if timeline is not None:
+                                    item["timeline"] = timeline
                             if isinstance(item.get("frames"), list):
                                 item["frames"] = [scrub(v, 150) for v in item["frames"][:16]]
                             entries.append(item)
@@ -304,23 +390,29 @@ def export_jsonl() -> bytes:
     entries.sort(key=lambda x: str(x.get("time", "")))
     manifest = {
         "kind": "cybernova-diagnostics",
-        "schema_version": 1,
+        "schema_version": 2,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "event_count": len(entries),
-        "notice": "Inspect before sharing. Logs are best-effort sanitized; not a raw trace.",
+        "truncated": False,
+        "dropped_event_count": 0,
+        "notice": "Metadata-only best-effort sanitized journal; inspect before sharing.",
     }
     lines = [json.dumps(manifest, ensure_ascii=False)]
     lines.extend(json.dumps(item, ensure_ascii=False) for item in entries)
     result = ("\n".join(lines) + "\n").encode("utf-8")
     # Never allow an oversized journal export to exhaust the gateway response.
     if len(result) > 6_000_000:
-        lines = [lines[0]]
+        selected = []
         kept = 0
         for entry in reversed(entries):
             encoded = json.dumps(entry, ensure_ascii=False)
-            if kept + len(encoded.encode("utf-8")) > 5_000_000:
+            size = len(encoded.encode("utf-8")) + 1
+            if kept + size > 5_000_000:
                 break
-            lines.append(encoded)
-            kept += len(encoded.encode("utf-8")) + 1
-        result = ("\n".join(lines) + "\n").encode("utf-8")
+            selected.append(encoded)
+            kept += size
+        manifest["event_count"] = len(selected)
+        manifest["truncated"] = True
+        manifest["dropped_event_count"] = len(entries) - len(selected)
+        result = ("\n".join([json.dumps(manifest, ensure_ascii=False), *reversed(selected)]) + "\n").encode("utf-8")
     return result

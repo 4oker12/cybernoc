@@ -144,6 +144,59 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(item["input_tokens"], 21)
         self.assertIsNone(item["cached_tokens"])
 
+
+    def test_timeline_records_correlated_safe_metadata_and_excludes_payloads(self):
+        with self.journal():
+            token = diagnostics.RUN_CONTEXT.set("c" * 32)
+            try:
+                diagnostics.event("browser_action", tool="browser_navigate", status="ok",
+                                  http_status=200, duration_ms=15,
+                                  message="PROMPT_SHOULD_NEVER_EXPORT",
+                                  url="https://secret.example/?token=private")
+            finally:
+                diagnostics.RUN_CONTEXT.reset(token)
+            report = diagnostics.export_jsonl().decode("utf-8")
+        item = json.loads(report.splitlines()[1])["timeline"]
+        self.assertEqual(item["run_id"], "c" * 32)
+        self.assertEqual(item["event"], "browser_action")
+        self.assertEqual(item["duration_ms"], 15)
+        self.assertNotIn("url", item)
+        self.assertNotIn("message", item)
+        self.assertNotIn("PROMPT_SHOULD_NEVER_EXPORT", report)
+        self.assertNotIn("secret.example", report)
+
+    def test_timeline_span_logs_success_and_failure_without_exception_body(self):
+        with self.journal():
+            with diagnostics.span("model_request", provider="DeepSeek"):
+                pass
+            try:
+                with diagnostics.span("model_request", provider="DeepSeek"):
+                    raise ValueError("password=private_test_secret")
+            except ValueError:
+                pass
+            report = diagnostics.export_jsonl().decode("utf-8")
+        self.assertIn("model_request_start", report)
+        self.assertIn("model_request_complete", report)
+        self.assertIn("model_request_failure", report)
+        self.assertIn("ValueError", report)
+        self.assertNotIn("private_test_secret", report)
+
+    def test_export_drops_unlisted_timeline_values_even_for_forged_logs(self):
+        with self.temp_folder() as folder:
+            (folder / "console.jsonl").write_text(json.dumps({
+                "component": "console", "level": "INFO", "message": "event tool",
+                "timeline": {
+                    "event": "tool_call_completed", "tool": "browser_navigate",
+                    "run_id": "d" * 32, "duration_ms": 25,
+                    "url": "https://private.invalid/token",
+                    "password": "do-not-export", "status": "ok",
+                },
+            }) + "\\n", encoding="utf-8")
+            report = diagnostics.export_jsonl().decode()
+        self.assertIn("tool_call_completed", report)
+        self.assertNotIn("private.invalid", report)
+        self.assertNotIn("do-not-export", report)
+
     def test_export_merges_services_without_leaking_unlisted_files(self):
         with self.temp_folder() as folder:
             (folder / "console.jsonl").write_text(json.dumps({

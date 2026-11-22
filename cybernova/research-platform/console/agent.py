@@ -724,13 +724,13 @@ class Agent:
             type(output_tokens) is int and output_tokens >= 0
         )
         usage = {
-            "available": available,
+            "available": measured,
             "input_tokens": input_tokens if type(input_tokens) is int and input_tokens >= 0 else None,
             "output_tokens": output_tokens if type(output_tokens) is int and output_tokens >= 0 else None,
             "total_tokens": (
                 (input_tokens if type(input_tokens) is int and input_tokens >= 0 else 0) +
                 (output_tokens if type(output_tokens) is int and output_tokens >= 0 else 0)
-            ) if complete else None,
+            ) if measured and type(input_tokens) is int and type(output_tokens) is int else None,
             "requests": 1, "measured_requests": 1 if measured else 0,
             "complete": measured, "provider": getattr(self.ollama, "provider", "Configured LLM"),
         }

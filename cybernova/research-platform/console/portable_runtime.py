@@ -14,9 +14,9 @@ import time
 from urllib import error, request
 
 try:
-    from .diagnostics import configure as configure_diagnostics
+    from .diagnostics import configure as configure_diagnostics, event as diagnostic_event
 except ImportError:
-    from diagnostics import configure as configure_diagnostics
+    from diagnostics import configure as configure_diagnostics, event as diagnostic_event
 
 MODULES = (
     "console.portable_tool_gateway",
@@ -170,6 +170,7 @@ def run_supervisor(*, modules=MODULES, process_factory=None, readiness_probe=Non
                 stopping["requested"] = True
                 break
             children.append((module, process))
+            diagnostic_event("service_spawn", module=module, pid=process.pid)
             print("CYBERNOVA_SPAWNED", module, process.pid, flush=True)
             ready, stage, child_exit = _wait_for_ready(
                 module, process, timeout, probe=readiness_probe,
@@ -178,14 +179,18 @@ def run_supervisor(*, modules=MODULES, process_factory=None, readiness_probe=Non
             if not ready:
                 print("CYBERNOVA_STARTUP_FAILED", module, stage,
                       child_exit if child_exit is not None else "-", flush=True)
+                diagnostic_event("service_startup_failed", module=module, pid=process.pid,
+                                 stage=stage, exit_code=child_exit if child_exit is not None else -1)
                 exit_code = 2
                 stopping["requested"] = True
                 break
+            diagnostic_event("service_ready", module=module, pid=process.pid)
             print("CYBERNOVA_SERVICE_READY", module, process.pid, flush=True)
 
         if exit_code == 0 and not stopping["requested"]:
             # CYBERNOVA_STARTED is emitted only after every required service
             # has passed its own readiness probe.
+            diagnostic_event("supervisor_ready", status="ok")
             print("CYBERNOVA_STARTED", flush=True)
             while not stopping["requested"]:
                 for module, process in children:
@@ -194,6 +199,8 @@ def run_supervisor(*, modules=MODULES, process_factory=None, readiness_probe=Non
                         print("CYBERNOVA_SERVICE_STOPPED", module, child_exit, flush=True)
                         logger.error("service_stopped module=%s exit_code=%s",
                                      module, child_exit)
+                        diagnostic_event("service_stopped", module=module,
+                                         pid=process.pid, exit_code=child_exit, status="failed")
                         exit_code = 1
                         stopping["requested"] = True
                         break
@@ -202,7 +209,9 @@ def run_supervisor(*, modules=MODULES, process_factory=None, readiness_probe=Non
     except KeyboardInterrupt:
         stopping["requested"] = True
     finally:
+        diagnostic_event("supervisor_shutdown_start", status="requested" if exit_code == 0 else "failed")
         _shutdown_children(children, stop_seconds=stop_seconds, clock=clock)
+        diagnostic_event("supervisor_shutdown_complete", status="ok" if exit_code == 0 else "failed")
 
     return 0 if stopping["requested"] and exit_code == 0 else exit_code
 
