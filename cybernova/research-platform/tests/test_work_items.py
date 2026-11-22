@@ -119,6 +119,22 @@ class WorkItemTests(unittest.TestCase):
         reviewed, phase = self.work.claim(task_id, item_id)
         self.assertEqual((phase, reviewed["attempt"]), ("review", 2))
 
+    def test_usage_only_records_measured_provider_tokens(self):
+        run = self.create()
+        task_id = run["task_id"]
+        item = self.work.create_plan(task_id, sample_plan())[0]
+        self.work.record_usage(task_id, item["item_id"], "research", {
+            "available": False, "input_tokens": 99, "output_tokens": 50
+        })
+        self.assertEqual(self.work.get_item(task_id, item["item_id"])["usage"], {})
+        self.work.record_usage(task_id, item["item_id"], "research", {
+            "available": True, "input_tokens": 125, "output_tokens": 25,
+            "total_tokens": 150
+        })
+        reopened = WorkItemStore(CollaborationStore(CommunicationStore(self.comm.path)))
+        self.assertEqual(reopened.get_item(task_id, item["item_id"])["usage"]
+                         ["research"]["total_tokens"], 150)
+
     def test_restart_recovery_and_explicit_retry(self):
         run = self.create()
         task_id = run["task_id"]
