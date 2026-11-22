@@ -160,6 +160,8 @@ class SignInTests(unittest.TestCase):
         self.assertIn('id="chatgptModel"', html)
         self.assertIn("connectChatGPT", js)
         self.assertIn("reviewWithChatGPT", js)
+        self.assertIn('id="toolPickerOff"', html)
+        self.assertIn("tools_enabled:state.toolsEnabled", js)
         self.assertIn("/api/siwc/review", js)
         self.assertIn('window.location.hostname', js)
         self.assertIn('host!=="127.0.0.1"', js)
