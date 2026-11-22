@@ -62,6 +62,27 @@ class CollaborationTests(unittest.TestCase):
         with self.assertRaisesRegex(CollaborationError, "not_active"):
             reopened.advance(task_id, "qwen", "Ещё одна попытка")
 
+    def test_human_intervention_is_visible_to_both_agents(self):
+        run = self.collab.create("Исследовать тестовую лабораторию", "gpt-test", 2)
+        task_id = run["task_id"]
+        self.collab.advance(task_id, "chatgpt", "DeepSeek, проверь журнал.")
+        run = self.collab.user_message(task_id, "Учитывай также мой дополнительный вывод.")
+        self.assertTrue(any(m["actor"] == "human" and
+                            m["body"] == "Учитывай также мой дополнительный вывод."
+                            for m in run["messages"]))
+        history, prompt = researcher_messages(run)
+        self.assertIn("дополнительный вывод", prompt)
+        self.collab.advance(task_id, "qwen", "Проверка выполнена.")
+        mentor_history = mentor_messages(self.collab.read(task_id))
+        self.assertTrue(any("дополнительный вывод" in item["content"]
+                            for item in mentor_history))
+
+    def test_collaboration_locks_are_per_task(self):
+        first = server._collaboration_step_lock("cn_task_one_123456")
+        self.assertIs(first, server._collaboration_step_lock("cn_task_one_123456"))
+        second = server._collaboration_step_lock("cn_task_two_123456")
+        self.assertIsNot(first, second)
+
     def test_stop_does_not_advance(self):
         run = self.collab.create("Проверь тестовый проект", "gpt-test", 3)
         run = self.collab.halt(run["task_id"])
@@ -198,7 +219,8 @@ class CollaborationTests(unittest.TestCase):
             ("/api/collab/start", "POST"), ("/api/collab/step", "POST"),
             ("/api/collab/stop", "POST"), ("/api/collab/resume", "POST"),
             ("/api/collab/finish", "POST"), ("/api/collab/runs", "GET"),
-            ("/api/collab/run?task_id=x", "GET"), ("/api/tools/run", "POST"),
+            ("/api/collab/run?task_id=x", "GET"),
+            ("/api/collab/message", "POST"), ("/api/tools/run", "POST"),
         ]:
             self.assertTrue(allowed_path(path,method),path)
         self.assertFalse(allowed_path("/api/tools/execute", "POST"))
