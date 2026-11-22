@@ -142,14 +142,17 @@
       </div>
       <div id="toolPicker" class="tool-picker" role="dialog" aria-label="Подключение инструментов" hidden>
         <div class="tool-picker-heading">
-          <div><strong>Подключить инструменты</strong><p>Выбор ограничивает каталог функций, который увидит модель.</p></div>
-          <button type="button" id="toolPickerAuto" class="tool-picker-reset">Авто</button>
+          <div><strong>Подключить инструменты</strong><p>Авто — все группы; можно ограничить выбор или полностью отключить инструменты.</p></div>
+          <div class="tool-picker-actions">
+            <button type="button" id="toolPickerOff" class="tool-picker-reset" aria-pressed="false">Выкл</button>
+            <button type="button" id="toolPickerAuto" class="tool-picker-reset">Авто</button>
+          </div>
         </div>
         <div id="toolPickerGroups" class="tool-picker-groups">
           <span class="muted">Загружаем доступные группы…</span>
         </div>
         <div class="tool-picker-footer">
-          <span id="toolPickerSummary" role="status">Автоматический выбор всех доступных групп</span>
+          <span id="toolPickerSummary" role="status">Авто: модель видит все доступные группы</span>
           <button type="button" id="toolPickerClose" class="tool-picker-done">Готово</button>
         </div>
       </div>
