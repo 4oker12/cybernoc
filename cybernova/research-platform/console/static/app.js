@@ -1552,12 +1552,13 @@ function init(){
   window.cybernovaWelcome=$("welcome").cloneNode(true);
   window.cybernovaGptWelcome=$("gptWelcome").cloneNode(true);
   showResearchScope({hosts:[],capture_detail:"evidence"});
+  let savedEnabled=null;
   try{
     const saved=JSON.parse(window.localStorage.getItem("cybernova_tool_groups")||"[]");
     if(Array.isArray(saved))state.toolGroups=saved.filter(id=>
       TOOL_GROUP_FALLBACK.some(group=>group.id===id));
+    savedEnabled=window.localStorage.getItem("cybernova_tools_enabled");
   }catch(_){state.toolGroups=[];}
-  const savedEnabled=window.localStorage.getItem("cybernova_tools_enabled");
   state.toolsEnabled=savedEnabled===null?true:savedEnabled==="true";
   renderToolPicker([]);
   $("toolPickerToggle").addEventListener("click",()=>{
