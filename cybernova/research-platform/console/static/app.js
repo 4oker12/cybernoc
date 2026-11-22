@@ -12,7 +12,7 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
     gpt:{input:0,output:0,total:0,measuredTurns:0}
   },
   lastUsage:{qwen:null,gpt:null},
-  collabRun:null,collabLooping:false,collabStopRequested:false};
+  collabRun:null,collabLoopTasks:new Set(),collabStopRequests:new Set()};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка интерфейса",
@@ -1407,7 +1407,7 @@ function renderCollabRun(run){
   $("collabActiveBar").hidden=false;
   const active=run.state==="active",paused=run.state==="paused";
   $("collabStop").hidden=!active;
-  $("collabResume").hidden=!paused||state.collabLooping;
+  $("collabResume").hidden=!paused||state.collabLoopTasks.has(run.task_id);
   $("collabFinish").hidden=!(active||paused);
   $("collabResume").textContent="Продолжить ещё "+run.max_cycles+" обменов";
   const pairs=Math.floor(run.step/2);
@@ -1451,7 +1451,6 @@ async function refreshCollabRuns(){
   }catch(_){}
 }
 async function openCollabRun(taskId){
-  if(state.collabLooping)return;
   try{
     const response=await fetch("/api/collab/run?task_id="+encodeURIComponent(taskId),{cache:"no-store"});
     const data=await response.json();
@@ -1464,7 +1463,6 @@ async function openCollabRun(taskId){
   }
 }
 async function startCollab(){
-  if(state.collabLooping)return;
   if(!state.gptConnected||!state.gptPlanUsage){
     $("collabStatus").textContent="Сначала подключи аккаунт ChatGPT через «Аккаунт GPT».";
     $("collabActiveBar").hidden=false;
@@ -1472,68 +1470,69 @@ async function startCollab(){
     return;
   }
   const goal=$("collabGoal").value.trim(), model=$("collabModel").value;
-  if(!goal||!model)return;
+  if(!goal||!model||$("collabStart").disabled)return;
   $("collabStart").disabled=true;
   try{
     const run=await requestJson("/api/collab/start",{
       goal,model,cycles:Number($("collabCycles").value),session_id:state.sessionId
     });
-    state.collabStopRequested=false;
     renderCollabRun(run);
     void refreshCollabRuns();
-    await continueCollab();
+    // The run continues independently; the UI remains available for another task.
+    void continueCollab(run.task_id);
   }catch(err){
     $("collabActiveBar").hidden=false;
     $("collabStop").hidden=true;
     $("collabStatus").textContent="Ошибка запуска: "+String(err.message||err);
   }finally{$("collabStart").disabled=false;}
 }
-async function continueCollab(){
-  if(state.collabLooping||!state.collabRun||
-     !["active","paused"].includes(state.collabRun.state))return;
-  state.collabLooping=true;
-  state.collabStopRequested=false;
-  $("collabResume").hidden=true;
-  const taskId=state.collabRun.task_id;
+async function continueCollab(taskId=state.collabRun?.task_id){
+  if(!taskId||state.collabLoopTasks.has(taskId))return;
+  state.collabLoopTasks.add(taskId);
+  state.collabStopRequests.delete(taskId);
+  let run=null;
   try{
-    if(state.collabRun.state==="paused"){
-      const resumed=await requestJson("/api/collab/resume",{task_id:taskId});
-      if(state.collabRun?.task_id!==taskId)return;
-      renderCollabRun(resumed);
+    const initial=await fetch("/api/collab/run?task_id="+encodeURIComponent(taskId),{cache:"no-store"});
+    run=await initial.json();
+    if(!initial.ok)throw Error(run.detail||"Нет совместной задачи");
+    if(run.state==="paused"){
+      run=await requestJson("/api/collab/resume",{task_id:taskId});
+      if(state.collabRun?.task_id===taskId)renderCollabRun(run);
     }
-    while(state.collabRun?.state==="active"&&!state.collabStopRequested){
-      $("collabStatus").textContent="Ожидаем ответ "+
-        (state.collabRun.next_actor==="chatgpt"?"ChatGPT-наставника":"DeepSeek-исследователя")+"…";
-      let response;
-      try{
-        response=await requestJson("/api/collab/step",{task_id:taskId});
-      }catch(err){
-        if(!state.collabStopRequested)throw err;
-        break;
+    while(run.state==="active"&&!state.collabStopRequests.has(taskId)){
+      if(state.collabRun?.task_id===taskId){
+        $("collabStatus").textContent="Ожидаем ответ "+
+          (run.next_actor==="chatgpt"?"ChatGPT-наставника":"DeepSeek-исследователя")+"…";
       }
-      if(state.collabStopRequested||state.collabRun?.task_id!==taskId)break;
-      renderCollabRun(response.run);
-      await refreshCollabRuns();
+      run=(await requestJson("/api/collab/step",{task_id:taskId})).run;
+      if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+      void refreshCollabRuns();
     }
   }catch(err){
-    $("collabStatus").textContent="Обмен прерван: "+String(err.message||err);
-    // Read durable server state before offering a manual continuation.
+    if(state.collabRun?.task_id===taskId){
+      $("collabStatus").textContent="Обмен прерван: "+String(err.message||err);
+    }
+    // Read durable state before offering a manual continuation.
     try{
       const resp=await fetch("/api/collab/run?task_id="+encodeURIComponent(taskId),{cache:"no-store"});
-      if(resp.ok)renderCollabRun(await resp.json());
+      if(resp.ok){
+        run=await resp.json();
+        if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+      }
     }catch(_){}
   }finally{
-    state.collabLooping=false;
-    if(state.collabRun&&state.collabRun.task_id===taskId)renderCollabRun(state.collabRun);
+    state.collabLoopTasks.delete(taskId);
+    if(state.collabRun?.task_id===taskId&&run)renderCollabRun(run);
     void refreshCollabRuns();
   }
 }
 async function stopCollab(){
   if(!state.collabRun)return;
-  state.collabStopRequested=true;
+  const taskId=state.collabRun.task_id;
+  state.collabStopRequests.add(taskId);
   try{
-    const run=await requestJson("/api/collab/stop",{task_id:state.collabRun.task_id});
-    renderCollabRun(run);
+    const run=await requestJson("/api/collab/stop",{task_id:taskId});
+    if(state.collabRun?.task_id===taskId)renderCollabRun(run);
     void refreshCollabRuns();
   }catch(err){
     $("collabStatus").textContent="Ошибка паузы: "+String(err.message||err);
@@ -1541,10 +1540,11 @@ async function stopCollab(){
 }
 async function finishCollab(){
   if(!state.collabRun||!["active","paused"].includes(state.collabRun.state))return;
-  state.collabStopRequested=true;
+  const taskId=state.collabRun.task_id;
+  state.collabStopRequests.add(taskId);
   try{
-    const run=await requestJson("/api/collab/finish",{task_id:state.collabRun.task_id});
-    renderCollabRun(run);
+    const run=await requestJson("/api/collab/finish",{task_id:taskId});
+    if(state.collabRun?.task_id===taskId)renderCollabRun(run);
     void refreshCollabRuns();
   }catch(err){
     $("collabStatus").textContent="Ошибка завершения: "+String(err.message||err);
@@ -1553,7 +1553,6 @@ async function finishCollab(){
 async function newCollab(){
   if(state.collabRun?.state==="active")await stopCollab();
   state.collabRun=null;
-  state.collabStopRequested=true;
   $("collabForm").hidden=false;
   $("collabActiveBar").hidden=true;
   $("collabLog").replaceChildren();
@@ -1602,7 +1601,7 @@ function init(){
   $("collabStart").addEventListener("click",startCollab);
   $("collabStop").addEventListener("click",stopCollab);
   $("collabFinish").addEventListener("click",finishCollab);
-  $("collabResume").addEventListener("click",continueCollab);
+  $("collabResume").addEventListener("click",()=>continueCollab());
   $("collabNew").addEventListener("click",newCollab);
   $("navProfile").addEventListener("click",openProfileSettings);
   $("profileClose").addEventListener("click",()=>$("profileDialog").close());
