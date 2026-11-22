@@ -60,6 +60,7 @@ class Elem {
     };
   }
   addEventListener(type,fn){this.listeners[type]=fn;}
+  querySelectorAll(){return [];}
   setAttribute(){}
   append(...child){this.children.push(...child);}
   appendChild(child){this.children.push(child);return child;}
@@ -126,6 +127,16 @@ if(byId('messages').hidden||!byId('gptMessages').hidden)
 byId('modeCollab').listeners.click();
 if(byId('collabMessages').hidden||!byId('messages').hidden||!byId('gptMessages').hidden)
  throw Error('Collaboration click did not show the two-model transcript');
+byId('modeQwen').listeners.click();
+context.busy(true);
+if(byId('modeCollab').disabled)
+ throw Error('Independent model request wrongly disabled collaboration tab');
+byId('modeCollab').listeners.click();
+if(byId('collabMessages').hidden)
+ throw Error('Could not enter collaboration while regular model is running');
+if(byId('newSession').disabled)
+ throw Error('Collaboration new task was locked by an unrelated model call');
+context.busy(false);
 byId('sidebarCollapse').listeners.click();
 if(byId('sidebarExpand').hidden)
  throw Error('Sidebar could not be collapsed');
