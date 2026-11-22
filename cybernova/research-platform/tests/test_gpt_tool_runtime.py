@@ -46,20 +46,21 @@ class GPTToolRuntimeTests(unittest.TestCase):
             "computer_plan_file_organization", "computer_apply_file_organization",
         }.issubset(names))
 
-    def test_mcp_adapter_exports_the_identical_local_tool_names_and_schemas(self):
+    def test_mcp_adapter_hides_terminal_run_until_terminal_group_is_selected(self):
         runtime = GPTToolRuntime()
-        rows = runtime.mcp_tools()
-        self.assertEqual(
-            {row["name"] for row in rows},
-            {tool["name"] for tool in runtime.tools},
-        )
-        for row in rows:
+        catalog_names = {tool["name"] for tool in runtime.tools}
+        automatic_names = {row["name"] for row in runtime.mcp_tools()}
+        explicit_terminal = {row["name"] for row in runtime.mcp_tools(["terminal"])}
+        self.assertEqual(automatic_names, catalog_names - {"terminal_run"})
+        self.assertEqual(explicit_terminal, {"terminal_run", "terminal_status"})
+        for row in runtime.tools:
             with self.subTest(tool=row["name"]):
-                self.assertEqual(row["inputSchema"]["type"], "object")
-                self.assertFalse(row["inputSchema"]["additionalProperties"])
+                schema = row["parameters"]
+                self.assertEqual(schema["type"], "object")
+                self.assertFalse(schema["additionalProperties"])
                 self.assertEqual(
-                    set(row["inputSchema"].get("properties", {})),
-                    set(row["inputSchema"].get("required", [])),
+                    set(schema.get("properties", {})),
+                    set(schema.get("required", [])),
                 )
 
     def test_tool_bundles_filter_catalog_and_enforce_runtime_calls(self):
@@ -194,7 +195,9 @@ class GPTToolRuntimeTests(unittest.TestCase):
 
     def test_terminal_run_requires_full_explicit_schema(self):
         runtime = GPTToolRuntime()
-        result, failed = runtime.call("terminal_run", {"command": "whoami"})
+        result, failed = runtime.call(
+            "terminal_run", {"command": "whoami"}, enabled_groups=["terminal"]
+        )
         self.assertTrue(failed)
         self.assertTrue(result["error"].endswith("terminal_arguments_invalid"))
 
@@ -205,7 +208,8 @@ class GPTToolRuntimeTests(unittest.TestCase):
                 "terminal_run", {
                     "command": "ipconfig /all", "shell": "cmd", "cwd": "",
                     "timeout_seconds": 30, "max_output_chars": 20000,
-                }
+                },
+                enabled_groups=["terminal"],
             )
         self.assertTrue(is_error)
         self.assertEqual(result["error"], "local_windows_terminal_unavailable")
@@ -296,19 +300,25 @@ class GPTToolRuntimeTests(unittest.TestCase):
             _SEARCH_JOBS.clear()
 
     def test_playwright_errors_are_returned_with_traceback_id(self):
-        runtime = GPTToolRuntime()
-
         class BrokenBrowser:
+            def __init__(self, profile_dir=None):
+                self.profile_dir = profile_dir
+
             def set_authorized_hosts(self, hosts):
+                self.hosts = set(hosts)
+
+            def close(self):
                 return None
 
-        runtime._browser = BrokenBrowser()
+        runtime = GPTToolRuntime(browser_session_factory=BrokenBrowser)
         with patch(
             "console.gpt_tool_runtime.browser_control_call",
             side_effect=RuntimeError("playwright navigation failed token=secret-value"),
         ), self.assertLogs("console.gpt_tool_runtime", level="ERROR") as captured:
             result, is_error = runtime.call(
-                "browser_navigate", {"url": "https://example.org/"}
+                "browser_navigate", {"url": "https://example.org/"},
+                conversation_key="test-conversation",
+                enabled_groups=["browser"],
             )
         self.assertTrue(is_error)
         self.assertTrue(result["error"].startswith("RuntimeError:"))
@@ -317,6 +327,19 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertNotIn("secret-value", "\\n".join(captured.output))
         self.assertTrue(any(result["error_id"] in row for row in captured.output))
         self.assertTrue(any("RuntimeError" in row for row in captured.output))
+        runtime.close()
+
+    def test_terminal_run_requires_explicit_terminal_group_selection(self):
+        runtime = GPTToolRuntime()
+        self.assertNotIn("terminal_run", {row["name"] for row in runtime.mcp_tools()})
+        result, failed = runtime.call(
+            "terminal_run", {
+                "command": "whoami", "shell": "cmd", "cwd": "",
+                "timeout_seconds": 30, "max_output_chars": 20000,
+            }
+        )
+        self.assertTrue(failed)
+        self.assertEqual(result["error"], "terminal_run_requires_explicit_group_selection")
 
     def test_unknown_or_unapproved_tools_are_rejected(self):
         runtime = GPTToolRuntime()

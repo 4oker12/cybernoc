@@ -75,14 +75,55 @@ def allowed_path(path: str, method: str) -> bool:
     return False
 
 
+def _normalized_origin(value: str) -> tuple[str, str, int] | None:
+    try:
+        parsed = urlsplit(value)
+        scheme = parsed.scheme.lower()
+        if (scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.path or parsed.query or parsed.fragment):
+            return None
+        hostname = parsed.hostname.lower().rstrip(".")
+        port = parsed.port or (443 if scheme == "https" else 80)
+        return scheme, hostname, port
+    except (TypeError, ValueError):
+        return None
+
+
 def origin_allowed(origin: str | None, host: str | None) -> bool:
     if not origin:
         return True
-    if not host or any(c in host for c in "\r\n/@"):
+    if not isinstance(host, str) or not host or any(c in host for c in "\r\n/@\\"):
         return False
-    if host in {"127.0.0.1:18795", "localhost:18795"}:
-        return origin in {"http://" + host, "https://" + host}
-    return host.endswith(".trycloudflare.com") and origin == "https://" + host
+    try:
+        host_parts = urlsplit("//" + host)
+        if (not host_parts.hostname or host_parts.username is not None
+                or host_parts.password is not None or host_parts.path
+                or host_parts.query or host_parts.fragment):
+            return False
+        hostname = host_parts.hostname.lower().rstrip(".")
+        host_port = host_parts.port
+    except ValueError:
+        return False
+
+    normalized = _normalized_origin(origin)
+    if normalized is None:
+        return False
+    scheme, origin_host, origin_port = normalized
+    if origin_host != hostname:
+        return False
+    expected_port = host_port or (443 if scheme == "https" else 80)
+    if expected_port != origin_port:
+        return False
+
+    if hostname in {"127.0.0.1", "localhost"}:
+        return host_port == 18795 and origin_port == 18795
+    return (
+        hostname.endswith(".trycloudflare.com")
+        and scheme == "https"
+        and origin_port == 443
+        and host_port in {None, 443}
+    )
 
 
 class GatewayHandler(BaseHTTPRequestHandler):

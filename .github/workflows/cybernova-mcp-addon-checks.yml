@@ -5,6 +5,10 @@ on:
     paths:
       - 'cybernova/mcp-addon/**'
       - '.github/workflows/cybernova-mcp-addon-checks.yml'
+  pull_request:
+    paths:
+      - 'cybernova/mcp-addon/**'
+      - '.github/workflows/cybernova-mcp-addon-checks.yml'
   workflow_dispatch:
 jobs:
   test:

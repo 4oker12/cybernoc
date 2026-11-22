@@ -6,6 +6,11 @@ on:
       - 'cybernova/autoupdater/**'
       - 'cybernova/v10/**'
       - '.github/workflows/cybernova-autoupdater-tests.yml'
+  pull_request:
+    paths:
+      - 'cybernova/autoupdater/**'
+      - 'cybernova/v10/**'
+      - '.github/workflows/cybernova-autoupdater-tests.yml'
   workflow_dispatch:
 permissions:
   contents: read

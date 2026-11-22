@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ipaddress
 import importlib.util
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -18,6 +19,7 @@ import sys
 import time
 import traceback
 import uuid
+from collections import OrderedDict
 from threading import RLock
 
 try:
@@ -46,6 +48,10 @@ _SECRET = re.compile(
 )
 _EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 
+MAX_BROWSER_SESSIONS = 4
+BROWSER_SESSION_IDLE_SECONDS = 900
+EXPLICIT_ONLY_TOOLS = frozenset({"terminal_run"})
+
 _TOOL_NAMES = frozenset(
     item["name"] for item in BROWSER_CONTROL_TOOLS
     if item["name"] != "browser_submit"
@@ -66,7 +72,7 @@ TOOL_GROUPS = (
     },
     {
         "id": "terminal", "label": "Терминал Windows", "icon": "terminal",
-        "description": "Полноценные CMD, Windows PowerShell 5.1 и PowerShell 7: многострочные команды, скрипты, конвейеры, перенаправления, файловые операции и диагностика. Выполнение с правами текущего процесса Cybernova, без скрытого повышения привилегий.",
+        "description": "CMD, Windows PowerShell 5.1 и PowerShell 7 для локальной работы. terminal_run показывается только при явном выборе этой группы; выполнение идёт с правами процесса Cybernova, без скрытого повышения привилегий.",
     },
     {
         "id": "web", "label": "Интернет / Research", "icon": "search",
@@ -198,7 +204,7 @@ def _convert_mcp_tool(item: dict) -> dict:
 
 
 def build_tool_catalog() -> list[dict]:
-    """Tools visible only to Account GPT; no DeepSeek tool registry mutation."""
+    """Shared reviewed local tool catalog for Account GPT and DeepSeek."""
     terminal_schema = {
         "type": "object",
         "properties": {
@@ -412,24 +418,154 @@ def _run_terminal(command: str, shell: str = "cmd", cwd: str = "",
     }
 
 
-class GPTToolRuntime:
-    """One isolated Chromium session and full local shell for one model runtime."""
-    def __init__(self, browser_profile_dir: str | Path | None = None):
+class BrowserSessionPool:
+    """Bounded per-conversation Chromium sessions with idle LRU eviction.
+
+    Conversation identifiers are hashed before they become directory names.
+    Eviction closes browser processes but deliberately retains profile data.
+    """
+
+    def __init__(self, profile_root: str | Path, *,
+                 session_factory=BrowserSession,
+                 max_sessions: int = MAX_BROWSER_SESSIONS,
+                 idle_seconds: int = BROWSER_SESSION_IDLE_SECONDS,
+                 clock=None):
+        if type(max_sessions) is not int or not 1 <= max_sessions <= 32:
+            raise ValueError("browser_session_limit_invalid")
+        if type(idle_seconds) is not int or not 60 <= idle_seconds <= 86400:
+            raise ValueError("browser_session_idle_timeout_invalid")
+        self.profile_root = Path(profile_root).expanduser()
+        self.session_factory = session_factory
+        self.max_sessions = max_sessions
+        self.idle_seconds = idle_seconds
+        self._clock = clock or time.monotonic
         self._lock = RLock()
-        self._browser: BrowserSession | None = None
+        self._sessions: OrderedDict[str, dict] = OrderedDict()
+
+    @staticmethod
+    def _key(conversation_key: str | None) -> str:
+        if not isinstance(conversation_key, str) or not conversation_key.strip() \
+                or len(conversation_key) > 256 or "\x00" in conversation_key:
+            raise ValueError("browser_conversation_required")
+        return hashlib.sha256(conversation_key.encode("utf-8")).hexdigest()[:24]
+
+    @staticmethod
+    def _close_entries(entries: list[dict]) -> None:
+        for entry in entries:
+            try:
+                entry["session"].close()
+            except Exception:
+                pass
+
+    def acquire(self, conversation_key: str | None) -> tuple[str, dict]:
+        key = self._key(conversation_key)
+        now = self._clock()
+        retired: list[dict] = []
+        selected = None
+        with self._lock:
+            for old_key, old_entry in list(self._sessions.items()):
+                if old_entry["active"] == 0 and now - old_entry["last_used"] >= self.idle_seconds:
+                    retired.append(self._sessions.pop(old_key))
+            selected = self._sessions.get(key)
+            if selected is not None:
+                selected["active"] += 1
+                selected["last_used"] = now
+                self._sessions.move_to_end(key)
+        self._close_entries(retired)
+
+        if selected is not None:
+            return key, selected
+
+        retired = []
+        with self._lock:
+            # Another caller may have created this conversation while stale
+            # sessions were being closed.
+            selected = self._sessions.get(key)
+            if selected is not None:
+                selected["active"] += 1
+                selected["last_used"] = self._clock()
+                self._sessions.move_to_end(key)
+            else:
+                if len(self._sessions) >= self.max_sessions:
+                    idle_key = next(
+                        (candidate for candidate, entry in self._sessions.items()
+                         if entry["active"] == 0),
+                        None,
+                    )
+                    if idle_key is not None:
+                        retired.append(self._sessions.pop(idle_key))
+                if len(self._sessions) >= self.max_sessions:
+                    selected = None
+                else:
+                    profile_dir = self.profile_root / "conversations" / key
+                    session = self.session_factory(profile_dir=profile_dir)
+                    selected = {
+                        "session": session, "profile_dir": profile_dir,
+                        "active": 1, "last_used": self._clock(),
+                        "call_lock": RLock(),
+                    }
+                    self._sessions[key] = selected
+        self._close_entries(retired)
+        if selected is None:
+            raise ValueError("browser_session_capacity_reached")
+        return key, selected
+
+    def release(self, key: str, entry: dict) -> None:
+        with self._lock:
+            current = self._sessions.get(key)
+            if current is not entry:
+                return
+            current["active"] = max(0, current["active"] - 1)
+            current["last_used"] = self._clock()
+            self._sessions.move_to_end(key)
+
+    def close(self) -> None:
+        with self._lock:
+            entries = list(self._sessions.values())
+            self._sessions.clear()
+        self._close_entries(entries)
+
+    @property
+    def session_count(self) -> int:
+        with self._lock:
+            return len(self._sessions)
+
+
+class GPTToolRuntime:
+    """Shared local tool catalog with isolated Chromium per model conversation."""
+
+    def __init__(self, browser_profile_dir: str | Path | None = None, *,
+                 browser_session_factory=BrowserSession,
+                 max_browser_sessions: int = MAX_BROWSER_SESSIONS,
+                 browser_idle_seconds: int = BROWSER_SESSION_IDLE_SECONDS):
+        self._lock = RLock()
         self.browser_profile_dir = (
             Path(browser_profile_dir).expanduser()
-            if browser_profile_dir is not None else None
+            if browser_profile_dir is not None else _browser_profile_path("gpt")
+        )
+        self._browser_pool = BrowserSessionPool(
+            self.browser_profile_dir,
+            session_factory=browser_session_factory,
+            max_sessions=max_browser_sessions,
+            idle_seconds=browser_idle_seconds,
         )
         self.tools = build_tool_catalog()
         self.tool_map = {item["name"]: item for item in self.tools}
 
+    @property
+    def explicit_only_tools(self) -> tuple[str, ...]:
+        return tuple(sorted(EXPLICIT_ONLY_TOOLS))
+
     def tools_for_groups(self, groups=None) -> list[dict]:
-        """Return the full catalog or only explicitly selected tool bundles."""
-        return filter_tool_rows(self.tools, groups)
+        """Auto mode omits tools that require an explicit group selection."""
+        selected = set(normalize_tool_groups(groups))
+        rows = filter_tool_rows(self.tools, groups)
+        if "terminal" not in selected:
+            rows = [item for item in rows if item["name"] not in EXPLICIT_ONLY_TOOLS]
+        return rows
 
     def mcp_tools(self, groups=None) -> list[dict]:
-        """Expose the same selected local tool catalog to MCP/Ollama-style agents."""
+        """Expose only the tools allowed by the user's current group selection."""
         return [
             {
                 "name": item["name"],
@@ -440,16 +576,32 @@ class GPTToolRuntime:
         ]
 
     def call(self, name: str, args: dict, *, authorized_targets=None,
-             user_messages=None, enabled_groups=None) -> tuple[dict, bool]:
+             user_messages=None, enabled_groups=None,
+             conversation_key: str | None = None) -> tuple[dict, bool]:
         selected = set(normalize_tool_groups(enabled_groups))
         if selected and tool_group_for_name(name) not in selected:
             return {"ok": False, "error": "tool_group_not_enabled"}, True
+        if name in EXPLICIT_ONLY_TOOLS and "terminal" not in selected:
+            return {"ok": False, "error": "terminal_run_requires_explicit_group_selection"}, True
         if name not in _TOOL_NAMES or name not in self.tool_map:
             return {"ok": False, "error": "gpt_tool_not_registered"}, True
         if not isinstance(args, dict):
             return {"ok": False, "error": "tool_arguments_must_be_object"}, True
-        with self._lock:
-            try:
+        try:
+            # Browser operations use their own per-conversation lock and worker
+            # thread. They never hold the runtime-wide lock while Playwright runs.
+            if name.startswith("browser_"):
+                if name == "browser_submit":
+                    raise ValueError("browser_submit_requires_separate_approval")
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        entry["session"].set_authorized_hosts(authorized_targets or set())
+                        return browser_control_call(name, args, entry["session"])
+                finally:
+                    self._browser_pool.release(key, entry)
+
+            with self._lock:
                 if name == "terminal_status":
                     if args:
                         raise ValueError("terminal_status_takes_no_arguments")
@@ -495,37 +647,24 @@ class GPTToolRuntime:
                     return computer_control_call(name, args, user_messages=user_messages)
                 if name in {"google_search", "research_source_open"}:
                     return research_web_call(name, args)
-                if name.startswith("browser_"):
-                    if name == "browser_submit":
-                        raise ValueError("browser_submit_requires_separate_approval")
-                    if self._browser is None:
-                        self._browser = BrowserSession(profile_dir=self.browser_profile_dir)
-                    self._browser.set_authorized_hosts(authorized_targets or set())
-                    return browser_control_call(name, args, self._browser)
                 raise ValueError("gpt_tool_not_implemented")
-            except Exception as exc:
-                error_id = uuid.uuid4().hex[:12]
-                detail = _SECRET.sub("[REDACTED]", _EMAIL.sub("[REDACTED EMAIL]", str(exc)))
-                rendered = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-                rendered = _SECRET.sub("[REDACTED]", _EMAIL.sub("[REDACTED EMAIL]", rendered))
-                # The native launcher keeps this diagnostic in its owning console.
-                # Do not create an unbounded log file or persist browser credentials.
-                logger.error(
-                    "tool_failure id=%s tool=%s type=%s\\n%s",
-                    error_id, name, type(exc).__name__, rendered[:20000],
-                )
-                return {
-                    "ok": False,
-                    "error": type(exc).__name__ + ":" + detail[:400],
-                    "error_id": error_id,
-                }, True
+        except Exception as exc:
+            error_id = uuid.uuid4().hex[:12]
+            detail = _SECRET.sub("[REDACTED]", _EMAIL.sub("[REDACTED EMAIL]", str(exc)))
+            rendered = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            rendered = _SECRET.sub("[REDACTED]", _EMAIL.sub("[REDACTED EMAIL]", rendered))
+            logger.error(
+                "tool_failure id=%s tool=%s type=%s\\n%s",
+                error_id, name, type(exc).__name__, rendered[:20000],
+            )
+            return {
+                "ok": False,
+                "error": type(exc).__name__ + ":" + detail[:400],
+                "error_id": error_id,
+            }, True
 
     def close(self):
-        with self._lock:
-            if self._browser is not None:
-                self._browser.close()
-                self._browser = None
-
+        self._browser_pool.close()
 
 def _browser_profile_path(agent_name: str) -> Path:
     configured = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")

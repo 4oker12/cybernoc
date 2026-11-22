@@ -482,6 +482,7 @@ def collaboration_step(payload: CollaborationActionRequest):
                     profile_instructions=MENTOR_PROFILE + "\n\n" +
                                          mode_instructions_for(profile, "chatgpt"),
                     tool_runtime=gpt_tool_runtime,
+                    conversation_key="collab:" + payload.task_id + ":chatgpt",
                     authorized_targets=extract_user_targets([
                         {"role": "user", "content": run["goal"]}
                     ]),
@@ -517,6 +518,7 @@ def collaboration_step(payload: CollaborationActionRequest):
                         "реальные доказательства. Не выдумывай результаты.\n\n" +
                         mode_instructions_for(profile, "researcher")
                     ),
+                    session_id="collab:" + payload.task_id + ":deepseek",
                 )
                 tool_count = outcome.get("tool_calls", 0)
                 EvidenceJournal(communication_store()).record_tool_events(
@@ -652,6 +654,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 user_context=user_context_for(profile, "chatgpt"),
                 profile_instructions=mode_instructions_for(profile, "chatgpt"),
                 tool_runtime=gpt_tool_runtime,
+                conversation_key="siwc:" + (payload.thread_id or payload.run_id),
                 authorized_targets=extract_user_targets(outgoing),
                 on_tool_event=persist_tool_event,
                 enabled_tool_groups=selected_tool_groups,
@@ -796,8 +799,10 @@ def status():
         [t["name"] for t in LOCAL_TOOLS + DOMAIN_TOOLS + SCOPED_TOOLS +
          SCANNER_TOOLS + BROWSER_TOOLS + NETWORK_TOOLS + RESEARCH_WEB_TOOLS +
          TERMINAL_TOOLS + COMMUNICATION_TOOLS + DEV_TOOLS] +
-        [t["name"] for t in gpt_tool_runtime.mcp_tools()]
+        [t["name"] for t in gpt_tool_runtime.mcp_tools()] +
+        [t["name"] for t in gpt_tool_runtime.mcp_tools(["terminal"])]
     ))
+    explicit_only = set(gpt_tool_runtime.explicit_only_tools)
     return {
         "model": getattr(agent.ollama, "model", MODEL),
         "source_commit": _source_commit(),
@@ -807,9 +812,10 @@ def status():
         "mcp_ready": mcp_ok,
         "tools": tools,
         "tool_groups": tool_group_summary(tools),
-        "auto_executable": sorted(set(tools) & REVIEWED_TOOLS),
+        "auto_executable": sorted((set(tools) & REVIEWED_TOOLS) - explicit_only),
+        "explicit_selection_only": sorted(explicit_only),
         "others_require_approval": sorted(set(tools) - REVIEWED_TOOLS),
-        "tools_selection": "user_selected_groups_then_automatic_model",
+        "tools_selection": "explicit_group_selection_required_for_terminal_run",
         "developer": {"mode": "task_isolated_git_worktree", "self_modification": True,
                       "code_edit": True, "unprivileged_tests": True,
                       "push_and_pr": "require_approval_and_write_credentials"},
@@ -972,6 +978,7 @@ def chat(payload: ChatRequest):
                 profile_instructions=mode_instructions_for(profile, "researcher"),
                 tool_groups=selected_tool_groups,
                 tools_enabled=payload.tools_enabled,
+                session_id=sid,
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
             )
             run_status = "completed"

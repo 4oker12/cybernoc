@@ -28,7 +28,7 @@ const TOOL_GROUP_GLYPHS={
 const TOOL_GROUP_FALLBACK=[
   {id:"browser",label:"Chrome / браузер",icon:"globe",description:"Открывать сайты, читать DOM, переходить по ссылкам, создавать вкладки, переключаться между ними, назад/вперёд, обновлять страницы, смотреть Console и DevTools Network."},
   {id:"computer",label:"Компьютер Windows",icon:"monitor",description:"Состояние ПК: CPU/RAM/диски, процессы и службы, автозагрузка, установленные программы, окна, Defender и локальные файлы."},
-  {id:"terminal",label:"Терминал Windows",icon:"terminal",description:"CMD и PowerShell для ограниченной системной диагностики; команды и операции контролируются политикой безопасности."},
+  {id:"terminal",label:"Терминал Windows",icon:"terminal",description:"Полноценные CMD и PowerShell для локальной работы. terminal_run доступен только при явном выборе этой группы."},
   {id:"web",label:"Интернет / Research",icon:"search",description:"Искать в интернете, получать выдачу с пагинацией, открывать найденные страницы, читать первоисточники и сопоставлять источники."},
   {id:"network",label:"Сеть / NOC",icon:"network",description:"DNS, TLS, IP, HTTP и сетевые проверки."},
   {id:"security",label:"Security",icon:"shield",description:"Проверки безопасности и лабораторные сканеры."},
@@ -461,7 +461,7 @@ function updateToolPickerSummary(){
   }
   if(!selected.length){
     $("toolSelectionBadge").textContent="Авто";
-    $("toolPickerSummary").textContent="Автовыбор: модель видит все доступные группы инструментов.";
+    $("toolPickerSummary").textContent="Автовыбор: все группы, кроме terminal_run. Для полного терминала выбери группу «Терминал Windows».";
     return;
   }
   const labels=state.toolGroupCatalog.filter(x=>selected.includes(x.id)).map(x=>x.label);

@@ -236,12 +236,16 @@ class Agent:
 
     def _call_registered_tool(self, name: str, args: dict, *, mcp=None,
                               authorized_targets=None, user_messages=None,
-                              enabled_groups=None):
+                              enabled_groups=None, conversation_key=None):
         if self.local_tool_runtime is not None and name in self.local_tool_runtime.tool_map:
-            result, is_error = self.local_tool_runtime.call(
-                name, args, authorized_targets=authorized_targets,
-                user_messages=user_messages, enabled_groups=enabled_groups,
-            )
+            runtime_kwargs = {
+                "authorized_targets": authorized_targets,
+                "user_messages": user_messages,
+                "enabled_groups": enabled_groups,
+            }
+            if conversation_key is not None:
+                runtime_kwargs["conversation_key"] = conversation_key
+            result, is_error = self.local_tool_runtime.call(name, args, **runtime_kwargs)
             if isinstance(result, dict) and isinstance(result.get("image_data_url"), str):
                 # The current DeepSeek/Ollama chat adapter is text-only. Do not
                 # serialize megabytes of base64 into its prompt; use DOM/UIA data.
@@ -260,10 +264,12 @@ class Agent:
     def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True,
             scope: dict | None = None, user_context: str = "",
             profile_instructions: str = "", tool_groups: list[str] | None = None,
-            tools_enabled: bool = True, on_usage=None) -> dict:
+            tools_enabled: bool = True, on_usage=None,
+            session_id: str | None = None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
         selected_groups = normalize_tool_groups(tool_groups or [])
+        conversation_key = ("deepseek:" + session_id) if isinstance(session_id, str) and session_id.strip() else None
         usage_totals = {
             "input_tokens": 0, "output_tokens": 0, "requests": 0,
             "measured_requests": 0,
@@ -482,6 +488,7 @@ class Agent:
                                 authorized_targets=authorized_targets,
                                 user_messages=task_messages,
                                 enabled_groups=selected_groups or None,
+                                conversation_key=conversation_key,
                             )
                             executed += 1
                             selected_by = "evidence_first_fallback"
@@ -599,6 +606,7 @@ class Agent:
                                 authorized_targets=authorized_targets,
                                 user_messages=task_messages,
                                 enabled_groups=selected_groups or None,
+                                conversation_key=conversation_key,
                             )
                             executed += 1
                         elif name in REVIEWED_TOOLS:

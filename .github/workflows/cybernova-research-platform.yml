@@ -2,6 +2,7 @@ name: Cybernova Research Platform Quality Gate
 on:
   push:
     branches:
+      - main
       - feature/cybernova-audit-architecture
       - feature/cybernova-chat-console
       - feature/account-gpt-local-tools

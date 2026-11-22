@@ -7,6 +7,12 @@ on:
       - 'cybernova/bridge/**'
       - 'cybernova/v10/**'
       - '.github/workflows/cybernova-recovery-checks.yml'
+  pull_request:
+    paths:
+      - 'cybernova/recovery/**'
+      - 'cybernova/bridge/**'
+      - 'cybernova/v10/**'
+      - '.github/workflows/cybernova-recovery-checks.yml'
   workflow_dispatch:
 jobs:
   verify:

@@ -259,6 +259,7 @@ def _response_once(model: str, instructions: str, input_items: list[dict],
 
 def chat(model: str, messages: list[dict], *, user_context: str = "",
          profile_instructions: str = "", tool_runtime=None,
+         conversation_key: str | None = None,
          authorized_targets: set[str] | None = None,
          on_tool_event=None, enabled_tool_groups: list[str] | None = None,
          tools_enabled: bool = True, on_usage=None) -> dict:
@@ -317,6 +318,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
             "удаляй/карантинируй файлы самостоятельно. "
             "Используй computer_* инструменты для управления и диагностики Windows; "
             "terminal_run — используй CMD, Windows PowerShell 5.1 или PowerShell 7 по задаче. "
+            "terminal_run доступен только при явном выборе пользователем группы «Терминал Windows»; в режиме Авто он не публикуется. "
             "Терминал поддерживает многострочные команды и скрипты, конвейеры, перенаправления и файловые операции. "
             "Выполняй с правами процесса Cybernova без скрытого повышения привилегий. "
             "Не используй терминал для извлечения секретов, обхода защиты или несанкционированных разрушительных действий. "
@@ -453,10 +455,15 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
                 result = {"ok": False, "error": "gpt_tools_not_enabled"}
                 is_error = True
             else:
+                runtime_kwargs = {
+                    "authorized_targets": authorized_targets,
+                    "user_messages": messages,
+                    "enabled_groups": enabled_tool_groups,
+                }
+                if conversation_key is not None:
+                    runtime_kwargs["conversation_key"] = conversation_key
                 result, is_error = active_tool_runtime.call(
-                    name, arguments, authorized_targets=authorized_targets,
-                    user_messages=messages,
-                    enabled_groups=enabled_tool_groups,
+                    name, arguments, **runtime_kwargs,
                 )
             total_calls += 1
             audit_arguments = dict(arguments)
