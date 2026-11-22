@@ -134,6 +134,10 @@ if(!byId('sidebarExpand').hidden)
  throw Error('Sidebar could not be expanded');
 if(typeof byId('collabFinish').listeners.click!=='function')
  throw Error('Finish button not wired');
+for(const id of ['collabPlan','collabWorkRun']){
+ if(typeof byId(id).listeners.click!=='function')
+   throw Error('Work orchestrator button not wired: '+id);
+}
 const largeMessage='Full technical evidence paragraph. '.repeat(25);
 const run={
  task_id:'task_test',goal:'Test',state:'paused',step:10,max_cycles:5,
@@ -154,6 +158,23 @@ if(!excerpt.endsWith('…') || excerpt.length>180)
 detail.open=true;detail.listeners.toggle();
 if(detail.children[1].textContent!==largeMessage)
  throw Error('Expansion lost the full original answer');
+
+context.renderCollabRun({
+ task_id:'task_parallel',goal:'Test',mode:'parallel',state:'active',
+ step:0,max_cycles:5,pause_at:10,next_actor:null,messages:[]
+});
+if(byId('collabWorkPanel').hidden)
+ throw Error('Parallel mode did not show planning panel');
+if(byId('collabPlan').hidden)
+ throw Error('Parallel mode did not offer a planning action');
+context.renderWorkItems('task_parallel',[
+ {item_id:'wi_1',position:0,title:'Audit logs',instructions:'Read safe logs',
+  state:'needs_review',depends_on:[],attempt:1,result:'Observed two events.',review:''},
+ {item_id:'wi_2',position:1,title:'Summary',instructions:'Compare sources',
+  state:'queued',depends_on:['wi_1'],attempt:0,result:'',review:''}
+]);
+if(byId('collabWorkItems').children.length!==2)
+ throw Error('Work item cards were not rendered');
 
 Promise.resolve().then(async()=>{
  await byId('pasteOutputButton').listeners.click();
