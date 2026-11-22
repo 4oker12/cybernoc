@@ -47,6 +47,7 @@ try:
     from .developer_tools import DEV_TOOLS
     from .communication_worker import CommunicationWorker
     from .evidence import EvidenceJournal
+    from .diagnostics import configure as configure_diagnostics, failure as log_failure
     from .upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from .siwc import connection as chatgpt_connection, SIWCError
     from .siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
@@ -79,6 +80,7 @@ except ImportError:
     from developer_tools import DEV_TOOLS
     from communication_worker import CommunicationWorker
     from evidence import EvidenceJournal
+    from diagnostics import configure as configure_diagnostics, failure as log_failure
     from upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from siwc import connection as chatgpt_connection, SIWCError
     from siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
@@ -239,7 +241,13 @@ async def localhost_only(request: Request, call_next):
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and \
        not request.headers.get("content-type", "").lower().startswith("application/json"):
         return JSONResponse({"detail": "json_only"}, status_code=415)
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        # HTTP exceptions already mapped to 4xx by FastAPI are not recorded.
+        # Never log the URL query string, request body or Authorization header.
+        log_failure("console", request.method + " " + request.url.path, exc)
+        raise
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -497,7 +505,7 @@ def collaboration_step(payload: CollaborationActionRequest):
                         TrafficToolClient(MCPClient(), {}, scope=scope),
                         communication_store(), payload.task_id,
                     ),
-                    local_tool_runtime=gpt_tool_runtime,
+                    local_tool_runtime=deepseek_tool_runtime,
                 )
                 outcome = engine.run(
                     history, prompt, scope=scope, public_get=True, force_tools=True,
@@ -665,6 +673,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
         except ProfileSettingsError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from None
         except SIWCError as exc:
+            log_failure("console", "chatgpt_inference", exc, error_id=payload.run_id)
             if user_message_seq is None:
                 raise HTTPException(status_code=409, detail=str(exc)) from None
             partial_answer = (
@@ -951,7 +960,7 @@ def chat(payload: ChatRequest):
                     TrafficToolClient(MCPClient(), state["traffic_artifacts"], scope=state["scope"]),
                     store, task_id,
                 ),
-                local_tool_runtime=gpt_tool_runtime,
+                local_tool_runtime=deepseek_tool_runtime,
             )
             profile = profile_settings_store().load()
             outcome = current_agent.run(
@@ -967,6 +976,7 @@ def chat(payload: ChatRequest):
             )
             run_status = "completed"
         except Exception as exc:
+            log_failure("console", "deepseek_inference", exc, error_id=payload.run_id)
             store.append(task_id, "controller", "system",
                          "Agent failed: " + type(exc).__name__, status="blocked")
             raise HTTPException(status_code=502, detail="agent_failed: " +
@@ -1026,7 +1036,7 @@ def approve(payload: ApprovalRequest):
                 mcp_factory=lambda: CommunicationToolClient(
                     TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
                     communication_store(), state["task_id"]),
-                local_tool_runtime=gpt_tool_runtime,
+                local_tool_runtime=deepseek_tool_runtime,
             )
             result = current_agent.execute_approved(item, state["history"])
         except Exception as exc:
@@ -1211,6 +1221,7 @@ def reset(payload: ResetRequest):
 
 
 if __name__ == "__main__":
+    configure_diagnostics("console")
     import uvicorn
     # Never listen on 0.0.0.0: user accesses via SSH loopback forwarding only.
     uvicorn.run(app, host="127.0.0.1", port=18794, access_log=False)
