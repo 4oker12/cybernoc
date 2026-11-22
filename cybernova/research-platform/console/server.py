@@ -404,13 +404,12 @@ def collaboration_run(task_id: str, after: int = 0):
 @app.get("/api/collab/activity")
 def collaboration_activity(task_id: str):
     try:
-        collaboration_store().read(task_id, recover=False)
+        run = collaboration_store().read(task_id, recover=False)
         store = communication_store()
-        dialog = store.read_dialog(task_id, after=0, limit=100)
         receipts = EvidenceJournal(store).list_tool_receipts(task_id, limit=100)
         progress = [{
             "seq": item["seq"], "body": item["body"], "created_at": item["created_at"]
-        } for item in dialog["messages"]
+        } for item in run["messages"]
             if item["actor"] == "qwen" and item["kind"] == "progress"]
         return {"task_id": task_id, "tool_receipts": receipts, "progress": progress}
     except (CollaborationError, CommunicationError, ValueError):
