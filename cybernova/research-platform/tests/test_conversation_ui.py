@@ -115,9 +115,19 @@ class GPTConversationTests(unittest.TestCase):
         html=(ROOT/"console/static/index.html").read_text(encoding="utf-8")
         js=(ROOT/"console/static/markdown.js").read_text(encoding="utf-8")
         app=(ROOT/"console/static/app.js").read_text(encoding="utf-8")
-        self.assertEqual(html.count('src="/static/markdown.js"'),1)
+        ux=(ROOT/"console/static/ux.js").read_text(encoding="utf-8")
+        self.assertEqual(html.count('src="/static/markdown.js?v=20261122-ui1"'),1)
         self.assertNotIn("innerHTML",js.split("(function () {",1)[1])
         self.assertIn("CybernovaMarkdown.render",app)
+        self.assertIn("function buildToolBatch",app)
+        agent=(ROOT/"console/agent.py").read_text(encoding="utf-8")
+        self.assertIn("def _extract_dsml_calls",agent)
+        self.assertIn("def finalize_answer",agent)
+        self.assertIn("MAX_INPUT_TOKENS = 500000",agent)
+        self.assertIn("_compact_context(context)",agent)
+        self.assertIn("tool-batch",app)
+        self.assertIn("normalizeAssistantText",js)
+        self.assertIn('firstElementChild?.classList?.contains("tool-batch")',ux)
         self.assertIn('id="modeChatGPT"',html)
         self.assertIn('id="gptThreadList"',html)
         self.assertIn('id="toolPickerToggle"',html)
@@ -159,6 +169,11 @@ class BrowserMarkdownTests(unittest.TestCase):
           "<img src=x onerror=alert(1)>",
           "[bad](javascript:alert(1))"
         ].join("\n").replace(/@@@/g,String.fromCharCode(96).repeat(3));
+        const rawProtocol='< | | DSML | | calls>< | | DSML | | invoke name="dev_read">< | | DSML | | parameter name="path">agent.py';
+        const cleaned=window.CybernovaMarkdown.normalizeAssistantText(rawProtocol);
+        assert(!cleaned.includes("invoke name="));
+        assert(cleaned.includes("служебный протокол"));
+        assert(window.CybernovaMarkdown.normalizeAssistantText("DSML — формат протокола").includes("DSML"));
         const rendered=window.CybernovaMarkdown.render(input);
         const nodes=[];
         const visit=(n)=>{nodes.push(n);for(const c of n.children||[])visit(c)};

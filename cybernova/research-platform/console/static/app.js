@@ -166,42 +166,67 @@ async function decideAction(requestId,decision,card){
     busy(false,"qwen");toBottom();
   }
 }
+function buildToolBatch(events,count,mode){
+  const rows=Array.isArray(events)?events.filter(event=>event&&typeof event==="object"):[];
+  const total=Number.isSafeInteger(count)&&count>=0?count:rows.length;
+  const errors=rows.filter(event=>event.is_error===true||event.result?.ok===false||
+    ["agent_error","mcp_error","tool_catalog_error","tool_selection_error"].includes(event.type)).length;
+  const pending=rows.filter(event=>["approval_required","scope_change_required"].includes(event.type)).length;
+  const names=Array.from(new Set(rows.map(event=>String(event.name||event.type||"Событие")).filter(Boolean)));
+  const preview=names.slice(0,3).join(" · ")+(names.length>3?" · +"+(names.length-3):"");
+  const modeLabel=mode==="native"?"модель выбрала":
+    mode==="dsml_content"?"модель выбрала (DSML)":
+    mode==="model_json_fallback"?"план модели":
+    mode==="google_research_fallback"?"автопоиск":
+    mode==="evidence_first_fallback"?"первичная проверка":
+    mode==="user_approved"?"разрешено пользователем":"контроллер";
+  const batch=node("details","tool-batch");
+  batch.setAttribute("aria-label","Инструменты: "+total+" вызовов");
+  const summary=node("summary","tool-batch-summary");
+  summary.append(
+    node("span","tool-batch-title","Инструменты"),
+    node("span","tool-batch-count",String(total)),
+    node("span","tool-batch-state",pending?pending+" ожидают решения":errors?errors+" с ошибкой":"выполнено"),
+    node("span","tool-batch-mode",modeLabel),
+    node("span","tool-batch-preview",preview||"Подробности недоступны")
+  );
+  const list=node("div","tool-batch-list");
+  if(rows.length){
+    for(const event of rows)list.append(makeToolDetails(event));
+  }else{
+    list.append(node("p","muted","Сервер не передал подробности вызовов."));
+  }
+  batch.append(summary,list);
+  return batch;
+}
 function showEvents(events,count,mode,reply){
   const inspector=$("runList");
+  const rows=Array.isArray(events)?events.filter(event=>event&&typeof event==="object"):[];
+  const total=Number.isSafeInteger(count)&&count>=0?count:rows.length;
   inspector.replaceChildren();
-  $("runCount").textContent=count?count+" вызовов":"Нет вызовов";
-  if(!events || !events.length){
-    inspector.append(node("p","muted","На этом шаге инструментов не было."));
-    return;
-  }
-  let inline=null;
-  if(reply)inline=node("div","inline-tools");
-  for(const e of events){
-    const item=makeToolDetails(e);
-    inspector.append(item);
-    if(inline)inline.append(makeToolDetails(e));
-  }
-  if(inline)reply.wrap.append(inline);
-  if(reply){
-    for(const event of events){
-      if(event.type==="approval_required"&&event.request_id){
-        reply.wrap.append(approvalCard(event));
-      }else if(event.type==="scope_change_required"){
-        const notice=node("div","approval-card scope-notice");
-        notice.append(node("div","approval-title","Нужно расширить область доступа"),
-          node("p","approval-reason","Модель запросила внешний ресурс, которого нет в разрешённом scope MCP. "+
-            "Добавить домен может только администратор системы. Самостоятельного обхода ограничений нет."),
-          node("pre","approval-args",JSON.stringify(event.arguments||{},null,2)));
-        reply.wrap.append(notice);
-      }
+  $("runCount").textContent=total?total+" вызовов":rows.length?rows.length+" событий":"Нет вызовов";
+  if(rows.length||total>0){
+    inspector.append(buildToolBatch(rows,total,mode));
+    if(reply){
+      const inline=node("div","inline-tools");
+      inline.append(buildToolBatch(rows,total,mode));
+      reply.wrap.append(inline);
     }
+  }else{
+    inspector.append(node("p","muted","На этом шаге инструментов не было."));
   }
-  if(reply && count){
-    const receipt=node("div","tool-receipt");
-    receipt.append(node("strong","",count+" реальных вызовов MCP"),
-      node("span","",mode==="native"?"· выбрала модель (native tools)":
-        mode==="model_json_fallback"?"· план выбрала модель": "· выбран контроллером"));
-    reply.wrap.insertBefore(receipt,inline);
+  if(!reply)return;
+  for(const event of rows){
+    if(event.type==="approval_required"&&event.request_id){
+      reply.wrap.append(approvalCard(event));
+    }else if(event.type==="scope_change_required"){
+      const notice=node("div","approval-card scope-notice");
+      notice.append(node("div","approval-title","Нужно расширить область доступа"),
+        node("p","approval-reason","Модель запросила внешний ресурс, которого нет в разрешённом scope MCP. "+
+          "Добавить домен может только администратор системы. Самостоятельного обхода ограничений нет."),
+        node("pre","approval-args",JSON.stringify(event.arguments||{},null,2)));
+      reply.wrap.append(notice);
+    }
   }
 }
 function renderFollowups(reply, questions){
