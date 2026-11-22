@@ -271,6 +271,40 @@ class WorkItemTests(unittest.TestCase):
             self.assertTrue(any(m["actor"] == "qwen" and m["kind"] == "result"
                                 for m in dialog.json()["messages"]))
 
+    def test_rework_feedback_reaches_same_worker_without_new_authorization(self):
+        calls = []
+        class FakeAgent:
+            def __init__(self, *args, **kwargs):
+                pass
+            def run(self, history, prompt, **kwargs):
+                calls.append((prompt, kwargs))
+                return {"answer": "Обнаружены два наблюдения.", "events": [],
+                        "tool_calls": 0, "approval_requests": []}
+        def fake_gpt(model, messages, **kwargs):
+            if "независимый ревьюер" in messages[-1]["content"]:
+                return {"answer": json.dumps({
+                    "decision": "rework", "feedback": "Укажи подтверждающий источник."
+                }, ensure_ascii=False)}
+            return {"answer": json.dumps({"items": sample_plan()})}
+        run = self.create()
+        task_id = run["task_id"]
+        item = self.work.create_plan(task_id, sample_plan())[0]
+        with patch.object(server, "communication_store", return_value=self.comm), \
+             patch.object(server, "collaboration_store", return_value=self.collab), \
+             patch.object(server, "work_item_store", return_value=self.work), \
+             patch.object(server, "profile_settings_store", return_value=self.profile), \
+             patch.object(server, "chatgpt_chat", side_effect=fake_gpt), \
+             patch.object(server, "Agent", FakeAgent):
+            request = server.WorkItemRequest(task_id=task_id, item_id=item["item_id"])
+            server.collaboration_item_step(request)
+            result = server.collaboration_item_step(request)
+            self.assertEqual(result["item"]["state"], "rework")
+            server.collaboration_item_step(request)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("Укажи подтверждающий источник.", calls[-1][0])
+        self.assertIn("Обнаружены два наблюдения.", calls[-1][0])
+        self.assertEqual(calls[-1][1]["session_id"], item["item_id"])
+
     def test_gateway_routes_use_existing_authenticated_entry_point(self):
         for url, method in [
             ("/api/collab/items?task_id=cn_validid_123456", "GET"),
