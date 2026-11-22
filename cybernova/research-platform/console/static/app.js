@@ -1465,6 +1465,13 @@ function renderWorkItems(taskId, items=[]){
         "Зависит от: "+depends.map(id=>"#"+(indexById.get(id)||"?")).join(", ")));
     }
     if(item.attempt)card.append(node("p","collab-work-meta","Запусков: "+item.attempt+"/3"));
+    for(const [phase,label] of [["research","DeepSeek"],["review","ChatGPT"]]){
+      const usage=item.usage?.[phase];
+      if(Number.isInteger(usage?.total_tokens))
+        card.append(node("p","collab-work-meta",label+" · токены: "+
+          usage.total_tokens+" (вход "+(usage.input_tokens??"?")+
+          ", выход "+(usage.output_tokens??"?")+")"));
+    }
     for(const [name,value] of [["Требования",item.instructions],
                                ["Результат DeepSeek",item.result],
                                ["Ревью ChatGPT",item.review]]){
@@ -1508,7 +1515,7 @@ function displayCollabWork(run){
     (running?" · Оркестратор активен":""):
     "Нет плана. ChatGPT составит 2–6 подзадач, запуск — отдельной кнопкой.";
   const signature=items.map(item=>[item.item_id,item.state,item.attempt,
-    item.result,item.review,item.last_error].join(":")).join("|");
+    item.result,item.review,item.last_error,JSON.stringify(item.usage)].join(":")).join("|");
   if(state.collabWorkRenderedTask!==run.task_id||
      state.collabWorkRenderedSignature!==signature){
     renderWorkItems(run.task_id,items);
