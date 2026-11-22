@@ -13,7 +13,8 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
   },
   lastUsage:{qwen:null,gpt:null},
   collabRun:null,collabLoopTasks:new Set(),collabStopRequests:new Set(),collabActivity:new Map(),
-  collabWorkByTask:new Map(),collabWorkLoops:new Set()};
+  collabWorkByTask:new Map(),collabWorkLoops:new Set(),
+  collabWorkRenderedTask:null,collabWorkRenderedSignature:null};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка интерфейса",
@@ -1406,7 +1407,9 @@ function renderCollabEntry(message){
 
 function renderCollabActivity(taskId, activity){
   const log=$("collabLog");
-  log.querySelector(".collab-activity")?.remove();
+  const oldActivity=log.querySelector(".collab-activity");
+  const wasOpen=!!oldActivity?.open;
+  oldActivity?.remove();
   if(!activity)return;
   const receipts=activity.tool_receipts||[], progress=activity.progress||[];
   if(!receipts.length&&!progress.length)return;
@@ -1427,6 +1430,7 @@ function renderCollabActivity(taskId, activity){
     list.append(row);
   }
   details.append(summary,list);
+  details.open=wasOpen;
   log.append(details);
 }
 async function refreshCollabActivity(taskId){
@@ -1503,7 +1507,14 @@ function displayCollabWork(run){
     " · Исполняется "+items.filter(i=>["running","reviewing"].includes(i.state)).length+
     (running?" · Оркестратор активен":""):
     "Нет плана. ChatGPT составит 2–6 подзадач, запуск — отдельной кнопкой.";
-  renderWorkItems(run.task_id,items);
+  const signature=items.map(item=>[item.item_id,item.state,item.attempt,
+    item.result,item.review,item.last_error].join(":")).join("|");
+  if(state.collabWorkRenderedTask!==run.task_id||
+     state.collabWorkRenderedSignature!==signature){
+    renderWorkItems(run.task_id,items);
+    state.collabWorkRenderedTask=run.task_id;
+    state.collabWorkRenderedSignature=signature;
+  }
 }
 async function refreshCollabWork(taskId){
   try{
@@ -1535,6 +1546,11 @@ async function planCollabWork(){
 async function runCollabWork(taskId=state.collabRun?.task_id){
   if(!taskId||state.collabWorkLoops.has(taskId))return;
   state.collabWorkLoops.add(taskId);
+  // Poll only while the user-triggered bounded batch is running.
+  const activityTimer=setInterval(()=>{
+    void refreshCollabWork(taskId);
+    void refreshCollabActivity(taskId);
+  },1200);
   try{
     for(let wave=0;wave<48;wave++){
       const data=await refreshCollabWork(taskId);
@@ -1563,6 +1579,7 @@ async function runCollabWork(taskId=state.collabRun?.task_id){
       void refreshCollabActivity(taskId);
     }
   }finally{
+    clearInterval(activityTimer);
     state.collabWorkLoops.delete(taskId);
     const updated=await refreshCollabWork(taskId);
     if(state.collabRun?.task_id===taskId&&updated){
@@ -1755,6 +1772,8 @@ async function newCollab(){
   $("collabLog").replaceChildren();
   $("collabWorkPanel").hidden=true;
   $("collabWorkItems").replaceChildren();
+  state.collabWorkRenderedTask=null;
+  state.collabWorkRenderedSignature=null;
   $("collabGoal").value="";
   $("messageInput").disabled=true;
   $("sendButton").disabled=true;
