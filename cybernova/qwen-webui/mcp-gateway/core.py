@@ -1,9 +1,11 @@
 """Pure, safe analysis functions. Never execute supplied code or arbitrary URLs."""
 import ast
 import ipaddress
+import json
 import re
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 
 def _name(expr):
@@ -123,8 +125,26 @@ def summarize_network(cidr: str) -> dict:
     }
 
 
-def check_local_webui() -> dict:
-    """The ONLY network tool: fixed localhost:18791, no redirects or proxy."""
+def check_local_webui(url: str = "http://127.0.0.1:18794/api/status") -> dict:
+    """Probe the local Console API without credentials, redirects or proxies.
+
+    HTTP reachability and application/MCP readiness are reported separately.
+    The access gateway on 18795 is intentionally not probed because it requires
+    the owner's Basic-auth credential; the legacy Open WebUI port 18791 is gone.
+    """
+    base = {
+        "ok": False, "checked_url": url, "listener": "unknown",
+        "layer": "tcp", "http_status": None, "mcp_ready": None,
+        "reason": "connection_error", "network_requests": 1,
+    }
+    try:
+        parsed = urlsplit(url)
+        if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"}
+                or parsed.username or parsed.password or parsed.fragment):
+            return {**base, "reason": "invalid_local_url", "network_requests": 0}
+    except (TypeError, ValueError):
+        return {**base, "reason": "invalid_local_url", "network_requests": 0}
+
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, headers, newurl):
             return None
@@ -132,11 +152,49 @@ def check_local_webui() -> dict:
     opener = urllib.request.build_opener(
         urllib.request.ProxyHandler({}), NoRedirect()
     )
-    req = urllib.request.Request("http://127.0.0.1:18791/", method="GET")
+    req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
     try:
         with opener.open(req, timeout=4) as response:
-            return {"ok": response.status == 200, "http_status": response.status}
+            status = int(response.status)
+            body = response.read(65537)
+        if len(body) > 65536:
+            return {**base, "listener": "up", "layer": "http",
+                    "http_status": status, "reason": "response_too_large"}
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return {**base, "listener": "up", "layer": "app",
+                    "http_status": status, "reason": "invalid_status_payload"}
+        if not isinstance(payload, dict):
+            return {**base, "listener": "up", "layer": "app",
+                    "http_status": status, "reason": "invalid_status_payload"}
+        mcp_ready = payload.get("mcp_ready")
+        if type(mcp_ready) is not bool:
+            mcp_ready = None
+        ready = status == 200 and mcp_ready is True
+        return {
+            **base, "ok": ready, "listener": "up",
+            "layer": "app" if status == 200 else "http",
+            "http_status": status, "mcp_ready": mcp_ready,
+            "reason": "ok" if ready else "mcp_unavailable" if status == 200 else
+                      "http_5xx" if status >= 500 else "http_status",
+        }
     except urllib.error.HTTPError as exc:
-        return {"ok": False, "http_status": exc.code}
-    except (urllib.error.URLError, OSError, TimeoutError):
-        return {"ok": False, "error": "localhost_webui_unavailable"}
+        reason = "http_401" if exc.code == 401 else "http_5xx" if exc.code >= 500 else "http_status"
+        return {**base, "listener": "up", "layer": "http",
+                "http_status": exc.code, "reason": reason}
+    except urllib.error.URLError as exc:
+        cause = exc.reason
+        if isinstance(cause, ConnectionRefusedError):
+            return {**base, "listener": "absent", "layer": "tcp",
+                    "reason": "connection_refused"}
+        if isinstance(cause, (TimeoutError, OSError)) and "timed out" in str(cause).lower():
+            return {**base, "listener": "unknown", "layer": "tcp", "reason": "timeout"}
+        return {**base, "listener": "unknown", "layer": "tcp", "reason": "connection_error"}
+    except ConnectionRefusedError:
+        return {**base, "listener": "absent", "layer": "tcp",
+                "reason": "connection_refused"}
+    except TimeoutError:
+        return {**base, "listener": "unknown", "layer": "tcp", "reason": "timeout"}
+    except OSError:
+        return {**base, "listener": "unknown", "layer": "tcp", "reason": "connection_error"}

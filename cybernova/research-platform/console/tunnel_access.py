@@ -17,8 +17,10 @@ from urllib.parse import urlsplit
 
 try:
     from .upload_limits import MAX_IMPORT_HTTP_BODY_BYTES, MAX_PROXY_RESPONSE_BYTES
+    from .diagnostics import configure as configure_diagnostics, export_jsonl, failure as log_failure
 except ImportError:
     from upload_limits import MAX_IMPORT_HTTP_BODY_BYTES, MAX_PROXY_RESPONSE_BYTES
+    from diagnostics import configure as configure_diagnostics, export_jsonl, failure as log_failure
 
 DEFAULT_PORT = 18795
 DEFAULT_SECRET_FILE = "/workspace/cybernova-comm-private/web_access.txt"
@@ -27,7 +29,8 @@ ALLOWED_STATIC = frozenset({"/", "/static/styles.css", "/static/app.js", "/stati
 ALLOWED_GET = frozenset({"/api/status", "/api/comm/tasks", "/api/comm/events",
     "/api/comm/review-packet", "/api/comm/evidence", "/api/siwc/status",
     "/api/siwc/models", "/api/siwc/chats", "/api/siwc/chat", "/api/research/scope", "/api/profile-settings", "/api/model-config",
-    "/api/collab/runs", "/api/collab/run", "/auth/callback"})
+    "/api/collab/runs", "/api/collab/run", "/auth/callback",
+    "/api/diagnostics/export"})
 ALLOWED_POST = frozenset({
     "/api/chat", "/api/import", "/api/approve", "/api/followups",
     "/api/reset", "/api/research/scope", "/api/comm/resume", "/api/comm/reviewer-feedback",
@@ -92,9 +95,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code: int, content: bytes = b"", *,
-              challenge: bool = False, content_type: str = "text/plain"):
+              challenge: bool = False, content_type: str = "text/plain",
+              download_name: str | None = None):
         self.send_response(code)
         self.send_header("Content-Type", content_type)
+        if download_name:
+            self.send_header("Content-Disposition", 'attachment; filename="' + download_name + '"')
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -115,7 +121,17 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if not allowed_path(self.path, self.command):
             return self._send(404, b"Not found\n")
         if not origin_allowed(self.headers.get("Origin"), self.headers.get("Host")):
-            return self._send(403, b"Invalid origin\n")
+            return self._send(403, b"Invalid origin\\n")
+        if self.command == "GET" and route == "/api/diagnostics/export":
+            try:
+                journal = export_jsonl()
+            except Exception as exc:
+                log_failure("access-gateway", "diagnostics_export", exc)
+                return self._send(503, b"Diagnostic journal unavailable\\n")
+            return self._send(
+                200, journal, content_type="application/x-ndjson; charset=utf-8",
+                download_name="cybernova-diagnostics.jsonl",
+            )
         length_str = self.headers.get("Content-Length")
         if self.command == "POST":
             if length_str is None or not length_str.isascii() or not length_str.isdigit():
@@ -194,6 +210,7 @@ def serve(port: int = DEFAULT_PORT, secret_file: str = DEFAULT_SECRET_FILE):
 
 
 if __name__ == "__main__":
+    configure_diagnostics("access-gateway")
     serve(
         int(os.environ.get("CYBERNOVA_ACCESS_PORT", str(DEFAULT_PORT))),
         os.environ.get("CYBERNOVA_ACCESS_SECRET_FILE", DEFAULT_SECRET_FILE),

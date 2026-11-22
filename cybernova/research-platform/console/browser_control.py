@@ -1,18 +1,20 @@
-"""Interactive, isolated Chromium browser tools for Account GPT.
+"""Interactive, isolated Chromium browser tools for Cybernova model agents.
 
-The browser uses a dedicated local profile, never the user's personal Chrome
-profile. The user signs in manually; browser cookies are not returned to the
-model. Private hosts are reachable only when explicitly named in the task.
-Downloads and unapproved form submissions are blocked.
+Each model runtime supplies its own dedicated local profile, never the user's
+personal Chrome profile. The user signs in manually; browser cookies are not
+returned to the model. Private hosts require explicit task scope. Downloads
+and unapproved form submissions are blocked.
 """
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import base64
 import ipaddress
+import json
 import os
 from pathlib import Path
 import re
+import shutil
 import socket
 import sys
 import time
@@ -245,6 +247,42 @@ def _redact_text(value: str) -> str:
     return value[:MAX_TEXT]
 
 
+def _disable_profile_session_restore(profile_dir: Path) -> bool:
+    """Disable Chromium tab restoration without removing cookies or site data."""
+    preferences = profile_dir / "Default" / "Preferences"
+    if not preferences.is_file():
+        return False
+    temporary = preferences.with_name("Preferences.cybernova.tmp")
+    try:
+        payload = json.loads(preferences.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("browser_profile_preferences_invalid")
+        session = payload.get("session")
+        if session is None:
+            session = {}
+        if not isinstance(session, dict):
+            raise ValueError("browser_profile_session_preferences_invalid")
+        if session.get("restore_on_startup") == 5:
+            return False
+        session["restore_on_startup"] = 5  # Chromium: open the New Tab Page, not the last session.
+        payload["session"] = session
+        backup = preferences.with_name("Preferences.cybernova-backup")
+        if not backup.exists():
+            shutil.copy2(preferences, backup)
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.replace(temporary, preferences)
+        return True
+    except (OSError, TypeError, ValueError) as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise ValueError("browser_profile_restore_preference_failed") from exc
+
+
 class BrowserSession:
     """One isolated persistent browser context, serialized on its own worker thread.
 
@@ -252,7 +290,9 @@ class BrowserSession:
     in this dedicated profile on disk and are never returned to the model.
     The user's personal Chrome profile is never opened or inspected.
     """
-    def __init__(self, *, headless: bool | None = None):
+    def __init__(self, *, headless: bool | None = None,
+                 profile_dir: str | Path | None = None):
+        self._profile_dir = Path(profile_dir).expanduser() if profile_dir is not None else None
         if headless is None:
             configured = os.environ.get("CYBERNOVA_GPT_BROWSER_HEADLESS")
             headless = (sys.platform != "win32") if configured is None else configured.strip().lower() in {"1", "true", "yes", "on"}
@@ -324,6 +364,9 @@ class BrowserSession:
                 self._context = None
                 self._browser = None
                 self._page = None
+        restore_session = os.environ.get(
+            "CYBERNOVA_GPT_BROWSER_RESTORE_SESSION", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
         if self._context is None:
             launch_args = [
                 "--disable-background-networking", "--disable-sync",
@@ -344,13 +387,17 @@ class BrowserSession:
                 )
             else:
                 configured_profile = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")
-                if configured_profile:
+                if self._profile_dir is not None:
+                    profile_dir = self._profile_dir
+                elif configured_profile:
                     profile_dir = Path(configured_profile).expanduser()
                 elif os.environ.get("LOCALAPPDATA"):
                     profile_dir = Path(os.environ["LOCALAPPDATA"]) / "CyberNova" / "data" / "gpt-chromium-profile"
                 else:
                     profile_dir = Path.home() / ".local" / "share" / "cybernova" / "gpt-chromium-profile"
                 profile_dir.mkdir(parents=True, exist_ok=True)
+                if not restore_session:
+                    _disable_profile_session_restore(profile_dir)
                 if os.name != "nt":
                     try:
                         profile_dir.chmod(0o700)
@@ -374,7 +421,17 @@ class BrowserSession:
                 ),
             )
         pages = list(self._context.pages)
-        self._page = pages[0] if pages else self._context.new_page()
+        if not restore_session:
+            # A dedicated persistent profile keeps authentication state, but
+            # restored tabs are not trusted as the next task's working page.
+            for stale_page in pages:
+                try:
+                    stale_page.close()
+                except Exception:
+                    pass
+            self._page = self._context.new_page()
+        else:
+            self._page = pages[0] if pages else self._context.new_page()
         self._attach_page(self._page)
 
     def _attach_page(self, page):

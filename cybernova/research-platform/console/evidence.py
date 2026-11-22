@@ -167,20 +167,29 @@ class EvidenceJournal:
         No raw tool arguments/result retained, only their SHA256 digests.
         """
         self.store.get_task(task_id)
-        if not isinstance(events, list) or len(events) > 64:
+        # Agent.events also contains diagnostics (mcp_error, tool_catalog_error,
+        # tool_selection_error, etc.) which are intentionally not receipts.
+        # Filter first: 64 actual tool calls plus diagnostics must not fail the
+        # entire chat response merely because the raw event list exceeds 64.
+        if not isinstance(events, list) or len(events) > 256:
+            raise CommunicationError("invalid_tool_events")
+        receipt_events = []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            event_type = event.get("type")
+            name = event.get("name")
+            if event_type not in {"tool_result", "tool_error", "approval_required",
+                                  "scope_change_required"}:
+                continue
+            if not isinstance(name, str) or not TOOL.fullmatch(name):
+                continue
+            receipt_events.append((event, event_type, name))
+        if len(receipt_events) > 64:
             raise CommunicationError("invalid_tool_events")
         results = []
         with self._lock, self._connection() as db:
-            for event in events:
-                if not isinstance(event, dict):
-                    continue
-                event_type = event.get("type")
-                name = event.get("name")
-                if event_type not in {"tool_result", "tool_error", "approval_required",
-                                      "scope_change_required"}:
-                    continue
-                if not isinstance(name, str) or not TOOL.fullmatch(name):
-                    continue
+            for event, event_type, name in receipt_events:
                 receipt_id = "rc_" + secrets.token_urlsafe(18)
                 is_error = bool(event.get("is_error"))
                 db.execute(

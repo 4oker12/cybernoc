@@ -1,12 +1,13 @@
-"""Local tool runtime dedicated to Cybernova's Account GPT mode.
+"""Local tool runtime implementation shared by Cybernova model adapters.
 
-The GPT agent gets its own tool loop and browser session. This module does not
-register tools with or modify the DeepSeek research agent.
+Account GPT and DeepSeek receive separate GPTToolRuntime instances, locks and
+persistent browser profiles while retaining the same reviewed tool catalog.
 """
 from __future__ import annotations
 
 import ipaddress
 import importlib.util
+import logging
 import os
 from pathlib import Path
 import platform
@@ -15,6 +16,8 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
+import uuid
 from threading import RLock
 
 try:
@@ -32,12 +35,13 @@ except ImportError:
 MAX_TOOL_OUTPUT_CHARS = 50000
 MAX_TERMINAL_COMMAND_CHARS = 20000
 MAX_TERMINAL_TIMEOUT_SECONDS = 300
+logger = logging.getLogger(__name__)
 
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 _DOMAIN = re.compile(r"(?i)(?<![a-z0-9.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?![a-z0-9.-])")
 _SECRET = re.compile(
     r"(?i)(Bearer\s+[A-Za-z0-9._~-]{8,}|"
-    r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|"
+    r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|"
     r"authorization|cookie)\s*[:=]\s*[^\s,;]+)"
 )
 _EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
@@ -409,10 +413,14 @@ def _run_terminal(command: str, shell: str = "cmd", cwd: str = "",
 
 
 class GPTToolRuntime:
-    """One isolated Chromium session and full local shell for Account GPT."""
-    def __init__(self):
+    """One isolated Chromium session and full local shell for one model runtime."""
+    def __init__(self, browser_profile_dir: str | Path | None = None):
         self._lock = RLock()
         self._browser: BrowserSession | None = None
+        self.browser_profile_dir = (
+            Path(browser_profile_dir).expanduser()
+            if browser_profile_dir is not None else None
+        )
         self.tools = build_tool_catalog()
         self.tool_map = {item["name"]: item for item in self.tools}
 
@@ -491,12 +499,26 @@ class GPTToolRuntime:
                     if name == "browser_submit":
                         raise ValueError("browser_submit_requires_separate_approval")
                     if self._browser is None:
-                        self._browser = BrowserSession()
+                        self._browser = BrowserSession(profile_dir=self.browser_profile_dir)
                     self._browser.set_authorized_hosts(authorized_targets or set())
                     return browser_control_call(name, args, self._browser)
                 raise ValueError("gpt_tool_not_implemented")
-            except (OSError, ValueError, TypeError) as exc:
-                return {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}, True
+            except Exception as exc:
+                error_id = uuid.uuid4().hex[:12]
+                detail = _SECRET.sub("[REDACTED]", _EMAIL.sub("[REDACTED EMAIL]", str(exc)))
+                rendered = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+                rendered = _SECRET.sub("[REDACTED]", _EMAIL.sub("[REDACTED EMAIL]", rendered))
+                # The native launcher keeps this diagnostic in its owning console.
+                # Do not create an unbounded log file or persist browser credentials.
+                logger.error(
+                    "tool_failure id=%s tool=%s type=%s\\n%s",
+                    error_id, name, type(exc).__name__, rendered[:20000],
+                )
+                return {
+                    "ok": False,
+                    "error": type(exc).__name__ + ":" + detail[:400],
+                    "error_id": error_id,
+                }, True
 
     def close(self):
         with self._lock:
@@ -505,4 +527,18 @@ class GPTToolRuntime:
                 self._browser = None
 
 
-runtime = GPTToolRuntime()
+def _browser_profile_path(agent_name: str) -> Path:
+    configured = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")
+    if configured:
+        base = Path(configured).expanduser()
+        return base if agent_name == "gpt" else base.parent / "deepseek-chromium-profile"
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / "CyberNova" / "data" / f"{agent_name}-chromium-profile"
+    return Path.home() / ".local" / "share" / "cybernova" / f"{agent_name}-chromium-profile"
+
+
+# Separate runtime locks, BrowserSession instances and persistent profiles.
+# Both models retain the same inspected tool catalog and safety policies.
+runtime = GPTToolRuntime(browser_profile_dir=_browser_profile_path("gpt"))
+deepseek_runtime = GPTToolRuntime(browser_profile_dir=_browser_profile_path("deepseek"))

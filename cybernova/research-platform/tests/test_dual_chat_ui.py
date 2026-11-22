@@ -35,6 +35,31 @@ class DualChatTests(unittest.TestCase):
         with self.assertRaises(GPTChatError):
             other.save_exchange(None,"gpt","abc","")
 
+    def test_qwen_and_gpt_use_independent_local_tool_runtimes(self):
+        self.assertIs(server.agent.local_tool_runtime, server.deepseek_tool_runtime)
+        self.assertIsNot(server.deepseek_tool_runtime, server.gpt_tool_runtime)
+        self.assertNotEqual(
+            server.deepseek_tool_runtime.browser_profile_dir,
+            server.gpt_tool_runtime.browser_profile_dir,
+        )
+
+    def test_source_commit_uses_git_and_marks_dirty_checkout(self):
+        from subprocess import CompletedProcess
+        server._source_commit.cache_clear()
+        self.addCleanup(server._source_commit.cache_clear)
+        with patch.dict(os.environ, {"CYBERNOVA_SOURCE_COMMIT": ""}, clear=False):
+            with patch.object(server.subprocess, "run", side_effect=[
+                CompletedProcess([], 0, stdout="a" * 40, stderr=""),
+                CompletedProcess([], 0, stdout="", stderr=""),
+            ]):
+                self.assertEqual(server._source_commit(), "a" * 40)
+            server._source_commit.cache_clear()
+            with patch.object(server.subprocess, "run", side_effect=[
+                CompletedProcess([], 0, stdout="b" * 40, stderr=""),
+                CompletedProcess([], 0, stdout=" M console/server.py\\n", stderr=""),
+            ]):
+                self.assertEqual(server._source_commit(), "uncommitted:" + "b" * 12)
+
     def test_gpt_http_is_separate_from_qwen_tasks(self):
         calls=[]
         def fake(model,messages,**kwargs):
@@ -103,7 +128,19 @@ class DualChatTests(unittest.TestCase):
         self.assertEqual(html.count('src="/static/markdown.js"'),1)
         self.assertIn('async function sendGPT()',js)
         self.assertIn('setFormatted(pending.body,result.answer',js)
+        self.assertIn("qwenRunning:false", js)
+        self.assertIn("gptRunning:false", js)
+        self.assertIn('if(!text||state.qwenRunning)return;', js)
+        self.assertIn('if(!message||state.gptRunning)return;', js)
+        self.assertIn('busy(true,"qwen")', js)
+        self.assertIn('busy(true,"gpt")', js)
         self.assertNotIn("innerHTML=",js)
+        if shutil.which("node"):
+            check = subprocess.run(
+                ["node", "--check", str(ROOT / "console" / "static" / "app.js")],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(check.returncode, 0, check.stderr)
 
     @unittest.skipUnless(shutil.which("node"),"Node unavailable")
     def test_markdown_render_with_no_dom_html_injection(self):

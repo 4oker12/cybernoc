@@ -2,7 +2,7 @@
 /* Cybernova: local ChatGPT-like chat UI. No external JS, no model HTML. */
 const $=id=>document.getElementById(id);
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
+const state={sessionId:null,taskId:null,lastSeq:0,running:false,qwenRunning:false,gptRunning:false,collabRunning:false,turns:0,
   uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Активная модель",
   gptThreadId:null,gptConnected:false,gptPlanUsage:false,
   researchScope:{hosts:[],capture_detail:"evidence"},profileSettings:null,
@@ -15,7 +15,7 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
   collabRun:null,collabLooping:false,collabStopRequested:false};
 const descriptions={
   gateway_status:"Шлюз MCP",
-  local_webui_health:"Проверка интерфейса",
+  local_webui_health:"Проверка Console API / MCP",
   http_get:"Публичный GET",
   http_header_review:"Анализ HTTP-заголовков",
   ip_network_summary:"Расчёт подсети",
@@ -139,8 +139,8 @@ function approvalCard(event){
   return card;
 }
 async function decideAction(requestId,decision,card){
-  if(state.running||!state.sessionId)return;
-  busy(true);
+  if(state.qwenRunning||!state.sessionId)return;
+  busy(true,"qwen");
   card.querySelectorAll("button").forEach(button=>button.disabled=true);
   try{
     const reply=await requestJson("/api/approve",{
@@ -162,7 +162,7 @@ async function decideAction(requestId,decision,card){
     card.append(node("div","approval-error","Ошибка: "+String(err.message||err)));
     card.querySelectorAll("button").forEach(button=>button.disabled=false);
   }finally{
-    busy(false);toBottom();
+    busy(false,"qwen");toBottom();
   }
 }
 function showEvents(events,count,mode,reply){
@@ -264,7 +264,7 @@ function readSelectedFile(file,binary){
   });
 }
 async function importArtifact(file){
-  if(!file||state.running)return;
+  if(!file||state.qwenRunning)return;
   if(file.size>state.uploadLimit){
     $("uploadStatus").textContent="Файл слишком большой (максимум "+
       Math.floor(state.uploadLimit/(1024*1024))+" МиБ)";
@@ -272,7 +272,7 @@ async function importArtifact(file){
   }
   const binary=/\.(pcap|cap)$/i.test(file.name);
   $("uploadStatus").textContent="Анализируем файл локально…";
-  busy(true);
+  busy(true,"qwen");
   $("artifactFile").disabled=true;
   try{
     const content=await readSelectedFile(file,binary);
@@ -297,7 +297,7 @@ async function importArtifact(file){
   }catch(exc){
     $("uploadStatus").textContent="Ошибка импорта: "+String(exc.message||exc).slice(0,180);
   }finally{
-    busy(false);
+    busy(false,"qwen");
     $("artifactFile").disabled=false;
     $("artifactFile").value="";
     $("messageInput").focus();
@@ -352,24 +352,40 @@ async function pasteTerminalOutput(){
   }
 }
 
-function busy(on){
-  state.running=on;
-  $("sendButton").disabled=on;
-  // The user may prepare the next prompt and inspect other panels while a
-  // model request is in flight. send() still blocks concurrent turns.
+function updateBusyUI(){
+  const anyModelRunning=state.qwenRunning||state.gptRunning;
+  const activeRunning=state.mode==="gpt"?state.gptRunning:
+    state.mode==="collab"?state.collabRunning:state.qwenRunning;
+  state.running=!!activeRunning;
+  $("sendButton").disabled=!!activeRunning;
   $("messageInput").disabled=false;
-  $("newSession").disabled=on;
-  $("artifactFile").disabled=on;
-  $("toolPickerToggle").disabled=on;
-  $("toolPickerGroups").querySelectorAll("input").forEach(input=>{
-    input.disabled=on||input.dataset.available==="false";
-  });
-  $("sendStatus").textContent=on?
-    "Модель работает · можно готовить следующий вопрос":"Готов";
-  $("modeQwen").disabled=false;
-  $("modeChatGPT").disabled=false;
-  $("modeCollab").disabled=on;
-  $("gptTopModel").disabled=!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
+  $("newSession").disabled=!!activeRunning;
+  $("artifactFile").disabled=state.mode!=="qwen"||state.qwenRunning||state.collabRunning;
+  $("toolPickerToggle").disabled=anyModelRunning||state.collabRunning;
+  const toolPickerGroups=$("toolPickerGroups");
+  if(toolPickerGroups&&typeof toolPickerGroups.querySelectorAll==="function"){
+    toolPickerGroups.querySelectorAll("input").forEach(input=>{
+      input.disabled=anyModelRunning||state.collabRunning||input.dataset.available==="false";
+    });
+  }
+  const active=[];
+  if(state.qwenRunning)active.push("DeepSeek работает");
+  if(state.gptRunning)active.push("ChatGPT работает");
+  if(state.collabRunning)active.push("Совместная задача выполняется");
+  $("sendStatus").textContent=active.length?active.join(" · "):
+    state.mode==="gpt"&&!state.gptConnected?"Подключи ChatGPT через «Аккаунт GPT»":"Готов";
+  $("modeQwen").disabled=state.collabRunning;
+  $("modeChatGPT").disabled=state.collabRunning;
+  $("modeCollab").disabled=anyModelRunning||state.collabRunning;
+  const gptModelSelect=$("gptTopModel");
+  const hasGptModelOptions=!!gptModelSelect.options&&gptModelSelect.options.length>0;
+  gptModelSelect.disabled=!state.gptConnected||!state.gptPlanUsage||
+    !hasGptModelOptions||state.gptRunning;
+}
+function busy(on,mode=state.mode){
+  const key=mode==="gpt"?"gptRunning":mode==="collab"?"collabRunning":"qwenRunning";
+  state[key]=!!on;
+  updateBusyUI();
 }
 function resetUsage(mode){
   state.usageTotals[mode]={input:0,output:0,total:0,measuredTurns:0};
@@ -472,7 +488,7 @@ function renderToolPicker(groups){
     input.type="checkbox";input.checked=selected;
     input.dataset.toolGroup=group.id;
     input.dataset.available=String(available);
-    input.disabled=!available||state.running;
+    input.disabled=!available||state.qwenRunning||state.gptRunning||state.collabRunning;
     input.addEventListener("change",()=>{
       const next=new Set(state.toolGroups);
       if(input.checked)next.add(group.id);else next.delete(group.id);
@@ -503,24 +519,25 @@ function newRunId(){
   if(window.crypto?.randomUUID)return window.crypto.randomUUID().replace(/-/g,"");
   return Array.from({length:32},()=>Math.floor(Math.random()*16).toString(16)).join("");
 }
-async function watchUsageProgress(runId){
+async function watchUsageProgress(runId,mode="qwen"){
+  const isRunning=()=>mode==="gpt"?state.gptRunning:state.qwenRunning;
   const started=Date.now();
-  while(state.running&&Date.now()-started<180000){
+  while(isRunning()&&Date.now()-started<180000){
     await new Promise(resolve=>setTimeout(resolve,650));
-    if(!state.running)break;
+    if(!isRunning())break;
     try{
       const response=await fetch("/api/usage-progress?run_id="+encodeURIComponent(runId),
         {cache:"no-store",headers:{"Accept":"application/json"}});
       if(!response.ok)continue;
       const progress=await response.json(),usage=progress.usage||{};
-      if(usage.available===true){
+      if(state.mode===mode&&usage.available===true){
         $("tokenUsageStatus").textContent=
           (progress.status==="running"?"Сейчас: ":"Последний ход: ")+
           "вход "+formatTokens(usage.input_tokens)+" · выход "+
           formatTokens(usage.output_tokens)+" · всего "+formatTokens(usage.total_tokens);
         $("tokenUsageStatus").title="Промежуточный usage от провайдера "+
           (usage.provider||"")+". "+(usage.complete===false?"Учёт частичный.":"");
-      }else if(progress.status==="running"){
+      }else if(state.mode===mode&&progress.status==="running"){
         $("tokenUsageStatus").textContent="Модель работает · ждём usage провайдера";
       }
       if(progress.status!=="running")break;
@@ -538,14 +555,14 @@ async function requestJson(path,data){
 async function send(){
   if(state.mode==="gpt")return sendGPT();
   const text=$("messageInput").value.trim();
-  if(!text||state.running)return;
+  if(!text||state.qwenRunning)return;
   $("welcome")?.remove();
   renderMessage("user",text);
   $("messageInput").value="";
   const pending=renderMessage("assistant",(state.qwenModel||"Модель")+" формирует ответ…",true);
   const runId=newRunId();
-  busy(true);
-  const usageWatch=watchUsageProgress(runId);
+  busy(true,"qwen");
+  const usageWatch=watchUsageProgress(runId,"qwen");
   try{
     const result=await requestJson("/api/chat",{
       session_id:state.sessionId,message:text,tool_groups:state.toolGroups,
@@ -581,14 +598,14 @@ async function send(){
     pending.body.textContent="Ошибка: "+String(exc.message||exc);
     $("sendStatus").textContent="Ошибка подключения";
   }finally{
-    busy(false);await usageWatch;$("messageInput").focus();toBottom();
+    busy(false,"qwen");await usageWatch;$("messageInput").focus();toBottom();
   }
 }
 function gptWelcome(){
   $("gptMessages").replaceChildren(window.cybernovaGptWelcome.cloneNode(true));
 }
 function setMode(mode){
-  if((state.running && mode==="collab") || !["qwen","gpt","collab"].includes(mode))return;
+  if((mode==="collab"&&(state.qwenRunning||state.gptRunning||state.collabRunning)) || (state.collabRunning&&mode!=="collab") || !["qwen","gpt","collab"].includes(mode))return;
   state.mode=mode;
   const qwen=mode==="qwen", gpt=mode==="gpt", collab=mode==="collab";
   for(const [id,isActive] of [
@@ -622,6 +639,7 @@ function setMode(mode){
   if(gpt)void refreshGPTThreads();
   if(collab)void refreshCollabRuns();
   if(!collab)updateTokenUsageStatus(mode);
+  updateBusyUI();
   toBottom();
 }
 async function refreshGPTThreads(){
@@ -643,9 +661,9 @@ async function refreshGPTThreads(){
   }catch(_){}
 }
 async function openGPTThread(threadId){
-  if(state.running)return;
+  if(state.gptRunning)return;
   setMode("gpt");
-  busy(true);
+  busy(true,"gpt");
   try{
     const response=await fetch("/api/siwc/chat?thread_id="+encodeURIComponent(threadId),{cache:"no-store"});
     const data=await response.json();
@@ -669,11 +687,11 @@ async function openGPTThread(threadId){
     $("sidebar").classList.remove("open");
   }catch(err){
     $("sendStatus").textContent="Ошибка загрузки GPT: "+String(err.message||err);
-  }finally{busy(false);toBottom();}
+  }finally{busy(false,"gpt");toBottom();}
 }
 async function sendGPT(){
   const message=$("messageInput").value.trim();
-  if(!message||state.running)return;
+  if(!message||state.gptRunning)return;
   if(!state.gptThreadId)resetUsage("gpt");
   if(!state.gptConnected||!state.gptPlanUsage){
     $("sendStatus").textContent="Открой «Аккаунт GPT» и подключи ChatGPT.";
@@ -689,8 +707,8 @@ async function sendGPT(){
   $("messageInput").value="";
   const pending=renderMessage("chatgpt","ChatGPT формирует ответ…",true,"gptMessages");
   const runId=newRunId();
-  busy(true);
-  const usageWatch=watchUsageProgress(runId);
+  busy(true,"gpt");
+  const usageWatch=watchUsageProgress(runId,"gpt");
   try{
     const result=await requestJson("/api/siwc/chat",{
       thread_id:state.gptThreadId,model,message,tool_groups:state.toolGroups,
@@ -722,7 +740,7 @@ async function sendGPT(){
     pending.wrap.classList.remove("working");
     pending.body.textContent="Ошибка: "+String(err.message||err);
     $("sendStatus").textContent="Ошибка GPT";
-  }finally{busy(false);await usageWatch;$("messageInput").focus();toBottom();}
+  }finally{busy(false,"gpt");await usageWatch;$("messageInput").focus();toBottom();}
 }
 
 function showResearchScope(profile){
@@ -737,7 +755,7 @@ function showResearchScope(profile){
     "Объект не выбран. Укажи домен или IP и нажми «Применить».";
 }
 async function applyResearchScope(){
-  if(state.running)return;
+  if(state.qwenRunning)return;
   const hosts=$("researchTargets").value.split(/[,;\n]+/)
     .map(x=>x.trim()).filter(Boolean);
   if(hosts.length>20){
@@ -801,8 +819,8 @@ function displayTaskEvent(message){
   }
 }
 async function resumeTask(taskId){
-  if(state.running)return;
-  busy(true);
+  if(state.qwenRunning)return;
+  busy(true,"qwen");
   try{
     const result=await requestJson("/api/comm/resume",{task_id:taskId});
     state.sessionId=result.session_id;
@@ -830,18 +848,18 @@ async function resumeTask(taskId){
   }catch(err){
     $("sendStatus").textContent="Ошибка открытия задачи: "+String(err.message||err);
   }finally{
-    busy(false);toBottom();
+    busy(false,"qwen");toBottom();
   }
 }
 async function pollTask(){
-  if(!state.sessionId||!state.taskId||state.running)return;
+  if(!state.sessionId||!state.taskId||state.qwenRunning)return;
   const sid=state.sessionId,task=state.taskId;
   try{
     const response=await fetch("/api/comm/events?session_id="+encodeURIComponent(sid)+
       "&after_seq="+state.lastSeq,{cache:"no-store"});
     if(!response.ok)return;
     const data=await response.json();
-    if(state.sessionId!==sid||state.taskId!==task||state.running)return;
+    if(state.sessionId!==sid||state.taskId!==task||state.qwenRunning)return;
     for(const message of data.messages||[]){
       displayTaskEvent(message);
       state.lastSeq=Math.max(state.lastSeq,message.seq||0);
@@ -911,8 +929,8 @@ async function submitReviewerFeedback(){
     $("reviewStatus").textContent="Вставь замечания ChatGPT перед отправкой.";
     return;
   }
-  if(state.running)return;
-  busy(true);
+  if(state.qwenRunning)return;
+  busy(true,"qwen");
   const sid=state.sessionId;
   try{
     const result=await requestJson("/api/comm/reviewer-feedback",{
@@ -929,7 +947,7 @@ async function submitReviewerFeedback(){
     await refreshTaskList();
   }catch(err){
     $("reviewStatus").textContent="Ошибка отправки: "+String(err.message||err);
-  }finally{busy(false);}
+  }finally{busy(false,"qwen");}
 }
 function renderTools(tools,automatic=[],availableScanners=[]){
   const container=$("toolList");
@@ -1066,9 +1084,9 @@ async function reviewWithChatGPT(){
     return;
   }
   const model=$("chatgptModel").value;
-  if(!model||state.running)return;
+  if(!model||state.gptRunning)return;
   const sid=state.sessionId, task=state.taskId;
-  busy(true);
+  busy(true,"gpt");
   $("chatgptStatus").textContent="Получаю пакет исследования…";
   try{
     const response=await fetch("/api/comm/review-packet?session_id="+
@@ -1094,11 +1112,11 @@ async function reviewWithChatGPT(){
     $("chatgptStatus").textContent="Рецензия GPT получена. Можно отправить её модели.";
   }catch(err){
     $("chatgptStatus").textContent="Ошибка рецензии: "+String(err.message||err);
-  }finally{busy(false);}
+  }finally{busy(false,"gpt");}
 }
 async function forwardGPTtoQwen(){
-  if(!lastGptReview||!state.sessionId||!state.taskId||state.running)return;
-  busy(true);
+  if(!lastGptReview||!state.sessionId||!state.taskId||state.qwenRunning)return;
+  busy(true,"qwen");
   try{
     const response=await requestJson("/api/comm/reviewer-feedback",{
       session_id:state.sessionId,
@@ -1113,7 +1131,7 @@ async function forwardGPTtoQwen(){
     void refreshTaskList();
   }catch(err){
     $("chatgptStatus").textContent="Ошибка передачи модели: "+String(err.message||err);
-  }finally{busy(false);}
+  }finally{busy(false,"qwen");}
 }
 
 async function status(){
@@ -1149,7 +1167,7 @@ async function status(){
   }
 }
 async function reset(){
-  if(state.running)return;
+  if(state.mode==="gpt"?state.gptRunning:state.mode==="collab"?state.collabRunning:state.qwenRunning)return;
   if(state.mode==="collab"){
     await newCollab();
     return;
@@ -1294,7 +1312,7 @@ async function openProfileSettings(){
   else dialog.setAttribute("open","");
 }
 async function saveProfileSettings(){
-  if(state.running)return;
+  if(state.qwenRunning||state.gptRunning||state.collabRunning)return;
   const button=$("profileSave");
   button.disabled=true;
   $("profileSaveStatus").textContent="Сохраняю настройки…";
@@ -1452,7 +1470,7 @@ async function openCollabRun(taskId){
   }
 }
 async function startCollab(){
-  if(state.collabLooping)return;
+  if(state.collabLooping||state.qwenRunning||state.gptRunning)return;
   if(!state.gptConnected||!state.gptPlanUsage){
     $("collabStatus").textContent="Сначала подключи аккаунт ChatGPT через «Аккаунт GPT».";
     $("collabActiveBar").hidden=false;
@@ -1480,6 +1498,8 @@ async function continueCollab(){
   if(state.collabLooping||!state.collabRun||
      !["active","paused"].includes(state.collabRun.state))return;
   state.collabLooping=true;
+  state.collabRunning=true;
+  updateBusyUI();
   state.collabStopRequested=false;
   $("collabResume").hidden=true;
   const taskId=state.collabRun.task_id;
@@ -1512,6 +1532,8 @@ async function continueCollab(){
     }catch(_){}
   }finally{
     state.collabLooping=false;
+    state.collabRunning=false;
+    updateBusyUI();
     if(state.collabRun&&state.collabRun.task_id===taskId)renderCollabRun(state.collabRun);
     void refreshCollabRuns();
   }
@@ -1633,7 +1655,7 @@ function init(){
   $("sessionItem").addEventListener("click",()=>$("sidebar").classList.remove("open"));
   $("messages").addEventListener("click",e=>{
     const sample=e.target.closest("[data-prompt]");
-    if(sample&&!state.running){
+    if(sample&&!state.qwenRunning){
       $("messageInput").value=sample.dataset.prompt;send();
     }
   });

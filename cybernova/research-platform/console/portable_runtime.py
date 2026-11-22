@@ -7,6 +7,7 @@ two copies against the same SQLite database or local GPU simultaneously.
 """
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 from pathlib import Path
@@ -15,6 +16,11 @@ import subprocess
 import sys
 import time
 from urllib.request import build_opener, ProxyHandler
+
+try:
+    from .diagnostics import configure as configure_diagnostics
+except ImportError:
+    from diagnostics import configure as configure_diagnostics
 
 MODULES = (
     "console.portable_tool_gateway",
@@ -31,6 +37,7 @@ def main():
     os.environ.setdefault("CYBERNOVA_COMM_WORKER", "1")
     state = Path(os.environ["CYBERNOVA_COMM_DB"]).expanduser()
     state.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    configure_diagnostics("supervisor")
     # Only the Basic-auth gateway is published; MCP/model stay loopback.
     auth_path = Path(os.environ.get("CYBERNOVA_ACCESS_SECRET_FILE", "/data/web_access.txt"))
     auth_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -69,6 +76,9 @@ def main():
                 code = process.poll()
                 if code is not None:
                     print("CYBERNOVA_SERVICE_STOPPED", module, code, flush=True)
+                    logging.getLogger("cybernova.supervisor").error(
+                        "service_stopped module=%s exit_code=%s", module, code,
+                    )
                     stopping = True
                     break
             if not stopping:

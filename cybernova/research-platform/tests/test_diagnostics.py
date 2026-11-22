@@ -1,0 +1,160 @@
+"""No-external-network tests for Cybernova's private diagnostic journal."""
+from __future__ import annotations
+
+import base64
+from contextlib import contextmanager
+from http.server import ThreadingHTTPServer
+import http.client
+import json
+import logging
+import os
+from pathlib import Path
+import sys
+import tempfile
+from threading import Thread
+import unittest
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from console import diagnostics
+from console.tunnel_access import GatewayHandler, allowed_path
+
+
+class DiagnosticsTests(unittest.TestCase):
+    @contextmanager
+    def temp_folder(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.dict(os.environ, {"CYBERNOVA_DIAGNOSTICS_DIR": temp}):
+                yield Path(temp)
+
+    @contextmanager
+    def journal(self, component="console"):
+        with self.temp_folder() as folder:
+            root = logging.getLogger()
+            before = set(root.handlers)
+            old_configured = set(diagnostics._CONFIGURED)
+            try:
+                diagnostics.configure(component)
+                diagnostics.configure(component)
+                self.assertEqual(
+                    len([h for h in root.handlers if h not in before]), 1
+                )
+                yield folder
+            finally:
+                for handler in tuple(root.handlers):
+                    if handler not in before:
+                        root.removeHandler(handler)
+                        handler.close()
+                diagnostics._CONFIGURED.clear()
+                diagnostics._CONFIGURED.update(old_configured)
+
+    def test_scrub_tokens_urls_user_paths_and_credentials(self):
+        line = (
+            "Authorization: Bearer abcdefghijklmnop "
+            "token=super-secret-value api_key=importantkey "
+            "https://example.org/path?session=myvalue "
+            "C:\\Users\\PrivateUser\\Documents\\data.txt"
+        )
+        result = diagnostics.scrub(line)
+        for secret in ("abcdefghijklmnop", "super-secret-value",
+                       "importantkey", "session=myvalue", "PrivateUser"):
+            self.assertNotIn(secret, result)
+        self.assertIn("Authorization", result)
+        self.assertIn("https://example.org/path", result)
+
+    def test_model_failure_writes_redacted_structured_event(self):
+        with self.journal() as folder:
+            try:
+                raise ValueError("api_key=veryprivate and token=topsecret123")
+            except ValueError as exc:
+                diagnostics.failure("console", "chatgpt_inference", exc,
+                                    error_id="run-safe-id")
+            report = diagnostics.export_jsonl().decode("utf-8")
+            events = [json.loads(line) for line in report.splitlines()]
+            self.assertEqual(events[0]["kind"], "cybernova-diagnostics")
+            self.assertEqual(events[0]["event_count"], 1)
+            item = events[1]
+            self.assertEqual(item["component"], "console")
+            self.assertEqual(item["exception_type"], "ValueError")
+            self.assertEqual(item["level"], "ERROR")
+            self.assertEqual(item["logger"], "cybernova.failure")
+            self.assertTrue(item["frames"])
+            self.assertIn("run-safe-id", item["message"])
+            self.assertNotIn("veryprivate", report)
+            self.assertNotIn("topsecret123", report)
+            self.assertTrue((folder / "console.jsonl").is_file())
+            self.assertFalse((folder / "supervisor.jsonl").exists())
+
+    def test_export_merges_services_without_leaking_unlisted_files(self):
+        with self.temp_folder() as folder:
+            (folder / "console.jsonl").write_text(json.dumps({
+                "time": "2026-11-22T10:00:00+00:00",
+                "component": "console", "level": "ERROR",
+                "message": "DeepSeek failed token=secreta",
+            }) + "\n", encoding="utf-8")
+            (folder / "tool-mcp.jsonl").write_text(json.dumps({
+                "time": "2026-11-22T11:00:00+00:00",
+                "component": "tool-mcp", "level": "ERROR",
+                "message": "MCP tool failed",
+            }) + "\n", encoding="utf-8")
+            (folder / "unrelated-secret.txt").write_text(
+                "SHOULD_NOT_EXPORT", encoding="utf-8"
+            )
+            rows = [json.loads(x) for x in diagnostics.export_jsonl().splitlines()]
+            self.assertEqual(rows[0]["event_count"], 2)
+            self.assertEqual(
+                [r["component"] for r in rows[1:]], ["console", "tool-mcp"]
+            )
+            self.assertNotIn("secreta", str(rows))
+            self.assertNotIn("SHOULD_NOT_EXPORT", str(rows))
+
+    def test_error_logs_rotate_below_a_bounded_total(self):
+        with self.journal() as folder:
+            logger = logging.getLogger("cybernova.diagnostics.test")
+            for idx in range(300):
+                logger.error("failure_%d %s", idx, "X" * 2700)
+            records = sorted(folder.glob("console.jsonl*"))
+            self.assertLessEqual(len(records), diagnostics.BACKUP_COUNT + 1)
+            self.assertGreater(len(records), 1)
+            self.assertLess(sum(path.stat().st_size for path in records), 1_000_000)
+            result = diagnostics.export_jsonl()
+            self.assertLess(len(result), 6_000_000)
+
+    def test_export_requires_basic_auth_and_sets_download_headers(self):
+        with self.journal("access-gateway"):
+            server = ThreadingHTTPServer(("127.0.0.1", 0), GatewayHandler)
+            server.credentials = ("cybernova", "x" * 32)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                conn.request("GET", "/api/diagnostics/export")
+                denied = conn.getresponse()
+                self.assertEqual(denied.status, 401)
+                denied.read()
+                conn.close()
+
+                auth = base64.b64encode(b"cybernova:" + b"x" * 32).decode("ascii")
+                conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                conn.request("GET", "/api/diagnostics/export",
+                             headers={"Authorization": "Basic " + auth})
+                allowed = conn.getresponse()
+                self.assertEqual(allowed.status, 200)
+                self.assertIn("application/x-ndjson", allowed.getheader("Content-Type"))
+                self.assertIn("attachment", allowed.getheader("Content-Disposition"))
+                report = allowed.read()
+                self.assertEqual(json.loads(report.splitlines()[0])["kind"],
+                                 "cybernova-diagnostics")
+                conn.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+        self.assertTrue(allowed_path("/api/diagnostics/export", "GET"))
+        self.assertFalse(allowed_path("/api/diagnostics/export", "POST"))
+
+
+if __name__ == "__main__":
+    unittest.main()
