@@ -234,3 +234,34 @@ This section supersedes earlier **GitHub** branch/PR snapshots above. It does no
 - `feature/account-gpt-local-tools` is an ancestor of current `main`; it is not the base for new work. Do not revive it as a new integration target.
 - No GitHub change proves that the user's Windows laptop has pulled or run these revisions. The last recorded local observation remains branch `feature/full-shell-computer-discovery`, local HEAD `28e4a35` on 2026-11-21. Recheck local root, branch, status, origin, HEAD and port/PID ownership before any local update or restart.
 - PR #21 and PR #22 remain open drafts. Neither has been merged by this update.
+
+## 14. Parallel work handoff — 2026-11-22
+
+### Verified repository state
+
+- PR #21, `Load shared agent operating contract and add safe Windows updater`, was merged into `main` using squash merge. Merge commit: `3c29375ea7a0679acd8cb9e2dd00f84fea3119a2`.
+- PR #21 Quality Gate passed on its final head (`fca858b`); the Windows Readonly Integration Smoke passed on `19b00fe`, with no runtime-code changes after that smoke run. The Quality Gate on `fca858b` passed.
+- PR #22, Quick Send v3.0.2, remains a draft based on `main`. Its head is `fc9284a6b46f861bdfa2818d7b99a54ca9d3b05c`. The stale CMD package checker references removed offscreen files; this was corrected. Linux and Windows CI both passed: 7 package/scope tests on each runner, plus Windows `MANIFEST_JSON_OK`, `JAVASCRIPT_SYNTAX_OK`, and `PACKAGE_CHECK_OK`. CI does not replace the physical Chrome test. Keep PR #22 draft until selected-text send, focused clipboard send, and local-panel injection are verified in the user's Chrome profile. Do not delete the old v2.x extension before that test.
+- PR #22 CI run: https://github.com/4oker12/cybernoc/actions/runs/44966382986
+
+### Parallel work orders
+
+Two isolated work orders were created from the post-PR-21 `main`:
+
+1. Issue #24 — Browser session isolation: https://github.com/4oker12/cybernoc/issues/24
+   - Branch: `agent/browser-session-isolation`
+   - Focus: stop the process-wide `GPTToolRuntime` browser singleton from sharing Chromium tabs, cookies, local storage, host scope or approval state across separate Cybernova conversations. Wire server-owned chat/session identity through both Qwen/DeepSeek and Account GPT/SIWC tool paths. Preserve all existing browser safety gates.
+   - Main code zone: `browser_control.py`, `gpt_tool_runtime.py`, `agent.py`, `server.py`, `siwc_inference.py`, focused tests.
+
+2. Issue #25 — Runtime supervisor readiness and health: https://github.com/4oker12/cybernoc/issues/25
+   - Branch: `agent/runtime-supervisor-health`
+   - Focus: replace the current immediate-after-Popen startup signal with bounded readiness checks; report child PID/state/exit reason; make graceful shutdown and escalation deterministic; distinguish API reachability from MCP/runtime readiness.
+   - Main code zone: `portable_runtime.py`, `native.py`, focused tests. Avoid browser/session files and do not change ports or data layout.
+
+The two branches were created from merge commit `3c29375`. If this handoff document advances `main`, fast-forward both empty task branches to the resulting `main` before an executor starts. Keep the workstreams independent; each executor must open a PR, provide test evidence and avoid merging directly to `main`.
+
+### Execution ownership
+
+- ChatGPT: architecture, task boundaries, acceptance criteria, independent review and integration.
+- Local DeepSeek/Qwen or another coding agent: implementation within one assigned issue/branch.
+- Do not claim a coding agent has started unless a real execution session or commit is visible. The GitHub issues and branches are prepared handoffs; they are not proof that an external agent is currently running.
