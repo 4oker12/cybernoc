@@ -425,7 +425,7 @@ def collaboration_activity(task_id: str):
         progress = [{
             "seq": item["seq"], "body": item["body"], "created_at": item["created_at"]
         } for item in run["messages"]
-            if item["actor"] == "qwen" and item["kind"] == "progress"]
+            if item["actor"] in {"qwen", "controller"} and item["kind"] == "progress"]
         return {"task_id": task_id, "tool_receipts": receipts, "progress": progress}
     except (CollaborationError, CommunicationError, ValueError):
         raise HTTPException(status_code=404, detail="collaboration_not_found") from None
@@ -613,6 +613,15 @@ def collaboration_item_step(payload: WorkItemRequest):
         work.fail(payload.task_id, payload.item_id, type(exc).__name__)
         raise HTTPException(status_code=502,
                             detail="work_item_failed:" + type(exc).__name__) from exc
+
+
+@app.post("/api/collab/items/recover")
+def collaboration_item_recover(payload: CollaborationActionRequest):
+    """Manual review point after restart; never replay uncertain operations."""
+    try:
+        return work_item_store().recover_task(payload.task_id)
+    except (WorkItemError, CollaborationError, CommunicationError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @app.post("/api/collab/items/retry")
