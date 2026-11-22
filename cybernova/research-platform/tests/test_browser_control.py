@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import ModuleType
 from unittest.mock import patch
 import sys
 import unittest
@@ -105,6 +106,85 @@ class BrowserControlTests(unittest.TestCase):
             self.assertEqual(backup["session"]["restore_on_startup"], 1)
             self.assertEqual(cookies.read_bytes(), b"preserve-existing-cookie-database")
             self.assertFalse(_disable_profile_session_restore(profile))
+
+    def test_ensure_closes_restored_tabs_and_creates_a_fresh_page_after_routes(self):
+        class FakePage:
+            def __init__(self):
+                self.closed = False
+                self.handlers = []
+
+            def close(self):
+                self.closed = True
+
+            def is_closed(self):
+                return self.closed
+
+            def set_default_timeout(self, *_):
+                return None
+
+            def on(self, event, callback):
+                self.handlers.append((event, callback))
+
+        class FakeContext:
+            def __init__(self):
+                self.pages = [FakePage(), FakePage()]
+                self.events = []
+
+            def route(self, *_):
+                self.events.append("route")
+
+            def route_web_socket(self, *_):
+                self.events.append("websocket_route")
+
+            def new_page(self):
+                self.events.append("new_page")
+                page = FakePage()
+                self.pages.append(page)
+                return page
+
+        context = FakeContext()
+
+        class FakeChromium:
+            def launch_persistent_context(self, **_):
+                return context
+
+        class FakePlaywright:
+            chromium = FakeChromium()
+
+        class FakeManager:
+            def start(self):
+                return FakePlaywright()
+
+        sync_api = ModuleType("playwright.sync_api")
+        sync_api.sync_playwright = lambda: FakeManager()
+        playwright = ModuleType("playwright")
+        playwright.__path__ = []
+        playwright.sync_api = sync_api
+
+        with TemporaryDirectory() as temp:
+            profile = Path(temp)
+            default = profile / "Default"
+            default.mkdir()
+            (default / "Preferences").write_text(
+                json.dumps({"session": {"restore_on_startup": 5}}),
+                encoding="utf-8",
+            )
+            browser = BrowserSession(headless=True, profile_dir=profile)
+            try:
+                with patch.dict(sys.modules, {
+                    "playwright": playwright,
+                    "playwright.sync_api": sync_api,
+                }), patch.dict("os.environ", {
+                    "CYBERNOVA_GPT_BROWSER_EPHEMERAL": "",
+                    "CYBERNOVA_GPT_BROWSER_RESTORE_SESSION": "0",
+                }):
+                    browser._ensure()
+                self.assertTrue(all(page.closed for page in context.pages[:2]))
+                self.assertIs(browser._page, context.pages[-1])
+                self.assertLess(context.events.index("route"),
+                                context.events.index("new_page"))
+            finally:
+                browser._executor.shutdown(wait=False, cancel_futures=True)
 
     def test_browser_text_redacts_credentials_and_jwts(self):
         value = "api_key=abc12345 Bearer abcdefghijklmnop eyJabcdefghijk.abcdefghijk.abcdefghijk"
