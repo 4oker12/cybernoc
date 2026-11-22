@@ -1,8 +1,10 @@
-"""Authenticated, loopback-only HTTP access bridge for Cybernova Chat.
+"""Authenticated HTTP access gateway for the local Cybernova Web UI.
 
-Routes a strictly limited Web UI path set to the console on 127.0.0.1:18794.
-It never proxies the Communication MCP, Ollama, or the Tool MCP. The intended
-upstream is a Cloudflare Quick Tunnel, which provides TLS but not authentication.
+Routes allowlisted Web UI paths to console API 127.0.0.1:18794. The native
+launcher binds this gateway to 127.0.0.1:18795. This module does not launch,
+require or connect to Vast, SSH or Cloudflare tunnels. Optional historical
+Cloudflare-origin compatibility is not a runtime dependency. Ollama and
+both MCP gateways are never proxied through this HTTP bridge.
 """
 from __future__ import annotations
 
