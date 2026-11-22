@@ -600,3 +600,34 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
 :root[data-theme="light"] .tool-selection-badge{background:#dcebe1;color:#276144}
 :root[data-theme="light"] .token-usage-receipt{color:#39745a}
 :root[data-theme="light"] .token-usage-receipt strong{color:#205b41}
+
+/* Compact, expandable activity feed for shared collaboration tasks. */
+.collab-activity{
+  margin:10px 0 18px 36px;
+  max-width:min(720px,calc(100% - 36px));
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:var(--panel);
+  overflow:hidden;
+}
+.collab-activity-summary{
+  padding:9px 12px;
+  color:var(--muted);
+  cursor:pointer;
+  font-size:11px;
+  font-weight:650;
+  list-style:none;
+}
+.collab-activity-summary::-webkit-details-marker{display:none}
+.collab-activity-summary::before{content:"⌄";margin-right:8px;color:var(--accent,#27856d)}
+.collab-activity-list{display:grid;gap:5px;padding:0 12px 10px}
+.collab-activity-item{
+  margin:0;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.5;
+  overflow-wrap:anywhere;
+}
+@media(max-width:680px){
+  .collab-activity{margin-left:0;max-width:100%}
+}

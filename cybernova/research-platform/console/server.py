@@ -173,7 +173,31 @@ def collaboration_store() -> CollaborationStore:
     return CollaborationStore(communication_store())
 
 
-collaboration_step_lock = RLock()
+# Serialize turns per collaboration, not globally. Independent tasks can run in parallel.
+_collaboration_step_locks: dict[str, RLock] = {}
+_collaboration_step_locks_guard = RLock()
+
+
+def _collaboration_step_lock(task_id: str) -> RLock:
+    with _collaboration_step_locks_guard:
+        return _collaboration_step_locks.setdefault(task_id, RLock())
+
+
+def _record_collaboration_tool_event(task_id: str, event: dict) -> None:
+    if not isinstance(event, dict):
+        return
+    event_type = event.get("type")
+    if event_type not in {"tool_result", "tool_error", "approval_required",
+                          "scope_change_required"}:
+        event_type = "tool_result" if event.get("ok") else "tool_error"
+    EvidenceJournal(communication_store()).record_tool_events(task_id, [{
+        "type": event_type,
+        "name": event.get("name") or event.get("tool_name") or "",
+        "is_error": bool(event.get("is_error", event_type == "tool_error" or
+                                   event.get("ok") is False)),
+        "arguments": event.get("arguments") or {},
+        "result": event.get("result") or {},
+    }])
 
 
 @asynccontextmanager
@@ -352,6 +376,10 @@ class CollaborationActionRequest(BaseModel):
     task_id: str = Field(min_length=12, max_length=100)
 
 
+class CollaborationMessageRequest(CollaborationActionRequest):
+    message: str = Field(min_length=1, max_length=10000)
+
+
 class SharedToolRequest(BaseModel):
     name: str = Field(pattern="^(google_search|research_source_open|safe_terminal)$")
     argument: str = Field(min_length=1, max_length=1600)
@@ -371,6 +399,30 @@ def collaboration_run(task_id: str, after: int = 0):
         return collaboration_store().read(task_id, after=after)
     except (CollaborationError, CommunicationError, ValueError):
         raise HTTPException(status_code=404, detail="collaboration_not_found") from None
+
+
+@app.get("/api/collab/activity")
+def collaboration_activity(task_id: str):
+    try:
+        run = collaboration_store().read(task_id, recover=False)
+        store = communication_store()
+        receipts = EvidenceJournal(store).list_tool_receipts(task_id, limit=100)
+        progress = [{
+            "seq": item["seq"], "body": item["body"], "created_at": item["created_at"]
+        } for item in run["messages"]
+            if item["actor"] == "qwen" and item["kind"] == "progress"]
+        return {"task_id": task_id, "tool_receipts": receipts, "progress": progress}
+    except (CollaborationError, CommunicationError, ValueError):
+        raise HTTPException(status_code=404, detail="collaboration_not_found") from None
+
+
+@app.post("/api/collab/message")
+def collaboration_message(payload: CollaborationMessageRequest):
+    """Accept a user intervention without interrupting the current model call."""
+    try:
+        return collaboration_store().user_message(payload.task_id, payload.message)
+    except (CollaborationError, CommunicationError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @app.post("/api/collab/start")
@@ -417,8 +469,10 @@ def collaboration_resume(payload: CollaborationActionRequest):
 @app.post("/api/collab/finish")
 def collaboration_finish(payload: CollaborationActionRequest):
     try:
-        return collaboration_store().finish(payload.task_id)
-    except (CollaborationError, CommunicationError) as exc:
+        run = collaboration_store().finish(payload.task_id)
+        gpt_tool_runtime.close_session(payload.task_id)
+        return run
+    except (CollaborationError, CommunicationError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
@@ -426,7 +480,7 @@ def collaboration_finish(payload: CollaborationActionRequest):
 def collaboration_step(payload: CollaborationActionRequest):
     # Sequential browser-driven turn: no unbounded background loops.
     # A concurrent stop can mark the run stopped during model I/O.
-    with collaboration_step_lock:
+    with _collaboration_step_lock(payload.task_id):
         store = collaboration_store()
         try:
             run = store.read(payload.task_id)
@@ -436,6 +490,12 @@ def collaboration_step(payload: CollaborationActionRequest):
             profile = profile_settings_store().load()
             tool_count = 0
             blocked = False
+            persisted_tool_events = []
+
+            def persist_tool_event(event):
+                _record_collaboration_tool_event(payload.task_id, event)
+                persisted_tool_events.append(event)
+
             if role == "chatgpt":
                 history = mentor_messages(run)
                 outcome = chatgpt_chat(
@@ -447,17 +507,13 @@ def collaboration_step(payload: CollaborationActionRequest):
                     authorized_targets=extract_user_targets([
                         {"role": "user", "content": run["goal"]}
                     ]),
+                    on_tool_event=persist_tool_event,
+                    session_id=payload.task_id,
                 )
                 tool_count = int(outcome.get("tool_calls", 0))
-                EvidenceJournal(communication_store()).record_tool_events(
-                    payload.task_id, [{
-                        "type": "tool_result" if event.get("ok") else "tool_error",
-                        "name": event.get("name", ""),
-                        "is_error": not bool(event.get("ok")),
-                        "arguments": event.get("arguments") or {},
-                        "result": event.get("result") or {},
-                    } for event in outcome.get("tool_events", [])],
-                )
+                if not persisted_tool_events:
+                    for event in outcome.get("tool_events", []):
+                        persist_tool_event(event)
             else:
                 history, prompt = researcher_messages(run)
                 scope = ResearchScopeStore(communication_store().path).load(payload.task_id)
@@ -479,11 +535,13 @@ def collaboration_step(payload: CollaborationActionRequest):
                         "реальные доказательства. Не выдумывай результаты.\n\n" +
                         mode_instructions_for(profile, "researcher")
                     ),
+                    on_tool_event=persist_tool_event,
+                    session_id=payload.task_id,
                 )
                 tool_count = outcome.get("tool_calls", 0)
-                EvidenceJournal(communication_store()).record_tool_events(
-                    payload.task_id, outcome.get("events") or [],
-                )
+                if not persisted_tool_events:
+                    for event in outcome.get("events") or []:
+                        persist_tool_event(event)
                 blocked = bool(outcome.get("approval_requests"))
             answer = str(outcome.get("answer", "")).strip()
             if blocked:
@@ -586,29 +644,29 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
     outcome = None
     with gpt_turn_lock:
         store = gpt_chat_store()
-        thread_id = payload.thread_id
+        thread_id = payload.thread_id or store.new_thread_id()
         user_message_seq = None
         persisted_tool_events = []
 
-        def persist_tool_event(event):
-            nonlocal thread_id, user_message_seq
-            if user_message_seq is None:
-                thread_id, user_message_seq = store.begin_exchange(
-                    payload.thread_id, payload.model, payload.message
-                )
-            store.save_tool_events(
-                thread_id, [event], message_seq=user_message_seq,
-            )
-            persisted_tool_events.append(event)
-
         try:
             history = store.context(payload.thread_id) if payload.thread_id else []
-            outgoing = history + [{"role": "user", "content": payload.message.strip()}]
             profile = profile_settings_store().load()
             try:
                 selected_tool_groups = normalize_tool_groups(payload.tool_groups)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from None
+            def persist_tool_event(event):
+                nonlocal thread_id, user_message_seq
+                if user_message_seq is None:
+                    thread_id, user_message_seq = store.begin_exchange(
+                        thread_id, payload.model, payload.message
+                    )
+                store.save_tool_events(
+                    thread_id, [event], message_seq=user_message_seq,
+                )
+                persisted_tool_events.append(event)
+
+            outgoing = history + [{"role": "user", "content": payload.message.strip()}]
             outcome = chatgpt_chat(
                 payload.model, outgoing,
                 user_context=user_context_for(profile, "chatgpt"),
@@ -618,14 +676,15 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 on_tool_event=persist_tool_event,
                 enabled_tool_groups=selected_tool_groups,
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
+                session_id=thread_id,
             )
             run_status = "completed"
             if user_message_seq is None:
                 thread_id = store.save_exchange(
-                    payload.thread_id, payload.model, payload.message, outcome["answer"]
+                    thread_id, payload.model, payload.message, outcome["answer"]
                 )
-                # Compatibility for mocked/legacy inference adapters that return
-                # events but do not invoke the incremental receipt callback.
+                # Compatibility for mocked/legacy adapters that return events
+                # but do not invoke the incremental receipt callback.
                 store.save_tool_events(thread_id, outcome.get("tool_events", []))
             else:
                 store.finish_exchange(thread_id, outcome["answer"])
@@ -635,6 +694,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
             raise HTTPException(status_code=500, detail=str(exc)) from None
         except SIWCError as exc:
             if user_message_seq is None:
+                gpt_tool_runtime.close_session(thread_id)
                 raise HTTPException(status_code=409, detail=str(exc)) from None
             partial_answer = (
                 "Цикл ChatGPT прерван: " + str(exc) +
@@ -932,6 +992,7 @@ def chat(payload: ChatRequest):
                 profile_instructions=mode_instructions_for(profile, "researcher"),
                 tool_groups=selected_tool_groups,
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
+                session_id=task_id,
             )
             run_status = "completed"
         except Exception as exc:

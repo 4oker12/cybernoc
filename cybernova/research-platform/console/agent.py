@@ -235,12 +235,16 @@ class Agent:
 
     def _call_registered_tool(self, name: str, args: dict, *, mcp=None,
                               authorized_targets=None, user_messages=None,
-                              enabled_groups=None):
+                              enabled_groups=None, session_id=None):
         if self.local_tool_runtime is not None and name in self.local_tool_runtime.tool_map:
-            result, is_error = self.local_tool_runtime.call(
-                name, args, authorized_targets=authorized_targets,
-                user_messages=user_messages, enabled_groups=enabled_groups,
-            )
+            runtime_kwargs = {
+                "authorized_targets": authorized_targets,
+                "user_messages": user_messages,
+                "enabled_groups": enabled_groups,
+            }
+            if session_id is not None:
+                runtime_kwargs["session_id"] = session_id
+            result, is_error = self.local_tool_runtime.call(name, args, **runtime_kwargs)
             if isinstance(result, dict) and isinstance(result.get("image_data_url"), str):
                 # The current DeepSeek/Ollama chat adapter is text-only. Do not
                 # serialize megabytes of base64 into its prompt; use DOM/UIA data.
@@ -259,7 +263,8 @@ class Agent:
     def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True,
             scope: dict | None = None, user_context: str = "",
             profile_instructions: str = "", tool_groups: list[str] | None = None,
-            on_usage=None) -> dict:
+            on_usage=None, on_tool_event=None,
+            session_id: str | None = None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
         selected_groups = normalize_tool_groups(tool_groups or [])
@@ -478,6 +483,7 @@ class Agent:
                                 authorized_targets=authorized_targets,
                                 user_messages=task_messages,
                                 enabled_groups=selected_groups or None,
+                                session_id=session_id,
                             )
                             executed += 1
                             selected_by = "evidence_first_fallback"
@@ -638,6 +644,8 @@ class Agent:
                     }
                     safe_event.update(event)
                     events.append(safe_event)
+                    if on_tool_event is not None:
+                        on_tool_event(safe_event)
                     context.append({"role": "tool", "tool_name": str(name),
                                     "content": serialized})
                     count += 1

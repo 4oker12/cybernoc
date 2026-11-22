@@ -114,7 +114,7 @@ class CollaborationStore:
             self.comm.append(task_id, "human", "instruction", goal.strip(), status="running")
             return self.read(task_id)
 
-    def read(self, task_id: str, *, after: int = 0) -> dict:
+    def read(self, task_id: str, *, after: int = 0, recover: bool = True) -> dict:
         self.comm.get_task(task_id)
         with self.comm._connection() as db:
             row = db.execute(
@@ -143,7 +143,7 @@ class CollaborationStore:
         # A process can terminate between committing a message and updating
         # the run cursor. Never replay that model call or silently duplicate a
         # turn on recovery: require manual review instead.
-        if after == 0:
+        if after == 0 and recover:
             with self.comm._connection() as db:
                 observed = db.execute(
                     "SELECT COUNT(*) FROM messages WHERE task_id=? AND "
@@ -168,6 +168,19 @@ class CollaborationStore:
         )
         return {**run, "messages": dialog["messages"], "next_after": dialog["next_after"]}
 
+    def user_message(self, task_id: str, message: str) -> dict:
+        """Append a human intervention to an active or paused collaboration."""
+        if not isinstance(message, str) or not 1 <= len(message.strip()) <= 10000 or "\x00" in message:
+            raise CollaborationError("invalid_collaboration_message")
+        with self.lock:
+            run = self.read(task_id, recover=False)
+            if run["state"] not in {"active", "paused"}:
+                raise CollaborationError("collaboration_not_writable")
+            status = "running" if run["state"] == "active" else "idle"
+            self.comm.append(task_id, "human", "instruction", message.strip(),
+                             status=status)
+            return self.read(task_id, recover=False)
+
     def list_runs(self, limit=20) -> list[dict]:
         with self.comm._connection() as db:
             rows = db.execute(
@@ -182,7 +195,7 @@ class CollaborationStore:
     def halt(self, task_id: str) -> dict:
         """Manual pause; a subsequent explicit resume continues the same chat."""
         with self.lock:
-            run = self.read(task_id)
+            run = self.read(task_id, recover=False)
             if run["state"] == "active":
                 with self.comm._lock, self.comm._connection() as db:
                     db.execute(
@@ -217,7 +230,7 @@ class CollaborationStore:
     def finish(self, task_id: str) -> dict:
         """Only the owner explicitly closes the durable conversation."""
         with self.lock:
-            run = self.read(task_id)
+            run = self.read(task_id, recover=False)
             if run["state"] in {"active", "paused"}:
                 with self.comm._lock, self.comm._connection() as db:
                     db.execute(
@@ -280,6 +293,9 @@ def mentor_messages(run: dict) -> list[dict]:
         elif item["actor"] == "qwen" and item["kind"] == "result":
             history.append({"role": "user", "content":
                             "Отчёт DeepSeek по твоему заданию:\n" + text})
+        elif item["actor"] == "human" and item["kind"] == "instruction" and item["body"] != run["goal"]:
+            history.append({"role": "user", "content":
+                            "Сообщение пользователя в ходе совместной работы:\n" + text})
     if run["step"] > 0 and history[-1]["role"] == "assistant":
         raise CollaborationError("mentor_waits_for_researcher")
     # A batch only pauses; the owner alone decides whether the discussion
@@ -297,6 +313,9 @@ def researcher_messages(run: dict) -> tuple[list[dict], str]:
                             "[Наставник ChatGPT] " + item["body"][:9500]})
         elif item["actor"] == "qwen" and item["kind"] == "result":
             context.append({"role": "assistant", "content": item["body"][:9500]})
+        elif item["actor"] == "human" and item["kind"] == "instruction" and item["body"] != run["goal"]:
+            context.append({"role": "user", "content":
+                            "[Сообщение пользователя] " + item["body"][:9500]})
     if context[-1]["role"] != "user" or len(context) < 2:
         raise CollaborationError("researcher_waits_for_mentor")
     return context[-15:-1], context[-1]["content"]

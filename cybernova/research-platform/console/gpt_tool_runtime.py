@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import ipaddress
 import importlib.util
+import hashlib
 import os
+from collections import OrderedDict
 from pathlib import Path
 import platform
 import re
@@ -408,11 +410,41 @@ def _run_terminal(command: str, shell: str = "cmd", cwd: str = "",
     }
 
 
+MAX_BROWSER_SESSIONS = 16
+
+
+def _browser_session_key(session_id: str | None) -> str:
+    value = "default" if session_id is None else session_id
+    if not isinstance(value, str) or not value.strip() or len(value) > 200:
+        raise ValueError("browser_session_id_invalid")
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
+
+
+def _browser_profile_dir(key: str, session_id: str | None) -> Path:
+    # Preserve the legacy configured profile only for the legacy default session.
+    if session_id is None:
+        configured_profile = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")
+        if configured_profile:
+            return Path(configured_profile).expanduser()
+        if os.environ.get("LOCALAPPDATA"):
+            return Path(os.environ["LOCALAPPDATA"]) / "CyberNova" / "data" / "gpt-chromium-profile"
+        return Path.home() / ".local" / "share" / "cybernova" / "gpt-chromium-profile"
+    configured = os.environ.get("CYBERNOVA_BROWSER_SESSIONS_DIR")
+    if configured:
+        base = Path(configured).expanduser()
+    elif os.environ.get("LOCALAPPDATA"):
+        base = Path(os.environ["LOCALAPPDATA"]) / "CyberNova" / "data" / "browser-sessions"
+    else:
+        base = Path.home() / ".local" / "share" / "cybernova" / "browser-sessions"
+    return base / key
+
+
 class GPTToolRuntime:
-    """One isolated Chromium session and full local shell for Account GPT."""
+    """Shared tool catalog with isolated Chromium state per conversation/task."""
     def __init__(self):
         self._lock = RLock()
-        self._browser: BrowserSession | None = None
+        self._computer_lock = RLock()
+        self._browser_sessions: OrderedDict[str, BrowserSession] = OrderedDict()
         self.tools = build_tool_catalog()
         self.tool_map = {item["name"]: item for item in self.tools}
 
@@ -431,8 +463,29 @@ class GPTToolRuntime:
             for item in self.tools_for_groups(groups)
         ]
 
+    def _browser_for(self, session_id: str | None) -> BrowserSession:
+        key = _browser_session_key(session_id)
+        with self._lock:
+            browser = self._browser_sessions.get(key)
+            if browser is not None:
+                self._browser_sessions.move_to_end(key)
+                return browser
+            if len(self._browser_sessions) >= MAX_BROWSER_SESSIONS:
+                raise ValueError("browser_session_capacity_reached")
+            browser = BrowserSession(profile_dir=_browser_profile_dir(key, session_id))
+            self._browser_sessions[key] = browser
+            return browser
+
+    def close_session(self, session_id: str | None) -> None:
+        key = _browser_session_key(session_id)
+        with self._lock:
+            browser = self._browser_sessions.pop(key, None)
+        if browser is not None:
+            browser.close()
+
     def call(self, name: str, args: dict, *, authorized_targets=None,
-             user_messages=None, enabled_groups=None) -> tuple[dict, bool]:
+             user_messages=None, enabled_groups=None,
+             session_id: str | None = None) -> tuple[dict, bool]:
         selected = set(normalize_tool_groups(enabled_groups))
         if selected and tool_group_for_name(name) not in selected:
             return {"ok": False, "error": "tool_group_not_enabled"}, True
@@ -440,69 +493,71 @@ class GPTToolRuntime:
             return {"ok": False, "error": "gpt_tool_not_registered"}, True
         if not isinstance(args, dict):
             return {"ok": False, "error": "tool_arguments_must_be_object"}, True
-        with self._lock:
-            try:
-                if name == "terminal_status":
-                    if args:
-                        raise ValueError("terminal_status_takes_no_arguments")
-                    windows = platform.system() == "Windows"
-                    shell_paths = {}
-                    if windows:
-                        for shell_id in ("cmd", "powershell", "pwsh"):
-                            try:
-                                shell_paths[shell_id] = _shell_executable(shell_id)
-                            except ValueError:
-                                shell_paths[shell_id] = None
-                    cmd_exe = bool(shell_paths.get("cmd"))
-                    modules = {}
-                    for module in ("psutil", "pyautogui", "pywinauto", "win32com", "playwright"):
+        try:
+            if name == "terminal_status":
+                if args:
+                    raise ValueError("terminal_status_takes_no_arguments")
+                windows = platform.system() == "Windows"
+                shell_paths = {}
+                if windows:
+                    for shell_id in ("cmd", "powershell", "pwsh"):
                         try:
-                            modules[module] = importlib.util.find_spec(module) is not None
-                        except (ImportError, ModuleNotFoundError, ValueError):
-                            modules[module] = False
-                    return {
-                        "ok": True, "os": platform.system(),
-                        "cmd_exe": cmd_exe,
-                        "terminal": "Windows CMD" if windows and cmd_exe else None,
-                        "shells": shell_paths,
-                        "powershell_5_1": bool(shell_paths.get("powershell")),
-                        "powershell_7": bool(shell_paths.get("pwsh")),
-                        "execution_host": "local_windows" if windows else "remote_or_non_windows",
-                        "computer_tool_dependencies": modules,
-                        "computer_tool_dependencies_ready": all(
-                            modules.get(item, False)
-                            for item in ("psutil", "pyautogui", "pywinauto", "win32com")
-                        ) if windows else False,
-                    }, False
-                if name == "terminal_run":
-                    required = {"command", "shell", "cwd", "timeout_seconds", "max_output_chars"}
-                    if set(args) != required:
-                        raise ValueError("terminal_arguments_invalid")
-                    result = _run_terminal(
-                        args["command"], args["shell"], args["cwd"],
-                        args["timeout_seconds"], args["max_output_chars"],
-                    )
-                    return result, not bool(result.get("ok"))
-                if name in COMPUTER_TOOL_NAMES:
+                            shell_paths[shell_id] = _shell_executable(shell_id)
+                        except ValueError:
+                            shell_paths[shell_id] = None
+                cmd_exe = bool(shell_paths.get("cmd"))
+                modules = {}
+                for module in ("psutil", "pyautogui", "pywinauto", "win32com", "playwright"):
+                    try:
+                        modules[module] = importlib.util.find_spec(module) is not None
+                    except (ImportError, ModuleNotFoundError, ValueError):
+                        modules[module] = False
+                return {
+                    "ok": True, "os": platform.system(),
+                    "cmd_exe": cmd_exe,
+                    "terminal": "Windows CMD" if windows and cmd_exe else None,
+                    "shells": shell_paths,
+                    "powershell_5_1": bool(shell_paths.get("powershell")),
+                    "powershell_7": bool(shell_paths.get("pwsh")),
+                    "execution_host": "local_windows" if windows else "remote_or_non_windows",
+                    "computer_tool_dependencies": modules,
+                    "computer_tool_dependencies_ready": all(
+                        modules.get(item, False)
+                        for item in ("psutil", "pyautogui", "pywinauto", "win32com")
+                    ) if windows else False,
+                }, False
+            if name == "terminal_run":
+                required = {"command", "shell", "cwd", "timeout_seconds", "max_output_chars"}
+                if set(args) != required:
+                    raise ValueError("terminal_arguments_invalid")
+                result = _run_terminal(
+                    args["command"], args["shell"], args["cwd"],
+                    args["timeout_seconds"], args["max_output_chars"],
+                )
+                return result, not bool(result.get("ok"))
+            if name in COMPUTER_TOOL_NAMES:
+                with self._computer_lock:
                     return computer_control_call(name, args, user_messages=user_messages)
-                if name in {"google_search", "research_source_open"}:
-                    return research_web_call(name, args)
-                if name.startswith("browser_"):
-                    if name == "browser_submit":
-                        raise ValueError("browser_submit_requires_separate_approval")
-                    if self._browser is None:
-                        self._browser = BrowserSession()
-                    self._browser.set_authorized_hosts(authorized_targets or set())
-                    return browser_control_call(name, args, self._browser)
-                raise ValueError("gpt_tool_not_implemented")
-            except (OSError, ValueError, TypeError) as exc:
-                return {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}, True
+            if name in {"google_search", "research_source_open"}:
+                return research_web_call(name, args)
+            if name.startswith("browser_"):
+                if name == "browser_submit":
+                    raise ValueError("browser_submit_requires_separate_approval")
+                browser = self._browser_for(session_id)
+                browser.set_authorized_hosts(authorized_targets or set())
+                return browser_control_call(name, args, browser)
+            raise ValueError("gpt_tool_not_implemented")
+        except (OSError, ValueError, TypeError) as exc:
+            return {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}, True
 
     def close(self):
         with self._lock:
-            if self._browser is not None:
-                self._browser.close()
-                self._browser = None
-
+            browsers = list(self._browser_sessions.values())
+            self._browser_sessions.clear()
+        for browser in browsers:
+            try:
+                browser.close()
+            except Exception:
+                pass
 
 runtime = GPTToolRuntime()
