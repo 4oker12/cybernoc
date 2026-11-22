@@ -357,21 +357,23 @@ async function pasteTerminalOutput(){
 
 function busy(on){
   state.running=on;
-  $("sendButton").disabled=on;
-  // The user may prepare the next prompt and inspect other panels while a
-  // model request is in flight. send() still blocks concurrent turns.
-  $("messageInput").disabled=false;
-  $("newSession").disabled=on;
-  $("artifactFile").disabled=on;
+  const collab=state.mode==="collab";
+  const collabWritable=!!state.collabRun&&["active","paused"].includes(state.collabRun.state);
+  $("sendButton").disabled=collab?!collabWritable:on;
+  // Ordinary model activity cannot lock the independent collaboration composer.
+  $("messageInput").disabled=collab?!collabWritable:false;
+  $("newSession").disabled=on&&!collab;
+  $("artifactFile").disabled=on||state.mode!=="qwen";
   $("toolPickerToggle").disabled=on;
   $("toolPickerGroups").querySelectorAll("input").forEach(input=>{
     input.disabled=on||input.dataset.available==="false";
   });
-  $("sendStatus").textContent=on?
-    "Модель работает · можно готовить следующий вопрос":"Готов";
+  $("sendStatus").textContent=collab?
+    "Сообщение будет добавлено в общий журнал":
+    on?"Модель работает · можно готовить следующий вопрос":"Готов";
   $("modeQwen").disabled=false;
   $("modeChatGPT").disabled=false;
-  $("modeCollab").disabled=on;
+  $("modeCollab").disabled=false;
   $("gptTopModel").disabled=!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
 }
 function resetUsage(mode){
@@ -578,7 +580,7 @@ function gptWelcome(){
   $("gptMessages").replaceChildren(window.cybernovaGptWelcome.cloneNode(true));
 }
 function setMode(mode){
-  if((state.running && mode==="collab") || !["qwen","gpt","collab"].includes(mode))return;
+  if(!["qwen","gpt","collab"].includes(mode))return;
   state.mode=mode;
   const qwen=mode==="qwen", gpt=mode==="gpt", collab=mode==="collab";
   const collabWritable=!!state.collabRun&&["active","paused"].includes(state.collabRun.state);
@@ -1167,7 +1169,7 @@ async function status(){
   }
 }
 async function reset(){
-  if(state.running)return;
+  if(state.running && state.mode!=="collab")return;
   if(state.mode==="collab"){
     await newCollab();
     return;
