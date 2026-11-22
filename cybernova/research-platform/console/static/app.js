@@ -14,7 +14,8 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
   lastUsage:{qwen:null,gpt:null},
   collabRun:null,collabLoopTasks:new Set(),collabStopRequests:new Set(),collabActivity:new Map(),
   collabWorkByTask:new Map(),collabWorkLoops:new Set(),
-  collabWorkRenderedTask:null,collabWorkRenderedSignature:null};
+  collabWorkRenderedTask:null,collabWorkRenderedSignature:null,
+  collabWorkExpanded:new Set(),collabActivityExpanded:new Set()};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка интерфейса",
@@ -1408,7 +1409,7 @@ function renderCollabEntry(message){
 function renderCollabActivity(taskId, activity){
   const log=$("collabLog");
   const oldActivity=log.querySelector(".collab-activity");
-  const wasOpen=!!oldActivity?.open;
+  if(oldActivity?.open)state.collabActivityExpanded.add(taskId);
   oldActivity?.remove();
   if(!activity)return;
   const receipts=activity.tool_receipts||[], progress=activity.progress||[];
@@ -1430,7 +1431,11 @@ function renderCollabActivity(taskId, activity){
     list.append(row);
   }
   details.append(summary,list);
-  details.open=wasOpen;
+  details.open=state.collabActivityExpanded.has(taskId);
+  details.addEventListener("toggle",()=>{
+    if(details.open)state.collabActivityExpanded.add(taskId);
+    else state.collabActivityExpanded.delete(taskId);
+  });
   log.append(details);
 }
 async function refreshCollabActivity(taskId){
@@ -1477,8 +1482,14 @@ function renderWorkItems(taskId, items=[]){
                                ["Ревью ChatGPT",item.review]]){
       if(!value)continue;
       const details=node("details","collab-work-details");
+      const detailKey=taskId+":"+item.item_id+":"+name;
       details.append(node("summary","",name+" · "+compactPreview(value,100)),
         node("p","",String(value)));
+      details.open=state.collabWorkExpanded.has(detailKey);
+      details.addEventListener("toggle",()=>{
+        if(details.open)state.collabWorkExpanded.add(detailKey);
+        else state.collabWorkExpanded.delete(detailKey);
+      });
       card.append(details);
     }
     if(item.state==="blocked"&&item.attempt<3){
@@ -1653,9 +1664,11 @@ async function refreshCollabRuns(){
       button.append(node("span","task-title",compactPreview(run.goal||"Совместная задача",58)));
       const stateLabel=run.state==="active"?"В работе":run.state==="paused"?"Пауза":
         run.state==="blocked"?"Требует внимания":run.state==="completed"?"Завершено":run.state;
-      button.append(node("span","task-preview",stateLabel+" · "+run.step+" сообщений"));
+      button.append(node("span","task-preview",run.mode==="parallel"?
+        stateLabel+" · параллельные подзадачи":stateLabel+" · "+run.step+" сообщений"));
       if(run.last_preview)button.append(node("span","task-preview",compactPreview(run.last_preview,90)));
-      button.title=(run.goal||"Совместная задача")+" · "+stateLabel+" · "+run.step+" сообщений";
+      button.title=(run.goal||"Совместная задача")+" · "+stateLabel+
+        (run.mode==="parallel"?" · параллельные подзадачи":" · "+run.step+" сообщений");
       button.addEventListener("click",()=>openCollabRun(run.task_id));
       list.append(button);
     }
@@ -1779,6 +1792,7 @@ async function newCollab(){
   $("collabLog").replaceChildren();
   $("collabWorkPanel").hidden=true;
   $("collabWorkItems").replaceChildren();
+  $("collabCyclesLabel").hidden=$("collabStrategy").value!=="dialog";
   state.collabWorkRenderedTask=null;
   state.collabWorkRenderedSignature=null;
   $("collabGoal").value="";
@@ -1825,6 +1839,10 @@ function init(){
   setUtilityPlaceholder();
   try{setSidebarCollapsed(window.localStorage.getItem("cybernova_sidebar_collapsed")==="1");}
   catch(_){setSidebarCollapsed(false);}
+  $("collabStrategy").addEventListener("change",()=>{
+    $("collabCyclesLabel").hidden=$("collabStrategy").value!=="dialog";
+  });
+  $("collabCyclesLabel").hidden=$("collabStrategy").value!=="dialog";
   $("collabStart").addEventListener("click",startCollab);
   $("collabStop").addEventListener("click",stopCollab);
   $("collabFinish").addEventListener("click",finishCollab);
