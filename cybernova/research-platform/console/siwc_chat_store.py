@@ -199,6 +199,11 @@ class GPTChatStore:
             history.append({"role": "assistant", "content": note})
         return history
 
+    @staticmethod
+    def new_thread_id() -> str:
+        """Allocate an opaque conversation identity without persisting a thread."""
+        return "gpt_" + secrets.token_urlsafe(18)
+
     def begin_exchange(self, thread_id: str | None, model: str, user: str) -> tuple[str, int]:
         user = _validate_content(user, limit=10000)
         if not isinstance(model, str) or not 1 <= len(model) <= 160:
@@ -207,20 +212,23 @@ class GPTChatStore:
         with self._lock, self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             if thread_id is None:
-                thread_id = "gpt_" + secrets.token_urlsafe(18)
+                thread_id = self.new_thread_id()
+            else:
+                _validate_id(thread_id)
+            present = db.execute(
+                "SELECT 1 FROM gpt_threads WHERE thread_id=?", (thread_id,)
+            ).fetchone()
+            if present is None:
                 db.execute(
                     "INSERT INTO gpt_threads(thread_id,title,model,created_at,updated_at) "
                     "VALUES(?,?,?,?,?)",
                     (thread_id, user[:100], model, now, now)
                 )
             else:
-                _validate_id(thread_id)
-                updated = db.execute(
+                db.execute(
                     "UPDATE gpt_threads SET model=?,updated_at=? WHERE thread_id=?",
                     (model, now, thread_id)
                 )
-                if updated.rowcount != 1:
-                    raise GPTChatError("gpt_thread_not_found")
             cursor = db.execute(
                 "INSERT INTO gpt_messages(thread_id,role,content,created_at) "
                 "VALUES(?,?,?,?)",
@@ -260,20 +268,23 @@ class GPTChatStore:
         with self._lock, self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             if thread_id is None:
-                thread_id = "gpt_" + secrets.token_urlsafe(18)
+                thread_id = self.new_thread_id()
+            else:
+                _validate_id(thread_id)
+            present = db.execute(
+                "SELECT 1 FROM gpt_threads WHERE thread_id=?", (thread_id,)
+            ).fetchone()
+            if present is None:
                 db.execute(
                     "INSERT INTO gpt_threads(thread_id,title,model,created_at,updated_at) "
                     "VALUES(?,?,?,?,?)",
                     (thread_id, user[:100], model, now, now)
                 )
             else:
-                _validate_id(thread_id)
-                updated = db.execute(
+                db.execute(
                     "UPDATE gpt_threads SET model=?,updated_at=? WHERE thread_id=?",
                     (model, now, thread_id)
                 )
-                if updated.rowcount != 1:
-                    raise GPTChatError("gpt_thread_not_found")
             db.executemany(
                 "INSERT INTO gpt_messages(thread_id,role,content,created_at) "
                 "VALUES(?,?,?,?)",
