@@ -173,7 +173,14 @@ def collaboration_store() -> CollaborationStore:
     return CollaborationStore(communication_store())
 
 
-collaboration_step_lock = RLock()
+# Serialize turns per collaboration, not globally. Independent tasks can run in parallel.
+_collaboration_step_locks: dict[str, RLock] = {}
+_collaboration_step_locks_guard = RLock()
+
+
+def _collaboration_step_lock(task_id: str) -> RLock:
+    with _collaboration_step_locks_guard:
+        return _collaboration_step_locks.setdefault(task_id, RLock())
 
 
 @asynccontextmanager
@@ -352,6 +359,10 @@ class CollaborationActionRequest(BaseModel):
     task_id: str = Field(min_length=12, max_length=100)
 
 
+class CollaborationMessageRequest(CollaborationActionRequest):
+    message: str = Field(min_length=1, max_length=10000)
+
+
 class SharedToolRequest(BaseModel):
     name: str = Field(pattern="^(google_search|research_source_open|safe_terminal)$")
     argument: str = Field(min_length=1, max_length=1600)
@@ -371,6 +382,15 @@ def collaboration_run(task_id: str, after: int = 0):
         return collaboration_store().read(task_id, after=after)
     except (CollaborationError, CommunicationError, ValueError):
         raise HTTPException(status_code=404, detail="collaboration_not_found") from None
+
+
+@app.post("/api/collab/message")
+def collaboration_message(payload: CollaborationMessageRequest):
+    """Accept a user intervention without interrupting the current model call."""
+    try:
+        return collaboration_store().user_message(payload.task_id, payload.message)
+    except (CollaborationError, CommunicationError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @app.post("/api/collab/start")
@@ -426,7 +446,7 @@ def collaboration_finish(payload: CollaborationActionRequest):
 def collaboration_step(payload: CollaborationActionRequest):
     # Sequential browser-driven turn: no unbounded background loops.
     # A concurrent stop can mark the run stopped during model I/O.
-    with collaboration_step_lock:
+    with _collaboration_step_lock(payload.task_id):
         store = collaboration_store()
         try:
             run = store.read(payload.task_id)
