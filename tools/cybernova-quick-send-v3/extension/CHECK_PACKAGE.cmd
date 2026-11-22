@@ -10,13 +10,12 @@ if not errorlevel 1 (
   echo Checking JavaScript syntax...
   node --check service-worker.js || exit /b 1
   node --check content.js || exit /b 1
-  node --check offscreen.js || exit /b 1
   echo JAVASCRIPT_SYNTAX_OK
 ) else (
   echo Node.js not found; skipped JS syntax check.
 )
 echo Checking required files...
-for %%F in (manifest.json service-worker.js content.js content.css offscreen.html offscreen.js) do (
+for %%F in (manifest.json service-worker.js content.js content.css) do (
   if not exist "%%F" (
     echo MISSING: %%F
     exit /b 1
