@@ -567,11 +567,15 @@ def collaboration_item_step(payload: WorkItemRequest):
                 on_tool_event=persist,
                 # Each subtask owns separate Chromium state even inside one parent.
                 session_id=item["item_id"],
+                on_usage=lambda usage: work.record_usage(
+                    payload.task_id, item["item_id"], "research", usage),
                 trusted_user_messages=[
                     {"role": "user", "content": run["goal"]},
                     *[{"role": "user", "content": note} for note in notes],
                 ],
             )
+            work.record_usage(payload.task_id, item["item_id"], "research",
+                              result.get("usage") or {})
             blocked = bool(result.get("approval_requests")) or any(
                 event.get("type") == "agent_error"
                 for event in result.get("events") or []
@@ -597,7 +601,11 @@ def collaboration_item_step(payload: WorkItemRequest):
             )
             review = chatgpt_chat(run["model"],
                 [{"role": "user", "content": instructions}],
-                tool_runtime=None, session_id=item["item_id"])
+                tool_runtime=None, session_id=item["item_id"],
+                on_usage=lambda usage: work.record_usage(
+                    payload.task_id, item["item_id"], "review", usage))
+            work.record_usage(payload.task_id, item["item_id"], "review",
+                              review.get("usage") or {})
             artifact = _structured_model_json(review.get("answer", ""))
             if set(artifact) != {"decision", "feedback"}:
                 raise WorkItemError("work_review_schema_invalid")
