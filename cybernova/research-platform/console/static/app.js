@@ -1551,7 +1551,7 @@ async function finishCollab(){
   }
 }
 async function newCollab(){
-  if(state.collabRun?.state==="active")await stopCollab();
+  // Existing runs continue in the background; this only opens a new task form.
   state.collabRun=null;
   $("collabForm").hidden=false;
   $("collabActiveBar").hidden=true;
