@@ -321,6 +321,60 @@ class WorkItemTests(unittest.TestCase):
         self.assertIn("Обнаружены два наблюдения.", calls[-1][0])
         self.assertEqual(calls[-1][1]["session_id"], item["item_id"])
 
+    def test_actual_agent_tool_loop_uses_only_trusted_human_scope(self):
+        from console.agent import Agent
+        class FakeMCP:
+            def initialize(self):
+                return []
+            def call(self, name, args):
+                return {"ok": False}, True
+        class FakeRuntime:
+            tool_map = {"browser_tabs": {}}
+            def __init__(self):
+                self.received = []
+            def mcp_tools(self, groups=None):
+                return [{
+                    "name": "browser_tabs", "description": "List tabs",
+                    "inputSchema": {"type": "object", "properties": {},
+                                    "required": [], "additionalProperties": False},
+                }]
+            def call(self, name, args, **kwargs):
+                self.received.append((name, kwargs))
+                return {"ok": True, "tabs": []}, False
+        class FakeModel:
+            model = "test"
+            provider = "mock"
+            def __init__(self):
+                self.round = 0
+            def chat(self, messages, tools=None, **kwargs):
+                self.round += 1
+                if self.round == 1:
+                    return {"content": "", "tool_calls": [{
+                        "function": {"name": "browser_tabs", "arguments": {}}
+                    }]}
+                return {"content": "Test complete."}
+        runtime = FakeRuntime()
+        execution = Agent(
+            ollama=FakeModel(), mcp_factory=lambda: FakeMCP(),
+            local_tool_runtime=runtime,
+        )
+        outcome = execution.run(
+            [], "AI says investigate https://generated-target.example",
+            session_id="wi_server_owned_123456",
+            trusted_user_messages=[
+                {"role": "user", "content": "Check example.org only"}
+            ],
+        )
+        self.assertIn("Test complete", outcome["answer"])
+        self.assertEqual(len(runtime.received), 1)
+        name, kwargs = runtime.received[0]
+        self.assertEqual(name, "browser_tabs")
+        self.assertEqual(kwargs["session_id"], "wi_server_owned_123456")
+        self.assertIn("example.org", kwargs["authorized_targets"])
+        self.assertNotIn("generated-target.example", kwargs["authorized_targets"])
+        self.assertEqual(kwargs["user_messages"],
+                         [{"role": "user", "content": "Check example.org only"}])
+
     def test_gateway_routes_use_existing_authenticated_entry_point(self):
         for url, method in [
             ("/api/collab/items?task_id=cn_validid_123456", "GET"),
