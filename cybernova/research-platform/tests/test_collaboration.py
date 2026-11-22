@@ -191,10 +191,12 @@ class CollaborationTests(unittest.TestCase):
 
     def test_http_real_two_model_turns_with_mocked_inference(self):
         class FakeResearchAgent:
+            session_ids = []
             def __init__(self, *args, **kwargs):
                 pass
             def run(self, history, prompt, **kwargs):
                 self.prompt = prompt
+                self.session_ids.append(kwargs.get("session_id"))
                 return {
                     "answer": "DeepSeek: проверил локальные данные, активных сканов не было.",
                     "events": [], "tool_calls": 0, "approval_requests": [],
@@ -256,6 +258,8 @@ class CollaborationTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertIn("DeepSeek", calls[1][0][-1]["content"])
             self.assertIn("ведущий инженер", calls[0][1]["profile_instructions"])
+            self.assertEqual(calls[0][1]["session_id"], task_id)
+            self.assertEqual(FakeResearchAgent.session_ids, [task_id, task_id])
             self.assertTrue(any("Уточнение от пользователя" in item["content"]
                                 for item in calls[0][0]))
             self.assertGreaterEqual(len(client.get("/api/collab/run",
