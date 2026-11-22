@@ -1586,6 +1586,7 @@ function renderCollabRun(run){
   $("collabStop").hidden=!active;
   $("collabResume").hidden=!paused||state.collabLoopTasks.has(run.task_id);
   $("collabFinish").hidden=!(active||paused);
+  $("collabRecover").hidden=!(run.mode==="parallel"&&run.state==="blocked");
   $("collabResume").textContent=run.mode==="parallel"?"Продолжить подзадачи":
     "Продолжить ещё "+run.max_cycles+" обменов";
   const pairs=Math.floor(run.step/2);
@@ -1811,6 +1812,15 @@ function init(){
         void runCollabWork(taskId);
       }catch(err){$("collabStatus").textContent="Ошибка продолжения: "+String(err.message||err);}
     }else void continueCollab(taskId);
+  });
+  $("collabRecover").addEventListener("click",async()=>{
+    const taskId=state.collabRun?.task_id;
+    if(!taskId)return;
+    try{
+      const run=await requestJson("/api/collab/items/recover",{task_id:taskId});
+      if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+      void refreshCollabWork(taskId);
+    }catch(err){$("collabStatus").textContent="Восстановление: "+String(err.message||err);}
   });
   $("collabPlan").addEventListener("click",planCollabWork);
   $("collabWorkRun").addEventListener("click",()=>runCollabWork());
