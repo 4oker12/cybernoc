@@ -6,7 +6,7 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
   uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Активная модель",
   gptThreadId:null,gptConnected:false,gptPlanUsage:false,
   researchScope:{hosts:[],capture_detail:"evidence"},profileSettings:null,
-  toolGroups:[],toolGroupCatalog:[],
+  toolGroups:[],toolGroupCatalog:[],toolsEnabled:true,
   usageTotals:{
     qwen:{input:0,output:0,total:0,measuredTurns:0},
     gpt:{input:0,output:0,total:0,measuredTurns:0}
@@ -434,6 +434,15 @@ function toolPickerOpen(open){
 }
 function updateToolPickerSummary(){
   const selected=state.toolGroups;
+  const off=$("toolPickerOff");
+  if(off)off.setAttribute("aria-pressed",String(!state.toolsEnabled));
+  const hint=$("qwenAutoTools");
+  if(hint)hint.hidden=!state.toolsEnabled;
+  if(!state.toolsEnabled){
+    $("toolSelectionBadge").textContent="Выкл";
+    $("toolPickerSummary").textContent="Инструменты отключены: схемы и локальные вызовы не передаются модели.";
+    return;
+  }
   if(!selected.length){
     $("toolSelectionBadge").textContent="Авто";
     $("toolPickerSummary").textContent="Автовыбор: модель видит все доступные группы инструментов.";
@@ -444,7 +453,10 @@ function updateToolPickerSummary(){
   $("toolPickerSummary").textContent="Ограничено выбранным: "+labels.join(" · ");
 }
 function persistToolGroups(){
-  try{window.localStorage.setItem("cybernova_tool_groups",JSON.stringify(state.toolGroups));}catch(_){}
+  try{
+    window.localStorage.setItem("cybernova_tool_groups",JSON.stringify(state.toolGroups));
+    window.localStorage.setItem("cybernova_tools_enabled",state.toolsEnabled?"true":"false");
+  }catch(_){}
 }
 function renderToolPicker(groups){
   const catalog=Array.isArray(groups)&&groups.length?groups:TOOL_GROUP_FALLBACK;
@@ -465,6 +477,7 @@ function renderToolPicker(groups){
       const next=new Set(state.toolGroups);
       if(input.checked)next.add(group.id);else next.delete(group.id);
       state.toolGroups=catalog.map(item=>item.id).filter(id=>next.has(id));
+      state.toolsEnabled=true;
       persistToolGroups();
       renderToolPicker(catalog);
     });
@@ -535,7 +548,8 @@ async function send(){
   const usageWatch=watchUsageProgress(runId);
   try{
     const result=await requestJson("/api/chat",{
-      session_id:state.sessionId,message:text,tool_groups:state.toolGroups,run_id:runId,
+      session_id:state.sessionId,message:text,tool_groups:state.toolGroups,
+      tools_enabled:state.toolsEnabled,run_id:runId,
     });
     state.sessionId=result.session_id;
     state.taskId=result.task_id||state.taskId;
@@ -679,7 +693,8 @@ async function sendGPT(){
   const usageWatch=watchUsageProgress(runId);
   try{
     const result=await requestJson("/api/siwc/chat",{
-      thread_id:state.gptThreadId,model,message,tool_groups:state.toolGroups,run_id:runId
+      thread_id:state.gptThreadId,model,message,tool_groups:state.toolGroups,
+      tools_enabled:state.toolsEnabled,run_id:runId
     });
     state.gptThreadId=result.thread_id;
     pending.wrap.classList.remove("working");
@@ -1537,18 +1552,24 @@ function init(){
   window.cybernovaWelcome=$("welcome").cloneNode(true);
   window.cybernovaGptWelcome=$("gptWelcome").cloneNode(true);
   showResearchScope({hosts:[],capture_detail:"evidence"});
+  let savedEnabled=null;
   try{
     const saved=JSON.parse(window.localStorage.getItem("cybernova_tool_groups")||"[]");
     if(Array.isArray(saved))state.toolGroups=saved.filter(id=>
       TOOL_GROUP_FALLBACK.some(group=>group.id===id));
+    savedEnabled=window.localStorage.getItem("cybernova_tools_enabled");
   }catch(_){state.toolGroups=[];}
+  state.toolsEnabled=savedEnabled===null?true:savedEnabled==="true";
   renderToolPicker([]);
   $("toolPickerToggle").addEventListener("click",()=>{
     toolPickerOpen($("toolPicker").hidden);
   });
   $("toolPickerClose").addEventListener("click",()=>toolPickerOpen(false));
   $("toolPickerAuto").addEventListener("click",()=>{
-    state.toolGroups=[];persistToolGroups();renderToolPicker(state.toolGroupCatalog);
+    state.toolsEnabled=true;state.toolGroups=[];persistToolGroups();renderToolPicker(state.toolGroupCatalog);
+  });
+  $("toolPickerOff").addEventListener("click",()=>{
+    state.toolsEnabled=false;persistToolGroups();renderToolPicker(state.toolGroupCatalog);
   });
   document.addEventListener("click",event=>{
     if(!$("toolPicker").hidden&&

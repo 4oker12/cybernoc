@@ -165,6 +165,29 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(local.calls[0][0], "computer_system_overview")
         self.assertEqual(local.calls[0][4], {"computer"})
 
+    def test_tools_disabled_skips_mcp_and_local_tool_catalog(self):
+        factory_calls = []
+        local = FakeLocalToolRuntime()
+        lm = FakeOllama([{"role": "assistant", "content": "Обычный текстовый ответ."}])
+
+        def factory():
+            factory_calls.append(True)
+            return FakeMCP()
+
+        out = Agent(lm, factory, local_tool_runtime=local).run(
+            [], "Ответь без инструментов.", tools_enabled=False,
+        )
+
+        self.assertEqual(factory_calls, [])
+        self.assertEqual(lm.prompts[0][1], [])
+        self.assertEqual(out["tool_calls"], 0)
+        system_text = "\n".join(
+            item["content"] for item in lm.prompts[0][0]
+            if item.get("role") == "system"
+        )
+        self.assertNotIn("ОБЩИЙ ИНСТРУМЕНТАЛЬНЫЙ СТАНДАРТ", system_text)
+        self.assertNotIn("computer_system_overview", system_text)
+
     def test_ollama_client_captures_provider_token_counters(self):
         client = OllamaClient(transport=lambda *_: {
             "message": {"role": "assistant", "content": "ok"},
