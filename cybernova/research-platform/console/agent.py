@@ -264,7 +264,8 @@ class Agent:
             scope: dict | None = None, user_context: str = "",
             profile_instructions: str = "", tool_groups: list[str] | None = None,
             on_usage=None, on_tool_event=None,
-            session_id: str | None = None) -> dict:
+            session_id: str | None = None,
+            trusted_user_messages: list[dict] | None = None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
         selected_groups = normalize_tool_groups(tool_groups or [])
@@ -349,7 +350,11 @@ class Agent:
             if isinstance(item, dict) and item.get("role") in {"user", "assistant"}
             and isinstance(item.get("content"), str)
         ] + [{"role": "user", "content": text}]
-        authorized_targets = extract_user_targets(task_messages)
+        # A model-generated assignment is NOT an authorization by the human.
+        # Callers may supply the exact trusted user messages for scope/approvals.
+        approval_messages = (trusted_user_messages if trusted_user_messages is not None
+                             else task_messages)
+        authorized_targets = extract_user_targets(approval_messages)
         authorized_targets.update(
             str(host).lower().rstrip(".") for host in scope_hosts
             if isinstance(host, str) and host.strip()
@@ -481,7 +486,7 @@ class Agent:
                             observed, error_flag = self._call_registered_tool(
                                 chosen, chosen_args, mcp=mcp,
                                 authorized_targets=authorized_targets,
-                                user_messages=task_messages,
+                                user_messages=approval_messages,
                                 enabled_groups=selected_groups or None,
                                 session_id=session_id,
                             )
