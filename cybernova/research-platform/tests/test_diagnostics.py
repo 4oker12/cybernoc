@@ -114,7 +114,10 @@ class DiagnosticsTests(unittest.TestCase):
                 fail(run)
             report = diagnostics.export_jsonl().decode()
         self.assertNotIn("private", report)
-        success, error = [json.loads(line)["chat_turn"] for line in report.splitlines()[1:]]
+        success, error = [
+            row["chat_turn"] for row in (json.loads(line) for line in report.splitlines()[1:])
+            if "chat_turn" in row
+        ]
         self.assertEqual(success["run_id"], run.run_id)
         self.assertEqual(success["cached_tokens"], 0)
         self.assertIsNone(success["output_tokens"])
@@ -136,7 +139,10 @@ class DiagnosticsTests(unittest.TestCase):
             partial(run)
             report = diagnostics.export_jsonl().decode()
         self.assertNotIn("arbitrary response fragment", report)
-        item = json.loads(report.splitlines()[1])["chat_turn"]
+        item = next(
+            row["chat_turn"] for row in (json.loads(line) for line in report.splitlines()[1:])
+            if "chat_turn" in row
+        )
         self.assertEqual(item["run_id"], run.run_id)
         self.assertEqual(item["provider"], "OpenAI Responses")
         self.assertEqual(item["status"], "partial")
@@ -191,7 +197,7 @@ class DiagnosticsTests(unittest.TestCase):
                     "url": "https://private.invalid/token",
                     "password": "do-not-export", "status": "ok",
                 },
-            }) + "\\n", encoding="utf-8")
+            }) + "\n", encoding="utf-8")
             report = diagnostics.export_jsonl().decode()
         self.assertIn("tool_call_completed", report)
         self.assertNotIn("private.invalid", report)
