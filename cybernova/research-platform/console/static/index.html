@@ -91,6 +91,11 @@
           <div id="collabForm">
             <label for="collabGoal">Цель исследования</label>
             <textarea id="collabGoal" maxlength="3000" rows="3" placeholder="Опиши задачу, ограничения и ожидаемый результат…"></textarea>
+            <label for="collabStrategy">Режим работы</label>
+            <select id="collabStrategy">
+              <option value="parallel" selected>Параллельные подзадачи — ChatGPT планирует и проверяет</option>
+              <option value="dialog">Поочерёдный диалог ChatGPT ↔ DeepSeek</option>
+            </select>
             <div class="collab-row">
               <label>Модель наставника <select id="collabModel"><option value="">Подключите ChatGPT</option></select></label>
               <label>Обменов до паузы <select id="collabCycles"><option value="1">1 обмен</option><option value="3">3 обмена</option><option value="5" selected>5 обменов</option><option value="7">7 обменов</option><option value="10">10 обменов</option><option value="12">12 обменов</option></select></label>
@@ -103,6 +108,14 @@
             <button type="button" id="collabStop" class="refresh-button">Пауза</button>
             <button type="button" id="collabFinish" class="refresh-button" hidden>Завершить диалог</button>
             <button type="button" id="collabNew" class="refresh-button">Новая задача</button>
+          </div>
+          <div id="collabWorkPanel" class="collab-work-panel" hidden>
+            <div class="collab-work-actions">
+              <button type="button" id="collabPlan" class="refresh-button">ChatGPT: составить план</button>
+              <button type="button" id="collabWorkRun" class="refresh-button" disabled>Запустить до 2 подзадач параллельно</button>
+              <span id="collabWorkStatus" role="status" class="muted">План ещё не создан.</span>
+            </div>
+            <div id="collabWorkItems" class="collab-work-items"></div>
           </div>
         </section>
         <div id="collabLog" aria-live="polite"></div>
