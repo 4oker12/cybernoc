@@ -252,11 +252,13 @@ class BrowserSession:
     in this dedicated profile on disk and are never returned to the model.
     The user's personal Chrome profile is never opened or inspected.
     """
-    def __init__(self, *, headless: bool | None = None):
+    def __init__(self, *, headless: bool | None = None,
+                 profile_dir: str | Path | None = None):
         if headless is None:
             configured = os.environ.get("CYBERNOVA_GPT_BROWSER_HEADLESS")
             headless = (sys.platform != "win32") if configured is None else configured.strip().lower() in {"1", "true", "yes", "on"}
         self._headless = bool(headless)
+        self._profile_dir = Path(profile_dir).expanduser() if profile_dir is not None else None
         self._authorized_hosts: set[str] = set()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cybernova-chromium")
         self._closed = False
@@ -344,7 +346,9 @@ class BrowserSession:
                 )
             else:
                 configured_profile = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")
-                if configured_profile:
+                if self._profile_dir is not None:
+                    profile_dir = self._profile_dir
+                elif configured_profile:
                     profile_dir = Path(configured_profile).expanduser()
                 elif os.environ.get("LOCALAPPDATA"):
                     profile_dir = Path(os.environ["LOCALAPPDATA"]) / "CyberNova" / "data" / "gpt-chromium-profile"
