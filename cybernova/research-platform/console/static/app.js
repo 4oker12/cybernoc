@@ -1503,6 +1503,7 @@ async function openCollabRun(taskId){
     setMode("collab");
     renderCollabRun(data);
     $("sidebar").classList.remove("open");
+    if(data.state==="active")void continueCollab(taskId);
   }catch(err){
     $("collabStatus").textContent="Ошибка: "+String(err.message||err);
   }
