@@ -1606,6 +1606,8 @@ async function newCollab(){
   $("collabActiveBar").hidden=true;
   $("collabLog").replaceChildren();
   $("collabGoal").value="";
+  $("messageInput").disabled=true;
+  $("sendButton").disabled=true;
   void refreshCollabRuns();
 }
 function init(){
