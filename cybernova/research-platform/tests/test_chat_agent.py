@@ -2,6 +2,7 @@
 import json
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,8 +11,9 @@ sys.path.insert(0, str(ROOT))
 from console.agent import (
     Agent, _arguments, _allowed_http, _safe_args, _tool_schema,
     BackendError, MCPClient, OllamaClient, BASE_SYSTEM,
+    _extract_dsml_calls, _compact_context,
 )
-from console.model_providers import OpenAICompatibleClient
+from console.model_providers import OpenAICompatibleClient, _normalize_context
 
 TOOLS = [
     {"name": "gateway_status", "description": "Status", "inputSchema": {"type": "object", "properties": {}}},
@@ -460,6 +462,88 @@ class AgentTests(unittest.TestCase):
     def test_empty_and_long_user_prompt_rejected(self):
         with self.assertRaises(ValueError):Agent(FakeOllama([]),lambda:FakeMCP()).run([]," ")
         with self.assertRaises(ValueError):Agent(FakeOllama([]),lambda:FakeMCP()).run([],"a"*10001)
+
+
+    def test_deepseek_dsml_text_call_is_normalized_and_executed(self):
+        mcp = FakeMCP()
+        dsml = (
+            '< | | DSML | | calls>< | | DSML | | invoke name="ip_network_summary">'
+            '< | | DSML | | parameter name="cidr" string="true">192.0.2.7/24'
+            '</ | | DSML | | parameter></ | | DSML | | invoke></ | | DSML | | calls>'
+        )
+        lm = FakeOllama([
+            {"role": "assistant", "content": dsml},
+            {"role": "assistant", "content": "Подсеть: 192.0.2.0/24."},
+        ])
+        out = Agent(lm, lambda: mcp).run([], "Проверь подсеть", force_tools=False)
+        self.assertEqual(out["tool_calls"], 1)
+        self.assertEqual(out["selected_by"], "dsml_content")
+        self.assertEqual(mcp.calls, [("ip_network_summary", {"cidr": "192.0.2.7/24"})])
+        self.assertEqual(out["answer"], "Подсеть: 192.0.2.0/24.")
+        self.assertNotIn("DSML", out["answer"])
+
+    def test_dsml_typed_parameters_are_decoded(self):
+        dsml = (
+            '<｜DSML｜function_calls><｜DSML｜invoke name="dev_read">'
+            '<｜DSML｜parameter name="path" string="true">agent.py</｜DSML｜parameter>'
+            '<｜DSML｜parameter name="start_line" string="false">520</｜DSML｜parameter>'
+            '<｜DSML｜parameter name="end_line" string="false">600</｜DSML｜parameter>'
+            '</｜DSML｜invoke></｜DSML｜function_calls>'
+        )
+        calls, cleaned, found = _extract_dsml_calls(dsml, {"dev_read"})
+        self.assertTrue(found)
+        self.assertEqual(cleaned, "")
+        self.assertEqual(calls[0]["function"]["arguments"], {
+            "path": "agent.py", "start_line": 520, "end_line": 600,
+        })
+
+    def test_empty_model_answer_gets_a_text_only_retry(self):
+        lm = FakeOllama([
+            {"role": "assistant", "content": ""},
+            {"role": "assistant", "content": "Проверка завершена."},
+        ])
+        out = Agent(lm, lambda: FakeMCP()).run(
+            [], "Ответь обычным текстом", tools_enabled=False,
+        )
+        self.assertEqual(out["answer"], "Проверка завершена.")
+        self.assertEqual(len(lm.prompts), 2)
+        self.assertEqual(lm.prompts[1][1], [])
+
+    def test_round_limit_uses_finalizer_and_never_returns_dsml(self):
+        mcp = FakeMCP()
+        dsml = (
+            '<｜DSML｜function_calls><｜DSML｜invoke name="ip_network_summary">'
+            '<｜DSML｜parameter name="cidr" string="true">192.0.2.7/24'
+            '</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜function_calls>'
+        )
+        lm = FakeOllama([
+            calls(("ip_network_summary", {"cidr": "192.0.2.7/24"})),
+            {"role": "assistant", "content": dsml},
+            {"role": "assistant", "content": "Итог: сеть 192.0.2.0/24."},
+        ])
+        with patch("console.agent.MAX_ROUNDS", 2):
+            out = Agent(lm, lambda: mcp).run([], "Проверь подсеть", force_tools=False)
+        self.assertEqual(out["tool_calls"], 1)
+        self.assertEqual(out["answer"], "Итог: сеть 192.0.2.0/24.")
+        self.assertNotIn("DSML", out["answer"])
+        self.assertEqual(len(lm.prompts), 3)
+
+    def test_compact_context_keeps_recent_tool_pairs_and_bounds_payloads(self):
+        messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "task"}]
+        for index in range(12):
+            call = {"function": {"name": "tool_" + str(index), "arguments": {"index": index}}}
+            messages.append({"role": "assistant", "content": "", "tool_calls": [call]})
+            messages.append({"role": "tool", "tool_name": "tool_" + str(index), "content": "x" * 6000})
+        compact = _compact_context(messages)
+        self.assertEqual(sum(len(item.get("tool_calls", [])) for item in compact), 8)
+        tool_results = [item for item in compact if item.get("role") == "tool"]
+        self.assertEqual(len(tool_results), 8)
+        self.assertTrue(all(len(item["content"]) <= 3500 for item in tool_results))
+        normalized = _normalize_context(compact)
+        self.assertEqual(sum(item.get("role") == "tool" for item in normalized), 8)
+        self.assertTrue(any("tool_0" in item.get("content", "") for item in compact if item.get("role") == "assistant"))
+        self.assertTrue(any("tool_11" in call["function"]["name"]
+                            for item in compact for call in item.get("tool_calls", [])))
 
 
 if __name__=="__main__":

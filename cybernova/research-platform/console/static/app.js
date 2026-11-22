@@ -175,6 +175,7 @@ function buildToolBatch(events,count,mode){
   const names=Array.from(new Set(rows.map(event=>String(event.name||event.type||"Событие")).filter(Boolean)));
   const preview=names.slice(0,3).join(" · ")+(names.length>3?" · +"+(names.length-3):"");
   const modeLabel=mode==="native"?"модель выбрала":
+    mode==="dsml_content"?"модель выбрала (DSML)":
     mode==="model_json_fallback"?"план модели":
     mode==="google_research_fallback"?"автопоиск":
     mode==="evidence_first_fallback"?"первичная проверка":
