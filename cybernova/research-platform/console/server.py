@@ -644,7 +644,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
     outcome = None
     with gpt_turn_lock:
         store = gpt_chat_store()
-        thread_id = payload.thread_id
+        thread_id = payload.thread_id or store.new_thread_id()
         user_message_seq = None
         persisted_tool_events = []
 
@@ -656,7 +656,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from None
             thread_id, user_message_seq = store.begin_exchange(
-                payload.thread_id, payload.model, payload.message
+                thread_id, payload.model, payload.message
             )
 
             def persist_tool_event(event):
@@ -692,6 +692,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
             raise HTTPException(status_code=500, detail=str(exc)) from None
         except SIWCError as exc:
             if user_message_seq is None:
+                gpt_tool_runtime.close_session(thread_id)
                 raise HTTPException(status_code=409, detail=str(exc)) from None
             partial_answer = (
                 "Цикл ChatGPT прерван: " + str(exc) +
