@@ -29,7 +29,7 @@ _CONFIG_LOCK = threading.RLock()
 # Redact the value, not the failure type, tool name or source line number.
 _SECRET = re.compile(
     r"(?i)(\b(?:authorization|proxy-authorization|access[_-]?token|"
-    r"refresh[_-]?token|api[_-]?key|password|passwd|cookie|secret|"
+    r"refresh[_-]?token|token|api[_-]?key|password|passwd|cookie|secret|"
     r"client[_-]?secret|set-cookie)\b\s*[:=]\s*)"
     r"(?:[\"']?)([^\s\"',;\}\]]{2,})"
 )
