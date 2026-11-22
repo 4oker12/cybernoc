@@ -185,6 +185,11 @@ class CollaborationTests(unittest.TestCase):
         calls = []
         def fake_gpt(model, messages, **kwargs):
             calls.append((messages, kwargs))
+            callback = kwargs.get("on_tool_event")
+            if callback:
+                callback({"name": "http_get", "ok": True,
+                          "arguments": {"url": "https://example.org/"},
+                          "result": {"status": 200}})
             return {"answer": "Наставник: поставь гипотезу и проверь источник.",
                     "model": model, "source": "offline"}
         with patch.object(server, "communication_store", return_value=self.comm), \
@@ -213,6 +218,10 @@ class CollaborationTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200, response.text)
                 speakers.append(response.json()["actor"])
             self.assertEqual(speakers, ["chatgpt", "qwen"])
+            activity = client.get("/api/collab/activity", params={"task_id": task_id})
+            self.assertEqual(activity.status_code, 200, activity.text)
+            self.assertTrue(any(item["tool_name"] == "http_get"
+                                for item in activity.json()["tool_receipts"]))
             self.assertEqual(response.json()["run"]["state"], "paused")
             self.assertEqual(client.post("/api/collab/step",
                                          json={"task_id":task_id}).status_code,409)
