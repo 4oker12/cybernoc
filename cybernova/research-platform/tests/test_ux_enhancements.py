@@ -106,6 +106,22 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn('проверь и нажми Enter', app)
         self.assertIn('ничего не отправляется автоматически', html.lower())
 
+    def test_chat_composer_exposes_diagnostics_download_and_sidebar_lists_scroll(self):
+        html = (ROOT / "console/static/index.html").read_text(encoding="utf-8")
+        css = (ROOT / "console/static/styles.css").read_text(encoding="utf-8")
+        composer = html.split('<section class="composer-area"', 1)[1].split(
+            '<div id="toolPicker"', 1
+        )[0]
+        self.assertIn('id="chatDiagnosticsDownload"', composer)
+        self.assertIn('href="/api/diagnostics/export"', composer)
+        self.assertIn('download="cybernova-diagnostics.jsonl"', composer)
+        self.assertTrue(allowed_path("/api/diagnostics/export", "GET"))
+        self.assertIn(".sidebar #gptSidebar", css)
+        self.assertIn(".sidebar .sidebar-more[open]>.task-list", css)
+        self.assertIn(".sidebar .task-title", css)
+        self.assertIn(".composer .paste-output-button", css)
+        self.assertIn(".composer .diagnostics-download-button", css)
+
     def test_selection_ask_and_nonblocking_composer_are_present(self):
         ux = (ROOT / "console/static/ux.js").read_text(encoding="utf-8")
         app = (ROOT / "console/static/app.js").read_text(encoding="utf-8")

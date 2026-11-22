@@ -124,6 +124,7 @@
         <div class="composer-bottom">
           <div class="composer-left">
             <button type="button" id="pasteOutputButton" class="paste-output-button" aria-label="Вставить вывод из буфера обмена" title="Вставить текст из буфера в поле сообщения. Ничего не отправляется автоматически."><span aria-hidden="true">▤</span><span>Вставить вывод</span></button>
+            <a href="/api/diagnostics/export" id="chatDiagnosticsDownload" class="diagnostics-download-button" download="cybernova-diagnostics.jsonl" aria-label="Выгрузить журнал ошибок Cybernova" title="Скачать текущий журнал ошибок и метаданные запусков DeepSeek и Account GPT. Тексты переписки и секреты намеренно не записываются."><span aria-hidden="true">↓</span><span>Выгрузить ошибки</span></a>
             <label for="artifactFile" id="qwenUploadLabel" class="upload-button" title="Импорт HAR, JS, OpenAPI, логов, конфигураций, Python, зависимостей, TLS или PCAP. Файл обрабатывается локально.">📎 Файл</label>
             <input id="artifactFile" class="sr-only" type="file" accept=".har,.js,.py,.json,.log,.txt,.conf,.cfg,.ini,.yaml,.yml,.env,.pcap,.cap,.pem,.crt,.lock,.mod,.toml">
             <button type="button" id="toolPickerToggle" class="tool-picker-toggle"

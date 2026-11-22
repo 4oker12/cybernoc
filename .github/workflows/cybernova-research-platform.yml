@@ -7,6 +7,7 @@ on:
       - feature/cybernova-chat-console
       - feature/account-gpt-local-tools
       - feature/full-shell-computer-discovery
+      - fix/chat-diagnostics-and-context
     paths:
       - AGENTS.md
       - cybernova/research-platform/**
