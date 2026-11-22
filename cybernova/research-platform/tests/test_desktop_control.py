@@ -209,6 +209,39 @@ class DesktopTests(unittest.TestCase):
         self.assertTrue(receipt['state']['ok'])
         self.assertEqual(self.desktop.performed, ['set_text'])
 
+    @patch('console.desktop_control.time.sleep')
+    def test_generic_invoke_reports_observation_without_verifying_effect(self, _sleep):
+        for change, expected in ((None, 'postcondition_not_observed'),
+                                 ('tree', 'ui_state_changed'),
+                                 ('foreground', 'ui_state_changed')):
+            with self.subTest(change=change):
+                self.desktop.active = self.desktop.window[0]
+                tree = self.snapshot()
+                refresh = next(row for row in tree['elements'] if row['name'] == 'Refresh')
+                approval = self.prepare(tree, refresh, 'invoke')
+                self.assertTrue(approval['ok'])
+                key = approval['approval_id']
+
+                def perform(window, node, action, text):
+                    if change == 'tree':
+                        self.desktop.nodes[1] = replace(self.desktop.nodes[1], enabled=False)
+                    elif change == 'foreground':
+                        self.desktop.active = self.desktop.other[0]
+
+                with patch.object(self.desktop, 'perform', side_effect=perform) as dispatch:
+                    receipt = self.controller.call(ACT, {'approval_id': key},
+                                                   approval['required_user_confirmation'])
+                    self.assertFalse(self.controller.call(ACT, {'approval_id': key},
+                                                          approval['required_user_confirmation'])['ok'])
+                    dispatch.assert_called_once()
+                self.assertFalse(receipt['verified'])
+                self.assertFalse(receipt['ok'])
+                self.assertTrue(receipt['action_attempted'])
+                self.assertEqual(receipt['evidence'], expected)
+                self.assertEqual(receipt['error'], 'desktop_action_not_verified')
+                self.assertTrue(receipt['state']['ok'])
+                self.assertNotEqual(receipt['state']['snapshot_id'], tree['snapshot_id'])
+
     @patch('console.computer_control._windows_only')
     def test_shared_function_and_mcp_catalog_dispatch(self, _windows):
         from console.gpt_tool_runtime import GPTToolRuntime

@@ -241,16 +241,17 @@ class DesktopController:
                 if delay:
                     time.sleep(delay)
                 if action == "invoke":
-                    # A generic provider cannot prove what a button did. Require a changed
-                    # tree/foreground, and report only that observable change.
+                    # A generic UI change can be unrelated to the click. Report it as
+                    # evidence, not as verification of the button's intended effect.
                     if not adapter.valid(window):
                         break
-                    if adapter.foreground() != window[0]:
-                        verified = True
-                    else:
+                    changed = adapter.foreground() != window[0]
+                    if not changed:
                         after, _, _ = self._tree(adapter, window, snapshot[2], snapshot[3])
-                        verified = self._signature(before) != self._signature(after)
-                    evidence = "ui_state_changed" if verified else evidence
+                        changed = self._signature(before) != self._signature(after)
+                    if changed:
+                        evidence = "ui_state_changed"
+                        break
                 elif action == "activate":
                     verified = adapter.valid(window) and adapter.foreground() == window[0]
                     evidence = "foreground_window_matches" if verified else evidence

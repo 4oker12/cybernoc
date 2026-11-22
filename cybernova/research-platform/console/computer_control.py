@@ -222,7 +222,7 @@ DESKTOP_TOOL_SPECS = [
     _tool("computer_desktop_prepare", "Preview one restricted desktop action against a fresh snapshot target. Changes nothing. Show the user the target and exact confirmation phrase.",
           {"snapshot_id": STRING, "target_id": STRING, "action": {"type": "string", "enum": list(DESKTOP_ACTIONS)}},
           ["snapshot_id", "target_id", "action"]),
-    _tool("computer_desktop_act", "Perform one prepared action only after the latest user turn supplies its exact approval. For set_text the user supplies the exact non-sensitive text in that turn. Returns verification and fresh state.",
+    _tool("computer_desktop_act", "Perform one prepared action only after the latest user turn supplies its exact approval. For set_text the user supplies the exact non-sensitive text in that turn. Returns verification and fresh state. Generic button invocation may change the UI without verifying its intended effect; inspect the state instead of retrying automatically.",
           {"approval_id": STRING}, ["approval_id"]),
 ]
 DESKTOP_TOOL_NAMES = frozenset(item["name"] for item in DESKTOP_TOOL_SPECS)
