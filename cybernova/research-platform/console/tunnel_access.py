@@ -1,8 +1,10 @@
-"""Authenticated, loopback-only HTTP access bridge for Cybernova Chat.
+"""Authenticated HTTP access gateway for the local Cybernova Web UI.
 
-Routes a strictly limited Web UI path set to the console on 127.0.0.1:18794.
-It never proxies the Communication MCP, Ollama, or the Tool MCP. The intended
-upstream is a Cloudflare Quick Tunnel, which provides TLS but not authentication.
+Routes allowlisted Web UI paths to console API 127.0.0.1:18794. The native
+launcher binds this gateway to 127.0.0.1:18795. This module does not launch,
+require or connect to Vast, SSH or Cloudflare tunnels. Optional historical
+Cloudflare-origin compatibility is not a runtime dependency. Ollama and
+both MCP gateways are never proxied through this HTTP bridge.
 """
 from __future__ import annotations
 
@@ -27,14 +29,16 @@ ALLOWED_STATIC = frozenset({"/", "/static/styles.css", "/static/app.js", "/stati
 ALLOWED_GET = frozenset({"/api/status", "/api/comm/tasks", "/api/comm/events",
     "/api/comm/review-packet", "/api/comm/evidence", "/api/siwc/status",
     "/api/siwc/models", "/api/siwc/chats", "/api/siwc/chat", "/api/research/scope", "/api/profile-settings", "/api/model-config",
-    "/api/collab/runs", "/api/collab/run", "/api/collab/activity", "/auth/callback"})
+    "/api/collab/runs", "/api/collab/run", "/api/collab/activity", "/api/collab/items", "/auth/callback"})
 ALLOWED_POST = frozenset({
     "/api/chat", "/api/import", "/api/approve", "/api/followups",
     "/api/reset", "/api/research/scope", "/api/comm/resume", "/api/comm/reviewer-feedback",
     "/api/siwc/start", "/api/siwc/disconnect", "/api/siwc/review", "/api/siwc/chat",
     "/api/profile-settings", "/api/model-config", "/api/collab/start", "/api/collab/step",
     "/api/collab/stop", "/api/collab/resume", "/api/collab/finish",
-    "/api/collab/message", "/api/tools/run",
+    "/api/collab/message", "/api/collab/items/plan",
+    "/api/collab/items/step", "/api/collab/items/retry",
+    "/api/collab/items/recover", "/api/tools/run",
 })
 HOP_HEADERS = frozenset({
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",

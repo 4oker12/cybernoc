@@ -631,3 +631,47 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
 @media(max-width:680px){
   .collab-activity{margin-left:0;max-width:100%}
 }
+
+/* Bounded work-item planner: compact, transparent status and optional details. */
+.collab-work-panel{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.collab-work-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.collab-work-actions button{margin:0}
+.collab-work-actions .muted{font-size:12px;flex:1;min-width:160px}
+.collab-work-items{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr));gap:10px}
+.collab-work-card{border:1px solid var(--line);border-radius:9px;padding:12px;min-width:0}
+.collab-work-heading{display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px;font-size:13px}
+.collab-work-heading strong{font-weight:650;line-height:1.5;max-width:100%;overflow-wrap:anywhere}
+.collab-work-state{font-size:11px;color:var(--muted);font-weight:600}
+.collab-work-meta{font-size:11px;line-height:1.5;color:var(--muted);margin:7px 0}
+.collab-work-details{font-size:12px;margin:7px 0;overflow-wrap:anywhere}
+.collab-work-details summary{color:var(--muted);font-weight:600;cursor:pointer;line-height:1.4}
+.collab-work-details p{white-space:pre-wrap;line-height:1.6;padding:7px;margin:5px 0;border-radius:6px;background:var(--bg)}
+.collab-work-card button{margin-top:8px}
+@media(max-width:680px){.collab-work-panel{padding:9px}.collab-work-items{grid-template-columns:1fr}}
+
+/* Shared workspace refinements: predictable hiding, type hierarchy and touch sizes. */
+#collabCyclesLabel[hidden],#collabWorkPanel[hidden],#collabRecover[hidden]{display:none!important}
+#collabStrategy{margin-top:4px;font-weight:550;max-width:100%}
+.collab-work-panel{border-color:var(--line);border-radius:12px;padding:14px}
+.collab-work-actions{align-items:center;row-gap:6px}
+.collab-work-actions .refresh-button{min-height:36px;font-size:12px;font-weight:600}
+.collab-work-actions .muted{min-width:100%;line-height:1.45}
+.collab-work-card{background:var(--panel);box-shadow:0 1px 4px #00000008}
+.collab-work-heading{align-items:center;gap:5px}
+.collab-work-heading strong{font-size:13px;letter-spacing:-.01em}
+.collab-work-state{display:inline-flex;align-items:center;border:1px solid var(--line);
+  border-radius:99px;padding:3px 8px;background:var(--bg);font-size:10px;line-height:1.4}
+.collab-work-details summary{max-width:100%;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;font-size:11px}
+.collab-work-details[open] summary{white-space:normal}
+.collab-work-details p{max-height:230px;overflow-y:auto;line-height:1.55}
+.collab-work-card .refresh-button{margin:7px 0 0;min-height:34px}
+.collab-activity-summary{color:var(--text);font-weight:600}
+:root[data-theme="light"] .collab-work-state{background:#f4f7fa;color:#556474}
+@media(max-width:680px){
+  .collab-work-panel{margin:9px 0;padding:10px}
+  .collab-work-card{padding:10px}
+  .collab-work-actions{display:grid;grid-template-columns:1fr}
+  .collab-work-actions .refresh-button{width:100%;min-height:40px}
+  .collab-work-state{font-size:10px}
+}

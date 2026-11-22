@@ -12,7 +12,10 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,turns:0,
     gpt:{input:0,output:0,total:0,measuredTurns:0}
   },
   lastUsage:{qwen:null,gpt:null},
-  collabRun:null,collabLoopTasks:new Set(),collabStopRequests:new Set(),collabActivity:new Map()};
+  collabRun:null,collabLoopTasks:new Set(),collabStopRequests:new Set(),collabActivity:new Map(),
+  collabWorkByTask:new Map(),collabWorkLoops:new Set(),
+  collabWorkRenderedTask:null,collabWorkRenderedSignature:null,
+  collabWorkExpanded:new Set(),collabActivityExpanded:new Set()};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка интерфейса",
@@ -354,21 +357,23 @@ async function pasteTerminalOutput(){
 
 function busy(on){
   state.running=on;
-  $("sendButton").disabled=on;
-  // The user may prepare the next prompt and inspect other panels while a
-  // model request is in flight. send() still blocks concurrent turns.
-  $("messageInput").disabled=false;
-  $("newSession").disabled=on;
-  $("artifactFile").disabled=on;
+  const collab=state.mode==="collab";
+  const collabWritable=!!state.collabRun&&["active","paused"].includes(state.collabRun.state);
+  $("sendButton").disabled=collab?!collabWritable:on;
+  // Ordinary model activity cannot lock the independent collaboration composer.
+  $("messageInput").disabled=collab?!collabWritable:false;
+  $("newSession").disabled=on&&!collab;
+  $("artifactFile").disabled=on||state.mode!=="qwen";
   $("toolPickerToggle").disabled=on;
   $("toolPickerGroups").querySelectorAll("input").forEach(input=>{
     input.disabled=on||input.dataset.available==="false";
   });
-  $("sendStatus").textContent=on?
-    "Модель работает · можно готовить следующий вопрос":"Готов";
+  $("sendStatus").textContent=collab?
+    "Сообщение будет добавлено в общий журнал":
+    on?"Модель работает · можно готовить следующий вопрос":"Готов";
   $("modeQwen").disabled=false;
   $("modeChatGPT").disabled=false;
-  $("modeCollab").disabled=on;
+  $("modeCollab").disabled=false;
   $("gptTopModel").disabled=!state.gptConnected||!state.gptPlanUsage||!$("gptTopModel").options.length;
 }
 function resetUsage(mode){
@@ -575,12 +580,13 @@ function gptWelcome(){
   $("gptMessages").replaceChildren(window.cybernovaGptWelcome.cloneNode(true));
 }
 function setMode(mode){
-  if((state.running && mode==="collab") || !["qwen","gpt","collab"].includes(mode))return;
+  if(!["qwen","gpt","collab"].includes(mode))return;
   state.mode=mode;
   const qwen=mode==="qwen", gpt=mode==="gpt", collab=mode==="collab";
   const collabWritable=!!state.collabRun&&["active","paused"].includes(state.collabRun.state);
   $("messageInput").disabled=collab?!collabWritable:false;
   $("sendButton").disabled=collab?!collabWritable:state.running;
+  $("newSession").disabled=state.running&&!collab;
   for(const [id,isActive] of [
     ["modeQwen",qwen],["modeChatGPT",gpt],["modeCollab",collab]
   ]){
@@ -1164,7 +1170,7 @@ async function status(){
   }
 }
 async function reset(){
-  if(state.running)return;
+  if(state.running && state.mode!=="collab")return;
   if(state.mode==="collab"){
     await newCollab();
     return;
@@ -1405,7 +1411,9 @@ function renderCollabEntry(message){
 
 function renderCollabActivity(taskId, activity){
   const log=$("collabLog");
-  log.querySelector(".collab-activity")?.remove();
+  const oldActivity=log.querySelector(".collab-activity");
+  if(oldActivity?.open)state.collabActivityExpanded.add(taskId);
+  oldActivity?.remove();
   if(!activity)return;
   const receipts=activity.tool_receipts||[], progress=activity.progress||[];
   if(!receipts.length&&!progress.length)return;
@@ -1415,7 +1423,7 @@ function renderCollabActivity(taskId, activity){
   const list=node("div","collab-activity-list");
   for(const item of progress){
     list.append(node("p","collab-activity-item",
-      "DeepSeek · "+String(item.body||"").slice(0,600)));
+      (item.actor==="controller"?"Контроллер":"DeepSeek")+" · "+String(item.body||"").slice(0,600)));
   }
   for(const item of receipts){
     const status=item.is_error?"ошибка / не выполнено":
@@ -1426,6 +1434,11 @@ function renderCollabActivity(taskId, activity){
     list.append(row);
   }
   details.append(summary,list);
+  details.open=state.collabActivityExpanded.has(taskId);
+  details.addEventListener("toggle",()=>{
+    if(details.open)state.collabActivityExpanded.add(taskId);
+    else state.collabActivityExpanded.delete(taskId);
+  });
   log.append(details);
 }
 async function refreshCollabActivity(taskId){
@@ -1437,6 +1450,167 @@ async function refreshCollabActivity(taskId){
     state.collabActivity.set(taskId,activity);
     if(state.collabRun?.task_id===taskId)renderCollabActivity(taskId,activity);
   }catch(_){}
+}
+function renderWorkItems(taskId, items=[]){
+  const panel=$("collabWorkItems");
+  panel.replaceChildren();
+  const labels={
+    queued:"Ожидает зависимостей",running:"DeepSeek выполняет",
+    needs_review:"Ожидает ChatGPT",reviewing:"ChatGPT проверяет",
+    rework:"Возвращена на доработку",accepted:"Принята",
+    blocked:"Остановлена · требуется решение",cancelled:"Отменена"
+  };
+  for(const item of items){
+    const card=node("div","collab-work-card");
+    const heading=node("div","collab-work-heading");
+    heading.append(node("strong","",String(item.position+1)+". "+item.title),
+      node("span","collab-work-state",labels[item.state]||item.state));
+    card.append(heading);
+    const depends=item.depends_on||[];
+    if(depends.length){
+      const indexById=new Map(items.map(i=>[i.item_id,i.position+1]));
+      card.append(node("p","collab-work-meta",
+        "Зависит от: "+depends.map(id=>"#"+(indexById.get(id)||"?")).join(", ")));
+    }
+    if(item.attempt)card.append(node("p","collab-work-meta","Запусков: "+item.attempt+"/3"));
+    for(const [phase,label] of [["research","DeepSeek"],["review","ChatGPT"]]){
+      const usage=item.usage?.[phase];
+      if(Number.isInteger(usage?.total_tokens))
+        card.append(node("p","collab-work-meta",label+" · токены: "+
+          usage.total_tokens+" (вход "+(usage.input_tokens??"?")+
+          ", выход "+(usage.output_tokens??"?")+")"));
+    }
+    for(const [name,value] of [["Требования",item.instructions],
+                               ["Результат DeepSeek",item.result],
+                               ["Ревью ChatGPT",item.review]]){
+      if(!value)continue;
+      const details=node("details","collab-work-details");
+      const detailKey=taskId+":"+item.item_id+":"+name;
+      details.append(node("summary","",name+" · "+compactPreview(value,100)),
+        node("p","",String(value)));
+      details.open=state.collabWorkExpanded.has(detailKey);
+      details.addEventListener("toggle",()=>{
+        if(details.open)state.collabWorkExpanded.add(detailKey);
+        else state.collabWorkExpanded.delete(detailKey);
+      });
+      card.append(details);
+    }
+    if(item.state==="blocked"&&item.attempt<3){
+      const button=node("button","refresh-button","Повторить вручную");
+      button.addEventListener("click",async()=>{
+        button.disabled=true;
+        try{
+          await requestJson("/api/collab/items/retry",{task_id:taskId,item_id:item.item_id});
+          await refreshCollabWork(taskId);
+        }catch(err){
+          $("collabWorkStatus").textContent="Повтор заблокирован: "+String(err.message||err);
+        }finally{button.disabled=false;}
+      });
+      card.append(button);
+    }
+    panel.append(card);
+  }
+}
+function displayCollabWork(run){
+  const parallel=run.mode==="parallel";
+  $("collabWorkPanel").hidden=!parallel;
+  if(!parallel)return;
+  const data=state.collabWorkByTask.get(run.task_id);
+  const items=data?.items||[];
+  const running=state.collabWorkLoops.has(run.task_id);
+  const active=run.state==="active";
+  $("collabPlan").hidden=items.length>0||!active;
+  $("collabPlan").disabled=running;
+  $("collabWorkRun").disabled=!active||!items.length||running||
+    !items.some(item=>item.ready||item.state==="needs_review");
+  $("collabWorkStatus").textContent=items.length?
+    "Принято "+items.filter(i=>i.state==="accepted").length+"/"+items.length+
+    " · Исполняется "+items.filter(i=>["running","reviewing"].includes(i.state)).length+
+    (running?" · Оркестратор активен":""):
+    "Нет плана. ChatGPT составит 2–6 подзадач, запуск — отдельной кнопкой.";
+  const signature=items.map(item=>[item.item_id,item.state,item.attempt,
+    item.result,item.review,item.last_error,JSON.stringify(item.usage)].join(":")).join("|");
+  if(state.collabWorkRenderedTask!==run.task_id||
+     state.collabWorkRenderedSignature!==signature){
+    renderWorkItems(run.task_id,items);
+    state.collabWorkRenderedTask=run.task_id;
+    state.collabWorkRenderedSignature=signature;
+  }
+}
+async function refreshCollabWork(taskId){
+  try{
+    const response=await fetch("/api/collab/items?task_id="+encodeURIComponent(taskId),
+      {cache:"no-store"});
+    if(!response.ok)return null;
+    const data=await response.json();
+    state.collabWorkByTask.set(taskId,data);
+    if(state.collabRun?.task_id===taskId)displayCollabWork(state.collabRun);
+    return data;
+  }catch(_){return null;}
+}
+async function planCollabWork(){
+  const taskId=state.collabRun?.task_id;
+  if(!taskId||state.collabRun.mode!=="parallel")return;
+  $("collabPlan").disabled=true;
+  $("collabWorkStatus").textContent="ChatGPT формирует план без запуска инструментов…";
+  try{
+    const data=await requestJson("/api/collab/items/plan",{task_id:taskId});
+    state.collabWorkByTask.set(taskId,data);
+    if(state.collabRun?.task_id===taskId){
+      displayCollabWork(state.collabRun);
+      $("collabWorkStatus").textContent="План сохранён. Можно запускать до двух исполнителей.";
+    }
+  }catch(err){
+    $("collabWorkStatus").textContent="План не создан: "+String(err.message||err);
+  }finally{$("collabPlan").disabled=false;}
+}
+async function runCollabWork(taskId=state.collabRun?.task_id){
+  if(!taskId||state.collabWorkLoops.has(taskId))return;
+  state.collabWorkLoops.add(taskId);
+  // Poll only while the user-triggered bounded batch is running.
+  const activityTimer=setInterval(()=>{
+    void refreshCollabWork(taskId);
+    void refreshCollabActivity(taskId);
+  },1200);
+  try{
+    for(let wave=0;wave<48;wave++){
+      const data=await refreshCollabWork(taskId);
+      if(!data||data.state!=="active")break;
+      const candidates=data.items.filter(item=>item.ready||item.state==="needs_review");
+      if(!candidates.length)break;
+      // User-approved bounded scheduling: at most two concurrent model calls.
+      const batch=candidates.slice(0,Math.max(1,Math.min(data.concurrency||2,2)));
+      await Promise.all(batch.map(async item=>{
+        try{
+          await requestJson("/api/collab/items/step",
+            {task_id:taskId,item_id:item.item_id});
+        }catch(err){
+          if(state.collabRun?.task_id===taskId){
+            $("collabWorkStatus").textContent=
+              "Подзадача "+(item.position+1)+": "+String(err.message||err);
+          }
+        }
+      }));
+      await refreshCollabWork(taskId);
+      if(state.collabRun?.task_id===taskId){
+        const response=await fetch("/api/collab/run?task_id="+encodeURIComponent(taskId),
+          {cache:"no-store"});
+        if(response.ok)renderCollabRun(await response.json());
+      }
+      void refreshCollabActivity(taskId);
+    }
+  }finally{
+    clearInterval(activityTimer);
+    state.collabWorkLoops.delete(taskId);
+    const updated=await refreshCollabWork(taskId);
+    if(state.collabRun?.task_id===taskId&&updated){
+      const items=updated.items||[];
+      if(items.length&&items.every(item=>item.state==="accepted"))
+        $("collabWorkStatus").textContent=
+          "Все результаты приняты ChatGPT. Диалог можно завершить вручную.";
+    }
+    void refreshCollabRuns();
+  }
 }
 function renderCollabRun(run){
   if(!run)return;
@@ -1450,20 +1624,27 @@ function renderCollabRun(run){
   $("collabStop").hidden=!active;
   $("collabResume").hidden=!paused||state.collabLoopTasks.has(run.task_id);
   $("collabFinish").hidden=!(active||paused);
-  $("collabResume").textContent="Продолжить ещё "+run.max_cycles+" обменов";
+  $("collabRecover").hidden=!(run.mode==="parallel"&&run.state==="blocked");
+  $("collabResume").textContent=run.mode==="parallel"?"Продолжить подзадачи":
+    "Продолжить ещё "+run.max_cycles+" обменов";
   const pairs=Math.floor(run.step/2);
-  $("collabStatus").textContent=run.state==="completed"?
-    "Диалог завершён · "+pairs+" обменов":
+  $("collabStatus").textContent=run.mode==="parallel"?
+    (run.state==="completed"?"Параллельная задача завершена":
+      paused?"Параллельная задача на паузе":
+      run.state==="blocked"?"Остановлено: требуется вмешательство":
+      "Оркестратор · подзадачи и ревью в общей истории"):
+    run.state==="completed"?"Диалог завершён · "+pairs+" обменов":
     paused?"Пауза · "+pairs+" обменов завершено, можно продолжить или закрыть":
     run.state==="blocked"?"Остановлено: требуется вмешательство":
     "В работе · "+run.step+"/"+run.pause_at+
     " сообщений в текущем пакете · следующий: "+
     (run.next_actor==="chatgpt"?"ChatGPT":"DeepSeek");
+  displayCollabWork(run);
   const log=$("collabLog");
   log.replaceChildren();
   for(const m of run.messages||[]){
     if(m.actor==="human"&&m.kind==="instruction"||
-       m.actor==="chatgpt"&&m.kind==="feedback"||
+       m.actor==="chatgpt"&&["feedback","instruction"].includes(m.kind)||
        m.actor==="qwen"&&m.kind==="result"){
       renderCollabEntry(m);
     }else if(m.actor==="controller"&&m.kind==="system"){
@@ -1486,9 +1667,11 @@ async function refreshCollabRuns(){
       button.append(node("span","task-title",compactPreview(run.goal||"Совместная задача",58)));
       const stateLabel=run.state==="active"?"В работе":run.state==="paused"?"Пауза":
         run.state==="blocked"?"Требует внимания":run.state==="completed"?"Завершено":run.state;
-      button.append(node("span","task-preview",stateLabel+" · "+run.step+" сообщений"));
+      button.append(node("span","task-preview",run.mode==="parallel"?
+        stateLabel+" · параллельные подзадачи":stateLabel+" · "+run.step+" сообщений"));
       if(run.last_preview)button.append(node("span","task-preview",compactPreview(run.last_preview,90)));
-      button.title=(run.goal||"Совместная задача")+" · "+stateLabel+" · "+run.step+" сообщений";
+      button.title=(run.goal||"Совместная задача")+" · "+stateLabel+
+        (run.mode==="parallel"?" · параллельные подзадачи":" · "+run.step+" сообщений");
       button.addEventListener("click",()=>openCollabRun(run.task_id));
       list.append(button);
     }
@@ -1503,7 +1686,8 @@ async function openCollabRun(taskId){
     setMode("collab");
     renderCollabRun(data);
     $("sidebar").classList.remove("open");
-    if(data.state==="active")void continueCollab(taskId);
+    if(data.mode==="parallel")void refreshCollabWork(taskId);
+    else if(data.state==="active")void continueCollab(taskId);
   }catch(err){
     $("collabStatus").textContent="Ошибка: "+String(err.message||err);
   }
@@ -1520,12 +1704,13 @@ async function startCollab(){
   $("collabStart").disabled=true;
   try{
     const run=await requestJson("/api/collab/start",{
-      goal,model,cycles:Number($("collabCycles").value),session_id:state.sessionId
+      goal,model,cycles:Number($("collabCycles").value),session_id:state.sessionId,
+      mode:$("collabStrategy").value
     });
     renderCollabRun(run);
     void refreshCollabRuns();
-    // The run continues independently; the UI remains available for another task.
-    void continueCollab(run.task_id);
+    if(run.mode==="parallel")void refreshCollabWork(run.task_id);
+    else void continueCollab(run.task_id);
   }catch(err){
     $("collabActiveBar").hidden=false;
     $("collabStop").hidden=true;
@@ -1583,6 +1768,7 @@ async function stopCollab(){
   try{
     const run=await requestJson("/api/collab/stop",{task_id:taskId});
     if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+    if(run.mode==="parallel")void refreshCollabWork(taskId);
     void refreshCollabRuns();
   }catch(err){
     $("collabStatus").textContent="Ошибка паузы: "+String(err.message||err);
@@ -1595,6 +1781,7 @@ async function finishCollab(){
   try{
     const run=await requestJson("/api/collab/finish",{task_id:taskId});
     if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+    if(run.mode==="parallel")void refreshCollabWork(taskId);
     void refreshCollabRuns();
   }catch(err){
     $("collabStatus").textContent="Ошибка завершения: "+String(err.message||err);
@@ -1606,6 +1793,11 @@ async function newCollab(){
   $("collabForm").hidden=false;
   $("collabActiveBar").hidden=true;
   $("collabLog").replaceChildren();
+  $("collabWorkPanel").hidden=true;
+  $("collabWorkItems").replaceChildren();
+  $("collabCyclesLabel").hidden=$("collabStrategy").value!=="dialog";
+  state.collabWorkRenderedTask=null;
+  state.collabWorkRenderedSignature=null;
   $("collabGoal").value="";
   $("messageInput").disabled=true;
   $("sendButton").disabled=true;
@@ -1650,10 +1842,35 @@ function init(){
   setUtilityPlaceholder();
   try{setSidebarCollapsed(window.localStorage.getItem("cybernova_sidebar_collapsed")==="1");}
   catch(_){setSidebarCollapsed(false);}
+  $("collabStrategy").addEventListener("change",()=>{
+    $("collabCyclesLabel").hidden=$("collabStrategy").value!=="dialog";
+  });
+  $("collabCyclesLabel").hidden=$("collabStrategy").value!=="dialog";
   $("collabStart").addEventListener("click",startCollab);
   $("collabStop").addEventListener("click",stopCollab);
   $("collabFinish").addEventListener("click",finishCollab);
-  $("collabResume").addEventListener("click",()=>continueCollab());
+  $("collabResume").addEventListener("click",async()=>{
+    const taskId=state.collabRun?.task_id;
+    if(!taskId)return;
+    if(state.collabRun.mode==="parallel"){
+      try{
+        const run=await requestJson("/api/collab/resume",{task_id:taskId});
+        if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+        void runCollabWork(taskId);
+      }catch(err){$("collabStatus").textContent="Ошибка продолжения: "+String(err.message||err);}
+    }else void continueCollab(taskId);
+  });
+  $("collabRecover").addEventListener("click",async()=>{
+    const taskId=state.collabRun?.task_id;
+    if(!taskId)return;
+    try{
+      const run=await requestJson("/api/collab/items/recover",{task_id:taskId});
+      if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+      void refreshCollabWork(taskId);
+    }catch(err){$("collabStatus").textContent="Восстановление: "+String(err.message||err);}
+  });
+  $("collabPlan").addEventListener("click",planCollabWork);
+  $("collabWorkRun").addEventListener("click",()=>runCollabWork());
   $("collabNew").addEventListener("click",newCollab);
   $("navProfile").addEventListener("click",openProfileSettings);
   $("profileClose").addEventListener("click",()=>$("profileDialog").close());
