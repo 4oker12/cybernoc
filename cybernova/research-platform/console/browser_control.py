@@ -364,6 +364,9 @@ class BrowserSession:
                 self._context = None
                 self._browser = None
                 self._page = None
+        restore_session = os.environ.get(
+            "CYBERNOVA_GPT_BROWSER_RESTORE_SESSION", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
         if self._context is None:
             launch_args = [
                 "--disable-background-networking", "--disable-sync",
@@ -373,9 +376,6 @@ class BrowserSession:
             ephemeral = os.environ.get("CYBERNOVA_GPT_BROWSER_EPHEMERAL", "").strip().lower() in {
                 "1", "true", "yes", "on",
             }
-            restore_session = os.environ.get(
-                "CYBERNOVA_GPT_BROWSER_RESTORE_SESSION", "0"
-            ).strip().lower() in {"1", "true", "yes", "on"}
             if ephemeral:
                 self._browser = self._pw.chromium.launch(
                     headless=self._headless, args=launch_args,
@@ -421,7 +421,7 @@ class BrowserSession:
                 ),
             )
         pages = list(self._context.pages)
-        if not locals().get("restore_session", False):
+        if not restore_session:
             # A dedicated persistent profile keeps authentication state, but
             # restored tabs are not trusted as the next task's working page.
             for stale_page in pages:
