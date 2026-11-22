@@ -1416,7 +1416,7 @@ function renderCollabActivity(taskId, activity){
   const list=node("div","collab-activity-list");
   for(const item of progress){
     list.append(node("p","collab-activity-item",
-      "DeepSeek · "+String(item.body||"").slice(0,600)));
+      (item.actor==="controller"?"Контроллер":"DeepSeek")+" · "+String(item.body||"").slice(0,600)));
   }
   for(const item of receipts){
     const status=item.is_error?"ошибка / не выполнено":
