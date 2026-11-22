@@ -578,6 +578,9 @@ function setMode(mode){
   if((state.running && mode==="collab") || !["qwen","gpt","collab"].includes(mode))return;
   state.mode=mode;
   const qwen=mode==="qwen", gpt=mode==="gpt", collab=mode==="collab";
+  const collabWritable=!!state.collabRun&&["active","paused"].includes(state.collabRun.state);
+  $("messageInput").disabled=collab?!collabWritable:false;
+  $("sendButton").disabled=collab?!collabWritable:state.running;
   for(const [id,isActive] of [
     ["modeQwen",qwen],["modeChatGPT",gpt],["modeCollab",collab]
   ]){
@@ -1563,8 +1566,6 @@ async function newCollab(){
   $("collabActiveBar").hidden=true;
   $("collabLog").replaceChildren();
   $("collabGoal").value="";
-  $("messageInput").disabled=true;
-  $("sendButton").disabled=true;
   void refreshCollabRuns();
 }
 function init(){
