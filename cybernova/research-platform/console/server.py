@@ -506,6 +506,7 @@ def collaboration_step(payload: CollaborationActionRequest):
                         {"role": "user", "content": run["goal"]}
                     ]),
                     on_tool_event=persist_tool_event,
+                    session_id=payload.task_id,
                 )
                 tool_count = int(outcome.get("tool_calls", 0))
                 if not persisted_tool_events:
@@ -533,6 +534,7 @@ def collaboration_step(payload: CollaborationActionRequest):
                         mode_instructions_for(profile, "researcher")
                     ),
                     on_tool_event=persist_tool_event,
+                    session_id=payload.task_id,
                 )
                 tool_count = outcome.get("tool_calls", 0)
                 if not persisted_tool_events:
@@ -644,25 +646,24 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
         user_message_seq = None
         persisted_tool_events = []
 
-        def persist_tool_event(event):
-            nonlocal thread_id, user_message_seq
-            if user_message_seq is None:
-                thread_id, user_message_seq = store.begin_exchange(
-                    payload.thread_id, payload.model, payload.message
-                )
-            store.save_tool_events(
-                thread_id, [event], message_seq=user_message_seq,
-            )
-            persisted_tool_events.append(event)
-
         try:
             history = store.context(payload.thread_id) if payload.thread_id else []
-            outgoing = history + [{"role": "user", "content": payload.message.strip()}]
             profile = profile_settings_store().load()
             try:
                 selected_tool_groups = normalize_tool_groups(payload.tool_groups)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from None
+            thread_id, user_message_seq = store.begin_exchange(
+                payload.thread_id, payload.model, payload.message
+            )
+
+            def persist_tool_event(event):
+                store.save_tool_events(
+                    thread_id, [event], message_seq=user_message_seq,
+                )
+                persisted_tool_events.append(event)
+
+            outgoing = history + [{"role": "user", "content": payload.message.strip()}]
             outcome = chatgpt_chat(
                 payload.model, outgoing,
                 user_context=user_context_for(profile, "chatgpt"),
@@ -672,17 +673,17 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 on_tool_event=persist_tool_event,
                 enabled_tool_groups=selected_tool_groups,
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
+                session_id=thread_id,
             )
             run_status = "completed"
-            if user_message_seq is None:
-                thread_id = store.save_exchange(
-                    payload.thread_id, payload.model, payload.message, outcome["answer"]
+            if not persisted_tool_events:
+                # Compatibility for mocked/legacy adapters that return events
+                # but do not invoke the incremental receipt callback.
+                store.save_tool_events(
+                    thread_id, outcome.get("tool_events", []),
+                    message_seq=user_message_seq,
                 )
-                # Compatibility for mocked/legacy inference adapters that return
-                # events but do not invoke the incremental receipt callback.
-                store.save_tool_events(thread_id, outcome.get("tool_events", []))
-            else:
-                store.finish_exchange(thread_id, outcome["answer"])
+            store.finish_exchange(thread_id, outcome["answer"])
         except GPTChatError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         except ProfileSettingsError as exc:
@@ -986,6 +987,7 @@ def chat(payload: ChatRequest):
                 profile_instructions=mode_instructions_for(profile, "researcher"),
                 tool_groups=selected_tool_groups,
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
+                session_id=task_id,
             )
             run_status = "completed"
         except Exception as exc:
