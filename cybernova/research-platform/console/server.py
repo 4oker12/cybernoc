@@ -183,6 +183,23 @@ def _collaboration_step_lock(task_id: str) -> RLock:
         return _collaboration_step_locks.setdefault(task_id, RLock())
 
 
+def _record_collaboration_tool_event(task_id: str, event: dict) -> None:
+    if not isinstance(event, dict):
+        return
+    event_type = event.get("type")
+    if event_type not in {"tool_result", "tool_error", "approval_required",
+                          "scope_change_required"}:
+        event_type = "tool_result" if event.get("ok") else "tool_error"
+    EvidenceJournal(communication_store()).record_tool_events(task_id, [{
+        "type": event_type,
+        "name": event.get("name") or event.get("tool_name") or "",
+        "is_error": bool(event.get("is_error", event_type == "tool_error" or
+                                   event.get("ok") is False)),
+        "arguments": event.get("arguments") or {},
+        "result": event.get("result") or {},
+    }])
+
+
 @asynccontextmanager
 async def lifespan(app):
     worker = None
@@ -384,6 +401,20 @@ def collaboration_run(task_id: str, after: int = 0):
         raise HTTPException(status_code=404, detail="collaboration_not_found") from None
 
 
+@app.get("/api/collab/activity")
+def collaboration_activity(task_id: str):
+    try:
+        run = collaboration_store().read(task_id)
+        receipts = EvidenceJournal(communication_store()).list_tool_receipts(task_id, limit=100)
+        progress = [{
+            "seq": item["seq"], "body": item["body"], "created_at": item["created_at"]
+        } for item in run["messages"]
+            if item["actor"] == "qwen" and item["kind"] == "progress"]
+        return {"task_id": task_id, "tool_receipts": receipts, "progress": progress}
+    except (CollaborationError, CommunicationError, ValueError):
+        raise HTTPException(status_code=404, detail="collaboration_not_found") from None
+
+
 @app.post("/api/collab/message")
 def collaboration_message(payload: CollaborationMessageRequest):
     """Accept a user intervention without interrupting the current model call."""
@@ -456,6 +487,12 @@ def collaboration_step(payload: CollaborationActionRequest):
             profile = profile_settings_store().load()
             tool_count = 0
             blocked = False
+            persisted_tool_events = []
+
+            def persist_tool_event(event):
+                _record_collaboration_tool_event(payload.task_id, event)
+                persisted_tool_events.append(event)
+
             if role == "chatgpt":
                 history = mentor_messages(run)
                 outcome = chatgpt_chat(
@@ -467,17 +504,12 @@ def collaboration_step(payload: CollaborationActionRequest):
                     authorized_targets=extract_user_targets([
                         {"role": "user", "content": run["goal"]}
                     ]),
+                    on_tool_event=persist_tool_event,
                 )
                 tool_count = int(outcome.get("tool_calls", 0))
-                EvidenceJournal(communication_store()).record_tool_events(
-                    payload.task_id, [{
-                        "type": "tool_result" if event.get("ok") else "tool_error",
-                        "name": event.get("name", ""),
-                        "is_error": not bool(event.get("ok")),
-                        "arguments": event.get("arguments") or {},
-                        "result": event.get("result") or {},
-                    } for event in outcome.get("tool_events", [])],
-                )
+                if not persisted_tool_events:
+                    for event in outcome.get("tool_events", []):
+                        persist_tool_event(event)
             else:
                 history, prompt = researcher_messages(run)
                 scope = ResearchScopeStore(communication_store().path).load(payload.task_id)
@@ -499,11 +531,12 @@ def collaboration_step(payload: CollaborationActionRequest):
                         "реальные доказательства. Не выдумывай результаты.\n\n" +
                         mode_instructions_for(profile, "researcher")
                     ),
+                    on_tool_event=persist_tool_event,
                 )
                 tool_count = outcome.get("tool_calls", 0)
-                EvidenceJournal(communication_store()).record_tool_events(
-                    payload.task_id, outcome.get("events") or [],
-                )
+                if not persisted_tool_events:
+                    for event in outcome.get("events") or []:
+                        persist_tool_event(event)
                 blocked = bool(outcome.get("approval_requests"))
             answer = str(outcome.get("answer", "")).strip()
             if blocked:
