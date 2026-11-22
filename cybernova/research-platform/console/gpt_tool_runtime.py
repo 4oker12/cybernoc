@@ -41,7 +41,7 @@ _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 _DOMAIN = re.compile(r"(?i)(?<![a-z0-9.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?![a-z0-9.-])")
 _SECRET = re.compile(
     r"(?i)(Bearer\s+[A-Za-z0-9._~-]{8,}|"
-    r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|"
+    r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|"
     r"authorization|cookie)\s*[:=]\s*[^\s,;]+)"
 )
 _EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
