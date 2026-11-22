@@ -165,3 +165,15 @@ this file alone activates the instructions in all agents.
 - Do not state that ChatGPT Project settings, local profile settings or the
   installed Windows runtime were changed merely because repository files were
   committed. Report each layer separately.
+
+## 9. Parallel agent work and branch isolation
+
+- Use parallel agents only for workstreams that can be separated by files, APIs and acceptance criteria. One task, one dedicated branch, one issue.
+- Create every task branch from the verified current `main`. If `main` advances before implementation starts, fast-forward an empty task branch before work. If the branch already contains commits and histories diverge, stop and review; never force-update it.
+- Put the objective, confirmed current behavior, allowed files, excluded files, safety constraints and testable acceptance criteria in the issue.
+- Give each agent explicit file ownership. Do not let agents edit the same files concurrently. If a shared file is unavoidable, coordinate the change order and contract first.
+- Agents work only on their task branch. No direct commits to `main`, no blind merges, no `reset --hard`, no `git clean -fd`, and no force push.
+- Every agent must inspect the current implementation and tests before editing, run focused tests, inspect its diff, and open a PR with exact commit SHA, test counts/logs, risks and rollback notes.
+- The coordinator independently reviews architecture, security boundaries, cross-branch conflicts and CI before merging. A green CI run does not prove local Windows or Chrome end-to-end behavior.
+- Distinguish a prepared issue/branch from an agent actually executing. Never claim delegation has started unless a real agent session, commit or tool execution is observable.
+- Merge independent PRs into `main` in a controlled order. After each merge, recheck `main` and fast-forward other still-empty task branches before their agents begin.
