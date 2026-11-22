@@ -61,6 +61,26 @@ function setFormatted(body,content){
     body.replaceChildren(window.CybernovaMarkdown.render(String(content)));
   }else{body.textContent=String(content);}
 }
+function resizeComposer(){
+  const input=$("messageInput");
+  if(!input?.style)return;
+  input.style.height="30px";
+  const contentHeight=Number(input.scrollHeight)||30;
+  input.style.height=Math.min(140,Math.max(30,contentHeight))+"px";
+  input.style.overflowY=contentHeight>140?"auto":"hidden";
+}
+function showReviewStatus(message,review){
+  if(!review||!message?.wrap)return;
+  const meta=message.wrap.querySelector?.(".message-meta");
+  if(!meta)return;
+  const complete=review.status==="completed";
+  const badge=node("span","review-status "+(complete?"is-completed":"is-incomplete"),
+    complete?"Повторно сверено":"Самопроверка не завершена");
+  badge.title=complete?
+    "Второй проход модели по доступным данным, а не новый инструментальный тест":
+    "Второй проход отсутствует или завершён с ошибкой. Вывод не получил повторной сверки.";
+  meta.append(badge);
+}
 function renderMessage(role,content,pending=false,containerId="messages"){
   const author=role==="chatgpt"?"ChatGPT":role==="user"?"Вы":state.qwenModel||"Исследователь";
   const wrap=node("article","chat-msg "+
@@ -69,6 +89,7 @@ function renderMessage(role,content,pending=false,containerId="messages"){
   const meta=node("div","message-meta");
   meta.append(node("span","avatar "+(role==="user"?"user":""),role==="user"?"U":role==="chatgpt"?"G":"◈"),
               node("span","",author));
+  if(role==="assistant")meta.append(node("span","agent-rank","Grandmaster · NOC / Development"));
   const body=node("div","message-body");
   if(role==="user"){body.textContent=String(content);}
   else{setFormatted(body,content);}
@@ -586,6 +607,7 @@ async function send(){
   $("welcome")?.remove();
   renderMessage("user",text);
   $("messageInput").value="";
+  resizeComposer();
   const pending=renderMessage("assistant",(state.qwenModel||"Модель")+" формирует ответ…",true);
   const runId=newRunId();
   busy(true,"qwen");
@@ -601,6 +623,7 @@ async function send(){
     state.turns=result.turn||state.turns+1;
     pending.wrap.classList.remove("working");
     setFormatted(pending.body,result.answer||"Ответ модели пуст.");
+    showReviewStatus(pending,result.review);
     recordUsage(result.usage,"qwen",pending);
     showEvents(result.events,result.tool_calls,result.selected_by,pending);
     // Generate contextual next questions independently; do not delay the model reply.
@@ -732,6 +755,7 @@ async function sendGPT(){
   $("gptWelcome")?.remove();
   const userMessage=renderMessage("user",message,false,"gptMessages");
   $("messageInput").value="";
+  resizeComposer();
   const pending=renderMessage("chatgpt","ChatGPT формирует ответ…",true,"gptMessages");
   const runId=newRunId();
   busy(true,"gpt");
@@ -1641,6 +1665,8 @@ function init(){
   $("sendButton").addEventListener("click",send);
   $("pasteOutputButton").addEventListener("click",pasteTerminalOutput);
   $("artifactFile").addEventListener("change",event=>importArtifact(event.target.files?.[0]));
+  $("messageInput").addEventListener("input",resizeComposer);
+  resizeComposer();
   $("messageInput").addEventListener("keydown",e=>{
     if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}
   });

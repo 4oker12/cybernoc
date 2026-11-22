@@ -41,6 +41,19 @@ class WebUIBootTests(unittest.TestCase):
         self.assertEqual(parsed.ends,4)
         self.assertEqual(html.count("</script>"),4)
 
+    def test_chat_headings_and_compact_composer_contract(self):
+        html=(STATIC/"index.html").read_text(encoding="utf-8")
+        css=(STATIC/"styles.css").read_text(encoding="utf-8")
+        app=(STATIC/"app.js").read_text(encoding="utf-8")
+        self.assertIn('<textarea id="messageInput" rows="1"',html)
+        self.assertIn('min-height:30px;height:30px;max-height:140px',css)
+        self.assertIn('.md-content>h2',css)
+        self.assertIn('font-weight:850',css)
+        self.assertIn('font-size:20px',css)
+        self.assertIn('function resizeComposer()',app)
+        self.assertIn('showReviewStatus(pending,result.review)',app)
+        self.assertIn('Grandmaster · NOC / Development',app)
+
     @unittest.skipUnless(shutil.which("node"),"Node.js unavailable")
     def test_buttons_bind_and_qwen_chatgpt_switch_responds(self):
         html=(STATIC/"index.html").read_text(encoding="utf-8")

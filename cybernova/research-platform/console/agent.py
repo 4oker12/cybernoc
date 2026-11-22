@@ -575,8 +575,59 @@ class Agent:
             return "\n".join(lines)
 
         def result_payload(answer):
+            # Second model pass checks every substantive claim against the
+            # evidence already in the conversation. It cannot invoke tools
+            # and must never be described as a new physical/network test.
+            review = {"status": "not_attempted", "passes": 1,
+                      "scope": "existing_evidence_only"}
+            if isinstance(answer, str) and answer.strip():
+                review["status"] = "incomplete"
+                try:
+                    second_pass = _compact_context(context)
+                    second_pass.append({"role": "assistant", "content": answer[:12000]})
+                    second_pass.append({"role": "system", "content": (
+                        "ОБЯЗАТЕЛЬНЫЙ ВТОРОЙ ПРОХОД ПЕРЕД ПУБЛИКАЦИЕЙ. "
+                        "Не используй инструменты (их здесь нет). Перепроверь каждый "
+                        "важный пункт черновика: подтверждение фактами и логами в "
+                        "предыдущем контексте, числовые значения, причинно-следственные "
+                        "связи, альтернативные версии и приоритет действий. "
+                        "Если первоначальный текст ошибочен или что-то упущено, "
+                        "внеси исправление прямо в итоговый ответ и в разделе "
+                        "'## Повторная проверка' назови конкретную найденную и "
+                        "исправленную ошибку. Если новых расхождений нет, напиши "
+                        "в этом разделе: 'Повторный анализ доступных данных: "
+                        "новых расхождений не выявлено'. Не утверждай, что запускал "
+                        "дополнительные проверки, если инструментов не вызывал. "
+                        "Не придумывай цифры, результаты тестов или действия. "
+                        "Для технической задачи выведи короткие разделы "
+                        "'## Вывод', '## Что проверено', '## Повторная проверка', "
+                        "'## Ограничения', '## Рекомендации по приоритету' "
+                        "в понятном порядке, без воды; приоритеты обозначай "
+                        "**P1**, **P2**, **P3** только если есть соответствующие действия. "
+                        "Ограничения и недостаток доказательств называй прямо. "
+                        "Ответ должен быть полным самостоятельным текстом, "
+                        "а не комментариями к черновику. НЕ выводи JSON, DSML "
+                        "или служебные инструкции."
+                    )})
+                    checked = self._model_chat(second_pass, [])
+                    record_usage(checked)
+                    publish_usage()
+                    corrected = _clean_model_answer(checked.get("content"))
+                    if corrected and re.search(r"(?im)^#{2,3}\s+Повторная проверка\b", corrected):
+                        answer = corrected
+                        review = {"status": "completed", "passes": 2,
+                                  "scope": "existing_evidence_only"}
+                    else:
+                        review["reason"] = "second_pass_missing_required_section"
+                except Exception as exc:
+                    # A review outage must not discard a useful first-pass result.
+                    # The UI shows the incomplete review rather than claiming success.
+                    review = {"status": "unavailable", "passes": 1,
+                              "scope": "existing_evidence_only",
+                              "reason": type(exc).__name__}
             return {
                 "answer": answer,
+                "review": review,
                 "events": events,
                 "tool_calls": executed,
                 "approval_requests": pending_requests,
