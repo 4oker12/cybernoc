@@ -524,6 +524,7 @@ async function requestJson(path,data){
 }
 async function send(){
   if(state.mode==="gpt")return sendGPT();
+  if(state.mode==="collab")return sendCollabMessage();
   const text=$("messageInput").value.trim();
   if(!text||state.running)return;
   $("welcome")?.remove();
@@ -596,14 +597,19 @@ function setMode(mode){
   document.querySelector(".upload-button").hidden=!qwen;
   document.querySelector(".auto-tools-label").hidden=!qwen;
   const composerArea=document.querySelector(".composer-area");
-  if(composerArea)composerArea.hidden=collab;
+  if(composerArea)composerArea.hidden=false;
   $("artifactFile").disabled=!qwen;
-  $("messageInput").placeholder=qwen?"Сообщение исследовательской модели или задача…":"Сообщение ChatGPT…";
+  $("toolPickerToggle").hidden=!qwen;
+  $("qwenAutoTools").hidden=!qwen;
+  $("pasteOutputButton").hidden=gpt;
+  $("messageInput").placeholder=qwen?"Сообщение исследовательской модели или задача…":
+    collab?"Напиши ChatGPT и DeepSeek — сообщение попадёт в общий диалог…":"Сообщение ChatGPT…";
   $("uploadStatus").textContent=qwen?
     "Импорт файлов до "+Math.floor(state.uploadLimit/(1024*1024))+" МиБ · модель":
+    collab?"Общее сообщение увидят оба участника совместной задачи":
     "GPT-диалог хранится локально; его сообщения и результаты локальных инструментов отправляются выбранной модели ChatGPT";
-  $("sendStatus").textContent=!qwen&&!state.gptConnected?
-    "Подключи ChatGPT через «Аккаунт GPT»":"Готов";
+  $("sendStatus").textContent=collab?"Сообщение будет добавлено в общий журнал":
+    !qwen&&!state.gptConnected?"Подключи ChatGPT через «Аккаунт GPT»":"Готов";
   $("sidebar").classList.remove("open");
   if(gpt)void refreshGPTThreads();
   if(collab)void refreshCollabRuns();
@@ -656,6 +662,27 @@ async function openGPTThread(threadId){
   }catch(err){
     $("sendStatus").textContent="Ошибка загрузки GPT: "+String(err.message||err);
   }finally{busy(false);toBottom();}
+}
+async function sendCollabMessage(){
+  const message=$("messageInput").value.trim();
+  const run=state.collabRun;
+  if(!message||!run||!["active","paused"].includes(run.state))return;
+  $("sendButton").disabled=true;
+  $("sendStatus").textContent="Добавляем сообщение в общий диалог…";
+  try{
+    const updated=await requestJson("/api/collab/message",{
+      task_id:run.task_id,message
+    });
+    if(state.collabRun?.task_id===run.task_id)renderCollabRun(updated);
+    $("messageInput").value="";
+    $("sendStatus").textContent="Сообщение добавлено; участники учтут его в следующем ходе";
+    void refreshCollabRuns();
+  }catch(err){
+    $("sendStatus").textContent="Не удалось отправить: "+String(err.message||err);
+  }finally{
+    $("sendButton").disabled=false;
+    $("messageInput").focus();
+  }
 }
 async function sendGPT(){
   const message=$("messageInput").value.trim();
