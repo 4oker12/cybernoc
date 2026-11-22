@@ -259,7 +259,7 @@ class Agent:
     def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True,
             scope: dict | None = None, user_context: str = "",
             profile_instructions: str = "", tool_groups: list[str] | None = None,
-            on_usage=None) -> dict:
+            on_usage=None, on_tool_event=None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
         selected_groups = normalize_tool_groups(tool_groups or [])
@@ -638,6 +638,8 @@ class Agent:
                     }
                     safe_event.update(event)
                     events.append(safe_event)
+                    if on_tool_event is not None:
+                        on_tool_event(safe_event)
                     context.append({"role": "tool", "tool_name": str(name),
                                     "content": serialized})
                     count += 1
