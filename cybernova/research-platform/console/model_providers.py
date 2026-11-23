@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import deque
 import json
 import os
+import re
 from pathlib import Path
 
 try:
@@ -19,6 +20,10 @@ from urllib import error, parse, request
 
 LOCAL_NAMES = frozenset({"localhost", "127.0.0.1", "::1", "ollama"})
 MAX_RESPONSE_BYTES = 2_000_000
+MAX_IMAGE_DATA_URL_CHARS = 12_000_000
+_IMAGE_DATA_URL_RE = re.compile(
+    r"^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$"
+)
 
 
 class ModelConfigError(ValueError):
@@ -100,7 +105,33 @@ def _normalize_context(messages: list[dict], *, require_reasoning: bool = False)
     for message in messages:
         role = message.get("role")
         if role in {"system", "user", "assistant"}:
-            content = str(message.get("content") or "")
+            raw_content = message.get("content")
+            if role == "user" and isinstance(raw_content, list):
+                content = []
+                for part in raw_content[:40]:
+                    if not isinstance(part, dict):
+                        continue
+                    if part.get("type") == "text" and isinstance(part.get("text"), str):
+                        content.append({"type": "text", "text": part["text"][:20000]})
+                    elif part.get("type") == "image_url" and isinstance(part.get("image_url"), dict):
+                        image_url = part["image_url"].get("url")
+                        if (not isinstance(image_url, str)
+                                or len(image_url) > MAX_IMAGE_DATA_URL_CHARS
+                                or not _IMAGE_DATA_URL_RE.fullmatch(image_url)):
+                            raise ModelConfigError("invalid_user_image_payload")
+                        content.append({
+                            "type": "image_url",
+                            "image_url": {"url": image_url},
+                        })
+                if not content:
+                    content = ""
+            else:
+                if isinstance(raw_content, list) and any(
+                    isinstance(part, dict) and part.get("type") == "image_url"
+                    for part in raw_content
+                ):
+                    raise ModelConfigError("image_content_must_be_user")
+                content = str(raw_content or "")
             if role == "assistant" and require_reasoning and not isinstance(
                     message.get("reasoning_content"), str):
                 if message.get("tool_calls"):
