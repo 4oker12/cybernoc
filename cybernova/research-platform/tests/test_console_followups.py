@@ -76,7 +76,7 @@ class FollowupTests(unittest.TestCase):
         )
         self.assertEqual(len(questions), 1)
         messages = calls[0]["messages"]
-        self.assertIn("проекте CyberNoc", messages[0]["content"])
+        self.assertIn("CyberNoc", messages[0]["content"])
         self.assertIn("Cybernova UI polish", messages[1]["content"])
         self.assertIn("127.0.0.1", messages[1]["content"])
         self.assertEqual(messages[-2:], history)

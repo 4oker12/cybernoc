@@ -195,6 +195,3 @@ def generate_followups(
         return []
     return normalize_questions(result["message"].get("content", ""))
 
-
-if __name__ == "__main__":
-    raise SystemExit("This module is imported by the Cybernova console.")
