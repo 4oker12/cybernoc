@@ -14,7 +14,7 @@ from console.agent import (
     _extract_dsml_calls, _clean_model_answer, _compact_context,
     _restore_reasoning_history,
 )
-from console.model_providers import OpenAICompatibleClient, _normalize_context
+from console.model_providers import OpenAICompatibleClient, ModelConfigError, _normalize_context
 
 TOOLS = [
     {"name": "gateway_status", "description": "Status", "inputSchema": {"type": "object", "properties": {}}},
@@ -141,6 +141,66 @@ class AgentTests(unittest.TestCase):
             "private DeepSeek continuation state",
         )
         self.assertNotIn("reasoning_content", persisted[-1])
+
+    def test_deepseek_legacy_assistant_history_is_preserved_as_archival_context(self):
+        normalized = _normalize_context(
+            [
+                {"role": "user", "content": "Old request"},
+                {"role": "assistant", "content": "Old visible answer"},
+                {"role": "user", "content": "Continue"},
+            ],
+            require_reasoning=True,
+        )
+        self.assertEqual(normalized[1]["role"], "system")
+        self.assertIn("Old visible answer", normalized[1]["content"])
+        self.assertNotIn("reasoning_content", normalized[1])
+
+    def test_deepseek_tool_turn_without_reasoning_is_rejected_before_http(self):
+        with self.assertRaises(ModelConfigError) as raised:
+            _normalize_context(
+                [{
+                    "role": "assistant", "content": "",
+                    "tool_calls": [{"id": "call_1", "function": {
+                        "name": "computer_screenshot", "arguments": "{}",
+                    }}],
+                }],
+                require_reasoning=True,
+            )
+        self.assertEqual(str(raised.exception), "deepseek_reasoning_state_missing_for_tool_turn")
+
+    def test_deepseek_thinking_payload_uses_current_protocol(self):
+        captured = {}
+        def transport(payload):
+            captured.update(payload)
+            return {"choices": [{"message": {
+                "role": "assistant", "content": "ok",
+                "reasoning_content": "private reasoning",
+            }}]}
+        client = OpenAICompatibleClient(
+            base_url="https://api.deepseek.com", model="deepseek-flash",
+            api_key="sk-test", transport=transport,
+        )
+        client.chat(
+            [{"role": "user", "content": "test"}],
+            tools=[{"type": "function", "function": {
+                "name": "test_tool", "parameters": {"type": "object"},
+            }}],
+        )
+        self.assertEqual(captured["thinking"], {"type": "enabled"})
+        self.assertEqual(captured["reasoning_effort"], "high")
+        self.assertNotIn("temperature", captured)
+
+    def test_deepseek_model_list_uses_authenticated_models_endpoint(self):
+        urls = []
+        client = OpenAICompatibleClient(
+            base_url="https://api.deepseek.com", model="deepseek-flash",
+            api_key="sk-test",
+            models_transport=lambda url: (urls.append(url) or {
+                "object": "list", "data": [{"id": "deepseek-flash"}],
+            }),
+        )
+        self.assertEqual(client.list_models(), ["deepseek-flash"])
+        self.assertEqual(urls, ["https://api.deepseek.com/models"])
 
     def test_prior_turn_reasoning_is_forwarded_to_the_next_model_request(self):
         lm = FakeOllama([
