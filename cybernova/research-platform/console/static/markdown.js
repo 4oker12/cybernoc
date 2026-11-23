@@ -42,17 +42,25 @@
     return c&&c.length>0&&c.every(x=>/^:?-{3,}:?$/.test(x));
   }
   function section(line){
-    const m=/^\s*(?:\*\*)?(Рекомендаци[яи](?:\s+Qwen)?|Следующ(?:ий|ие)\s+шаг(?:и)?|Критери[йи]\s+успеха|Итог|Вывод|Факты|Гипотезы|Риски|Что проверить)(?:\*\*)?\s*[:—–-]?\s*(.*)$/i.exec(line);
+    const m=/^\s*(?:\*\*)?(Рекомендаци[яи](?:\s+по\s+приоритету|\s+Qwen)?|Что\s+проверено|Повторная\s+проверка|Ограничения|Следующ(?:ий|ие)\s+шаг(?:и)?|Критери[йи]\s+успеха|Итог|Вывод|Факты|Гипотезы|Риски|Что проверить)(?:\*\*)?\s*[:—–-]?\s*(.*)$/i.exec(line);
     if(!m)return null;
     return {title:m[1],detail:m[2]||"",kind:/рекомендац/i.test(m[1])?"recommendation":/шаг|провер/i.test(m[1])?"steps":/критери/i.test(m[1])?"criteria":"finding"};
   }
   function normalizeAssistantText(value){
     const text=String(value??"");
-    const marker=/(?:<|‹|&lt;)\s*\|\s*(?:\|\s*)?DSML\b/i.exec(text);
-    const hasToolCall=/\binvoke\s+name\s*=/i.test(text);
-    if(!marker||text.slice(0,marker.index).trim()||!hasToolCall)return text;
-    return "Модель вернула служебный протокол вызова инструмента вместо обычного ответа. "+
-      "Техническая строка скрыта; фактические вызовы, если они выполнялись, находятся в блоке «Инструменты».";
+    if(/^\s*(?:`{3,}|~{3,})/.test(text))return text; // A literal code example.
+    if(!/DSML/i.test(text))return text;
+    const canonical=text
+      .replace(/&lt;|&#0*60;|&#x0*3c;/gi,"<")
+      .replace(/&gt;|&#0*62;|&#x0*3e;/gi,">")
+      .replace(/&#0*124;|&#x0*7c;/gi,"|")
+      .replace(/[＜‹]/g,"<").replace(/[＞›]/g,">");
+    const marker=/<\s*\/?\s*(?:[|｜]\s*){1,2}DSML\b/i.test(canonical);
+    const hasProtocol=/\b(?:invoke\s+name\s*=|(?:function_)?calls\s*>|parameter\s+name\s*=)/i.test(canonical);
+    if(!marker||!hasProtocol)return text;
+    return "Служебный протокол вызова инструмента скрыт. "+
+      "Этот технический ответ не является итогом задачи; "+
+      "результаты выполненных вызовов доступны в разделе «Инструменты».";
   }
   function render(value){
     const root=el("div","md-content");
@@ -76,15 +84,14 @@
         code.textContent=rows.join("\n");pre.append(code);root.append(pre);continue;
       }
       const heading=/^\s*(#{1,5})\s+(.+)$/.exec(raw);
-      if(heading){const h=el("h"+Math.min(heading[1].length+1,5));inline(h,heading[2]);root.append(h);i++;continue;}
+      if(heading){const h=el("h"+Math.max(2,Math.min(heading[1].length,5)));inline(h,heading[2]);root.append(h);i++;continue;}
       if(/^([-*_])\1{2,}\s*$/.test(trimmed)){root.append(el("hr"));i++;continue;}
       const note=section(trimmed);
       if(note && !(trimmed.includes("|")&&i+1<lines.length&&divider(cells(lines[i+1]))) &&
          (trimmed.startsWith("**")||note.detail.length<160)){
-        const b=el("section","md-note md-note-"+note.kind),h=el("h3","md-note-title");
-        h.textContent=note.title;b.append(h);
-        if(note.detail){inline(b.appendChild(el("p")),note.detail.replace(/^\*+/,""));}
-        root.append(b);i++;continue;
+        const h=el("h2");inline(h,note.title);root.append(h);
+        if(note.detail){inline(root.appendChild(el("p")),note.detail.replace(/^\*+/,""));}
+        i++;continue;
       }
       const first=cells(raw);
       if(first){

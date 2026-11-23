@@ -753,6 +753,9 @@ body{font-size:calc(15.5px * var(--font-scale,1));line-height:1.58}
 }
 
 
+/* Cybernova 2026-11: selected ultra-clean editorial style, not ruled NOC cards. */
+.chat-msg.from-agent .message-body,.chat-msg.from-chatgpt .message-body{max-width:min(100%,850px)}
+.review-status{border:0!important;background:transparent!important;color:var(--muted)!important;font-weight:650}
 /* Cybernova 2026-11: strong evidence-first headings and compact expandable input. */
 .composer-area{padding-top:4px;padding-bottom:10px}
 .composer{border-radius:15px;padding:8px 12px 7px}
@@ -784,4 +787,20 @@ html[data-density="relaxed"] .composer{padding:9px 13px 8px}
   .review-status{font-size:9px;padding:2px 6px}
   .chat-msg.from-agent .md-content>h2,.chat-msg.from-chatgpt .md-content>h2{font-size:17px;margin-top:23px;padding-top:17px}
   .chat-msg.from-agent .md-content,.chat-msg.from-chatgpt .md-content{font-size:13px}
+}
+
+/* Editorial layout: headings separated by whitespace rather than ruled cards. */
+.chat-msg.from-agent .md-content>h2,.chat-msg.from-chatgpt .md-content>h2{
+  border:0;padding:0;margin:27px 0 10px;font-size:19px;
+  font-weight:850;line-height:1.27;letter-spacing:-.028em;
+}
+.chat-msg.from-agent .md-content>h2:first-child,.chat-msg.from-chatgpt .md-content>h2:first-child{
+  margin-top:4px;padding:0;border:0;
+}
+:root[data-theme="light"] .chat-msg .md-content>h2{color:#0e151d}
+:root[data-theme="light"] .chat-msg .md-content>p{color:#27313d}
+@media(max-width:680px){
+  .chat-msg.from-agent .md-content>h2,.chat-msg.from-chatgpt .md-content>h2{
+    font-size:17px;margin-top:24px;padding:0;border:0;
+  }
 }

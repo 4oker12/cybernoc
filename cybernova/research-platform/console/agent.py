@@ -1,6 +1,7 @@
 """Provider-neutral Cybernova LLM ↔ MCP agent: autonomous tool choice, guarded execution."""
 from __future__ import annotations
 
+import html
 import json
 
 try:
@@ -230,7 +231,7 @@ _DSML_BAR = r"(?:[|｜]\s*){1,2}"
 _DSML_OPEN = r"<\s*" + _DSML_BAR + r"DSML\s*" + _DSML_BAR
 _DSML_CLOSE = r"</\s*" + _DSML_BAR + r"DSML\s*" + _DSML_BAR
 _DSML_MARKER_RE = re.compile(
-    r"(?:<|&lt;)\s*/?\s*(?:[|｜]\s*){1,2}DSML\b", re.IGNORECASE
+    r"<\s*/?\s*(?:[|｜]\s*){1,2}DSML\b", re.IGNORECASE
 )
 _DSML_CALLS_RE = re.compile(
     _DSML_OPEN + r"(?:function_)?calls\s*>(?P<body>.*?)" +
@@ -251,8 +252,16 @@ _DSML_PARAMETER_RE = re.compile(
 def _extract_dsml_calls(content, allowed_names=None):
     """Convert DeepSeek DSML text calls into the same validated shape as native tool_calls."""
     text = content if isinstance(content, str) else ""
-    if not _DSML_MARKER_RE.search(text):
+    # A fenced demonstration of protocol syntax is documentation, not a call.
+    if text.lstrip().startswith(("```", "~~~")):
         return [], text, False
+    if "DSML" not in text.upper():
+        return [], text, False
+    # Decode HTML entities only for a possible DSML result (including encoded pipes).
+    canonical = html.unescape(text).replace("＜", "<").replace("＞", ">").replace("‹", "<").replace("›", ">")
+    if not _DSML_MARKER_RE.search(canonical):
+        return [], text, False
+    text = canonical
     calls = []
     for match in _DSML_INVOKE_RE.finditer(text):
         name = match.group("name").strip()

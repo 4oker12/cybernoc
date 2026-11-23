@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT))
 from console.agent import (
     Agent, _arguments, _allowed_http, _safe_args, _tool_schema,
     BackendError, MCPClient, OllamaClient, BASE_SYSTEM,
-    _extract_dsml_calls, _compact_context,
+    _extract_dsml_calls, _clean_model_answer, _compact_context,
 )
 from console.model_providers import OpenAICompatibleClient, _normalize_context
 
@@ -525,6 +525,31 @@ class AgentTests(unittest.TestCase):
             "path": "agent.py", "start_line": 520, "end_line": 600,
         })
 
+    def test_html_escaped_dsml_is_canonicalized_and_never_exposed(self):
+        escaped = (
+            '&lt;&#124;DSML&#124;calls&gt;&lt;&#124;DSML&#124;invoke name=&quot;dev_read&quot;&gt;'
+            '&lt;&#124;DSML&#124;parameter name=&quot;path&quot; string=&quot;true&quot;&gt;a.py'
+            '&lt;/&#124;DSML&#124;parameter&gt;&lt;/&#124;DSML&#124;invoke&gt;&lt;/&#124;DSML&#124;calls&gt;'
+        )
+        calls, cleaned, found = _extract_dsml_calls(escaped, {"dev_read"})
+        self.assertTrue(found)
+        self.assertEqual(cleaned, "")
+        self.assertEqual(calls[0]["function"]["arguments"], {"path": "a.py"})
+        self.assertEqual(_clean_model_answer(escaped), "")
+
+    def test_partial_and_unicode_dsml_never_enter_final_answer(self):
+        fragments = (
+            '< | | DSML | | invoke name="dev_read">broken',
+            'Предисловие: ＜｜DSML｜invoke name="dev_read">broken',
+            '&lt;｜DSML｜function_calls&gt;&lt;｜DSML｜invoke name=&quot;dev_read&quot;&gt;',
+        )
+        for fragment in fragments:
+            with self.subTest(fragment=fragment):
+                self.assertEqual(_clean_model_answer(fragment), "")
+
+    def test_fenced_protocol_sample_is_preserved_as_educational_code(self):
+        sample = '```text\n<｜DSML｜invoke name="dev_read">example\n```'
+        self.assertEqual(_clean_model_answer(sample), sample)
     def test_empty_model_answer_gets_a_text_only_retry(self):
         lm = FakeOllama([
             {"role": "assistant", "content": ""},

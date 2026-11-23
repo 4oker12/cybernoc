@@ -75,7 +75,7 @@ function showReviewStatus(message,review){
   if(!meta)return;
   const complete=review.status==="completed";
   const badge=node("span","review-status "+(complete?"is-completed":"is-incomplete"),
-    complete?"Повторно сверено":"Самопроверка не завершена");
+    complete?"Самопроверка модели":"Самопроверка не завершена");
   badge.title=complete?
     "Второй проход модели по доступным данным, а не новый инструментальный тест":
     "Второй проход отсутствует или завершён с ошибкой. Вывод не получил повторной сверки.";
