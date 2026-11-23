@@ -47,11 +47,13 @@ HIGH_IMPACT = re.compile(
 )
 IRREVERSIBLE_SUBMIT_TARGET = re.compile(
     r"(?i)(pay(?:ment)?|purchase|buy\s+now|place\s+order|checkout|"
-    r"\bbook(?:\s+now)?\b|\breserve\b|\border\b|\bdelete\b|\bremove\b|"
+    r"\bbook(?:\s+now)?\b|\breserve\b|\border\b|register|sign\s*up|"
+    r"create\s+account|new\s+account|\bjoin\b|\bdelete\b|\bremove\b|"
     r"unsubscribe|\bcancel\b|\brevoke\b|\bdisable\b|\bdeactivate\b|"
     r"\blog\s*out\b|\bsign\s*out\b|\breset\b|\bdisconnect\b|"
     r"\bterminate\b|\berase\b|\bdestroy\b|"
-    r"оплат|купить|оформить\s+заказ|брон|резерв|удал|отмен|отпис|"
+    r"оплат|купить|оформить\s+заказ|брон|резерв|регист|зарегистр|"
+    r"создать\s+аккаунт|новый\s+аккаунт|удал|отмен|отпис|"
     r"сброс|отключ|разорвать|деактив|стереть)"
 )
 
@@ -109,7 +111,7 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers."),
     _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
-          "Submit one visible form/button only when the latest user message explicitly asks to send, submit, save, apply, publish or post that form. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Unrelated writes, DELETE, other write methods, payment, purchase, deletion and account-removal actions remain blocked.",
+          "Submit one visible form/button only when the latest user message explicitly asks to send, submit, save, apply, publish or post that form. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Unrelated writes, DELETE, other write methods, payment, purchase, account registration, deletion and account-removal actions remain blocked.",
           {"name": {**STRING, "description": "Exact accessible name of the visible form submit button"}}, ["name"]),
 ]
 BROWSER_CONTROL_NAMES = frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS)

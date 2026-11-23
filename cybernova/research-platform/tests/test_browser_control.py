@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from console.browser_control import (
     BROWSER_CONTROL_TOOLS, BROWSER_CONTROL_NAMES, BrowserSession,
-    HIGH_IMPACT, _redact_text, _safe_url, validate_public_url,
+    HIGH_IMPACT, IRREVERSIBLE_SUBMIT_TARGET, _redact_text, _safe_url, validate_public_url,
     _disable_profile_session_restore,
 )
 
@@ -102,6 +102,14 @@ class BrowserControlTests(unittest.TestCase):
             self.assertIn(name, deepseek_names)
         self.assertIn("browser_submit", gpt_names)
         self.assertIn("browser_submit", deepseek_names)
+
+    def test_browser_submit_keeps_account_registration_and_destructive_actions_manual(self):
+        for target in (
+            "Sign up", "Register", "Create account", "New account",
+            "Pay now", "Place order", "Delete account",
+        ):
+            with self.subTest(target=target):
+                self.assertIsNotNone(IRREVERSIBLE_SUBMIT_TARGET.search(target))
 
     def test_browser_submit_requires_explicit_current_user_intent_and_dispatches_when_requested(self):
         from console.gpt_tool_runtime import GPTToolRuntime
