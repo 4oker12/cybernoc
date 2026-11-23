@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from console.model_settings import (
     ModelSettingsError, apply_model_settings, get_model_settings,
+    test_model_connection,
 )
 
 
@@ -35,6 +36,33 @@ class ModelSettingsTests(unittest.TestCase):
         })
         self.env.start()
         self.addCleanup(self.env.stop)
+
+    def test_deepseek_connection_is_verified_before_settings_are_applied(self):
+        with patch("console.model_settings.OpenAICompatibleClient") as client_type:
+            client_type.return_value.list_models.return_value = ["deepseek-flash"]
+            result = test_model_connection({
+                "provider": "openai_compatible",
+                "model": "deepseek-flash",
+                "base_url": "https://api.deepseek.com",
+                "api_key": "sk-test-key-value",
+            })
+        self.assertEqual(result["status"], "connected")
+        self.assertEqual(result["model"], "deepseek-flash")
+        self.assertEqual(client_type.call_args.kwargs["api_key"], "sk-test-key-value")
+
+    def test_deepseek_authentication_error_is_sanitized(self):
+        from console.model_providers import ModelConfigError
+        with patch("console.model_settings.OpenAICompatibleClient") as client_type:
+            client_type.return_value.list_models.side_effect = ModelConfigError("llm_models_http_401")
+            with self.assertRaises(ModelSettingsError) as raised:
+                test_model_connection({
+                    "provider": "openai_compatible",
+                    "model": "deepseek-flash",
+                    "base_url": "https://api.deepseek.com",
+                    "api_key": "sk-secret-not-for-logs",
+                })
+        self.assertEqual(str(raised.exception), "deepseek_authentication_failed")
+        self.assertNotIn("sk-secret-not-for-logs", str(raised.exception))
 
     def test_remote_key_is_saved_outside_repo_and_never_returned(self):
         client, public = apply_model_settings({
