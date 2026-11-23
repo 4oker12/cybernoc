@@ -648,7 +648,10 @@ class Agent:
                 review["status"] = "incomplete"
                 try:
                     second_pass = _compact_context(context)
-                    second_pass.append({"role": "assistant", "content": answer[:12000]})
+                    draft_message = {"role": "assistant", "content": answer[:12000]}
+                    if isinstance(history_reasoning_content, str):
+                        draft_message["reasoning_content"] = history_reasoning_content
+                    second_pass.append(draft_message)
                     second_pass.append({"role": "system", "content": (
                         "ОБЯЗАТЕЛЬНЫЙ ВТОРОЙ ПРОХОД ПЕРЕД ПУБЛИКАЦИЕЙ. "
                         "Не используй инструменты (их здесь нет). Перепроверь каждый "

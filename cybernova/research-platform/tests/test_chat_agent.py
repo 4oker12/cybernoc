@@ -163,6 +163,35 @@ class AgentTests(unittest.TestCase):
             "prior reasoning must be passed unchanged",
         )
 
+    def test_second_pass_echoes_reasoning_for_the_draft_answer(self):
+        lm = FakeOllama([
+            {
+                "role": "assistant",
+                "content": "Черновик ответа.",
+                "reasoning_content": "first-pass reasoning must be echoed",
+            },
+            {
+                "role": "assistant",
+                "content": "## Повторная проверка\nПроверено.",
+                "reasoning_content": "review-pass reasoning",
+            },
+        ])
+        outcome = Agent(lm, lambda: FakeMCP()).run(
+            [], "Сформируй ответ", tools_enabled=False, force_tools=False,
+        )
+        draft = next(
+            item for item in lm.prompts[1][0]
+            if item.get("role") == "assistant" and item.get("content") == "Черновик ответа."
+        )
+        self.assertEqual(
+            draft["reasoning_content"],
+            "first-pass reasoning must be echoed",
+        )
+        self.assertEqual(
+            outcome["_history_reasoning_content"],
+            "review-pass reasoning",
+        )
+
     def test_controller_developer_fallback_keeps_reasoning_content(self):
         class DeveloperMCP(FakeMCP):
             def initialize(self):
