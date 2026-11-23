@@ -78,6 +78,10 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn("Инструменты", ux)
         self.assertIn(".tool-batch", css)
         self.assertIn("followup-questions", css)
+        self.assertIn("background:#eaf2ff", css)
+        self.assertIn("border-left:3px solid #7399d8", css)
+        self.assertIn(':root[data-theme="dark"] .followup-question', css)
+        self.assertIn(':root[data-theme="light"] .followup-question', css)
 
     def test_chatgpt_terminal_paste_extension_is_scoped_and_clipboard_only(self):
         import json
@@ -97,14 +101,13 @@ class UXEnhancementTests(unittest.TestCase):
         for forbidden in ("fetch(", "XMLHttpRequest", "WebSocket", "chrome.storage"):
             self.assertNotIn(forbidden, script)
 
-    def test_terminal_output_clipboard_control_is_available_in_both_chat_modes(self):
+    def test_terminal_output_uses_native_paste_without_extra_composer_button(self):
         html = (ROOT / "console/static/index.html").read_text(encoding="utf-8")
         app = (ROOT / "console/static/app.js").read_text(encoding="utf-8")
-        self.assertIn('id="pasteOutputButton"', html)
-        self.assertIn('navigator.clipboard.readText()', app)
-        self.assertIn('Вывод из терминала:', app)
-        self.assertIn('проверь и нажми Enter', app)
-        self.assertIn('ничего не отправляется автоматически', html.lower())
+        self.assertNotIn('id="pasteOutputButton"', html)
+        self.assertNotIn('navigator.clipboard.readText()', app)
+        self.assertIn('Ctrl+V — вставить вывод', html)
+        self.assertNotIn('pasteTerminalOutput', app)
 
     def test_readable_dark_light_contrast_and_scoped_typography(self):
         css = (ROOT / "console/static/styles.css").read_text(encoding="utf-8")

@@ -6,10 +6,10 @@
   <meta name="robots" content="noindex,nofollow">
   <meta name="theme-color" content="#212121">
   <title>Cybernova — Исследователь и ChatGPT</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261123-editorial3">
+  <link rel="stylesheet" href="/static/styles.css?v=20261123-composer3">
   <link rel="stylesheet" href="/static/ux.css?v=20261122-ui1">
   <script defer src="/static/markdown.js?v=20261123-dsml2"></script>
-  <script defer src="/static/app.js?v=20261123-editorial2"></script>
+  <script defer src="/static/app.js?v=20261123-composer3"></script>
   <script defer src="/static/model-settings.js"></script>
   <script defer src="/static/ux.js?v=20261122-ui1"></script>
 </head>
@@ -123,7 +123,6 @@
         <textarea id="messageInput" rows="1" maxlength="10000" placeholder="Спросите что-нибудь или задайте задачу…"></textarea>
         <div class="composer-bottom">
           <div class="composer-left">
-            <button type="button" id="pasteOutputButton" class="paste-output-button" aria-label="Вставить вывод из буфера обмена" title="Вставить текст из буфера в поле сообщения. Ничего не отправляется автоматически."><span aria-hidden="true">▤</span><span>Вставить вывод</span></button>
             <a href="/api/diagnostics/export" id="chatDiagnosticsDownload" class="diagnostics-download-button" download="cybernova-diagnostics.jsonl" aria-label="Выгрузить журнал ошибок Cybernova" title="Скачать текущий журнал ошибок и метаданные запусков DeepSeek и Account GPT. Тексты переписки и секреты намеренно не записываются."><span aria-hidden="true">↓</span><span>Выгрузить ошибки</span></a>
             <label for="artifactFile" id="qwenUploadLabel" class="upload-button" title="Импорт HAR, JS, OpenAPI, логов, конфигураций, Python, зависимостей, TLS или PCAP. Файл обрабатывается локально.">📎 Файл</label>
             <input id="artifactFile" class="sr-only" type="file" accept=".har,.js,.py,.json,.log,.txt,.conf,.cfg,.ini,.yaml,.yml,.env,.pcap,.cap,.pem,.crt,.lock,.mod,.toml">
@@ -158,7 +157,7 @@
         </div>
       </div>
       <div class="composer-meta">
-        <span id="uploadStatus">Импорт локальных артефактов · Enter — отправить</span>
+        <span id="uploadStatus">Файлы · Ctrl+V — вставить вывод · Enter — отправить</span>
         <span id="tokenUsageStatus" title="Сумма фактических токенов, сообщённых провайдером">Токены: —</span>
         <span id="sendStatus" role="status">Готов</span>
       </div>

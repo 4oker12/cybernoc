@@ -350,55 +350,6 @@ async function importArtifact(file){
     $("messageInput").focus();
   }
 }
-async function pasteTerminalOutput(){
-  const button=$("pasteOutputButton");
-  const input=$("messageInput");
-  const status=$("uploadStatus");
-  if(!navigator.clipboard||typeof navigator.clipboard.readText!=="function"){
-    status.textContent="Нет доступа к буферу · используй Ctrl+V в поле сообщения";
-    input.focus();
-    return;
-  }
-  button.disabled=true;
-  try{
-    const clipboardText=await navigator.clipboard.readText();
-    if(!clipboardText||!clipboardText.trim()){
-      status.textContent="Буфер обмена пуст";
-      return;
-    }
-    const existing=input.value||"";
-    const separator=existing.trim()?"\\n\\n---\\n\\n":"";
-    const header="Вывод из терминала:\\n";
-    const prefix=existing+separator+header;
-    const limit=Number(input.maxLength)>0?input.maxLength:10000;
-    const available=limit-prefix.length;
-    if(available<1){
-      status.textContent="Поле заполнено · отправь или очисти черновик";
-      input.focus();
-      return;
-    }
-    let payload=clipboardText;
-    let truncated=false;
-    if(payload.length>available){
-      const marker="\\n[ВЫВОД ОБРЕЗАН: превышен лимит поля]";
-      const room=Math.max(0,available-marker.length);
-      payload=payload.slice(0,room)+(available>=marker.length?marker:"");
-      truncated=true;
-    }
-    input.value=prefix+payload;
-    input.focus();
-    if(typeof input.setSelectionRange==="function"){
-      input.setSelectionRange(input.value.length,input.value.length);
-    }
-    status.textContent="Вставлено "+clipboardText.length+" символов"+
-      (truncated?" · обрезано по лимиту":"")+" · проверь и нажми Enter";
-  }catch(error){
-    status.textContent="Не удалось прочитать буфер · используй Ctrl+V в поле сообщения";
-  }finally{
-    button.disabled=false;
-  }
-}
-
 function updateBusyUI(){
   const anyModelRunning=state.qwenRunning||state.gptRunning;
   const activeRunning=state.mode==="gpt"?state.gptRunning:
@@ -681,8 +632,8 @@ function setMode(mode){
   $("artifactFile").disabled=!qwen;
   $("messageInput").placeholder=qwen?"Сообщение исследовательской модели или задача…":"Сообщение ChatGPT…";
   $("uploadStatus").textContent=qwen?
-    "Импорт файлов до "+Math.floor(state.uploadLimit/(1024*1024))+" МиБ · модель":
-    "GPT-диалог хранится локально; его сообщения и результаты локальных инструментов отправляются выбранной модели ChatGPT";
+    "Файлы до "+Math.floor(state.uploadLimit/(1024*1024))+" МиБ · Ctrl+V — вставить вывод":
+    "GPT-диалог локальный · Ctrl+V — вставить вывод";
   $("sendStatus").textContent=!qwen&&!state.gptConnected?
     "Подключи ChatGPT через «Аккаунт GPT»":"Готов";
   $("sidebar").classList.remove("open");
@@ -1253,7 +1204,7 @@ async function reset(){
   $("messages").replaceChildren(window.cybernovaWelcome.cloneNode(true));
   showEvents([],0,"none");
   $("messageInput").value="";
-  $("uploadStatus").textContent="Импорт локальных артефактов";
+  $("uploadStatus").textContent="Файлы · Ctrl+V — вставить вывод · Enter — отправить";
   $("sidebar").classList.remove("open");
   $("sendStatus").textContent="Готов";
 }
@@ -1663,7 +1614,6 @@ function init(){
     if(event.key==="Escape"&&!$("toolPicker").hidden)toolPickerOpen(false);
   });
   $("sendButton").addEventListener("click",send);
-  $("pasteOutputButton").addEventListener("click",pasteTerminalOutput);
   $("artifactFile").addEventListener("change",event=>importArtifact(event.target.files?.[0]));
   $("messageInput").addEventListener("input",resizeComposer);
   resizeComposer();

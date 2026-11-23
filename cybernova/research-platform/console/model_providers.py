@@ -10,6 +10,11 @@ from collections import deque
 import json
 import os
 from pathlib import Path
+
+try:
+    from .diagnostics import scrub
+except ImportError:
+    from diagnostics import scrub
 from urllib import error, parse, request
 
 LOCAL_NAMES = frozenset({"localhost", "127.0.0.1", "::1", "ollama"})
@@ -17,7 +22,30 @@ MAX_RESPONSE_BYTES = 2_000_000
 
 
 class ModelConfigError(ValueError):
-    pass
+    def __init__(self, code: str, *, safe_detail: str | None = None):
+        super().__init__(code)
+        self.safe_detail = scrub(safe_detail, 420) if isinstance(safe_detail, str) else None
+
+
+def _provider_error_detail(body: bytes) -> str | None:
+    """Extract bounded provider error metadata; never retain the raw response body."""
+    try:
+        payload = json.loads(body.decode("utf-8", "replace"))
+    except (ValueError, TypeError, UnicodeError):
+        return None
+    error_data = payload.get("error", payload) if isinstance(payload, dict) else None
+    if isinstance(error_data, str):
+        return scrub(error_data, 220) or None
+    if not isinstance(error_data, dict):
+        return None
+    parts = []
+    for key in ("type", "code", "param", "message"):
+        value = error_data.get(key)
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            clean = scrub(str(value).strip(), 180)
+            if clean and clean.lower() not in {"none", "null"}:
+                parts.append(key + "=" + clean)
+    return "; ".join(parts)[:420] or None
 
 
 def provider_name() -> str:
@@ -138,8 +166,15 @@ class OpenAICompatibleClient:
                     raise ModelConfigError("llm_response_too_large")
                 result = json.loads(content)
         except error.HTTPError as exc:
-            # Never dump remote response bodies: they can contain API keys.
-            raise ModelConfigError("llm_http_" + str(exc.code)) from None
+            # Parse only allowlisted error metadata. Never persist the raw body:
+            # compatible providers may echo credentials or request fragments.
+            try:
+                error_body = exc.read(8192)
+            except Exception:
+                error_body = b""
+            detail = _provider_error_detail(error_body)
+            raise ModelConfigError("llm_http_" + str(exc.code),
+                                   safe_detail=detail) from None
         except (error.URLError, TimeoutError, OSError, ValueError) as exc:
             raise ModelConfigError("llm_transport_" + type(exc).__name__) from None
         return result

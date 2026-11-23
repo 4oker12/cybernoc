@@ -1026,9 +1026,13 @@ class Agent:
                     return result_payload(answer)
             raise BackendError("agent_round_limit")
         except (BackendError, ValueError, TypeError) as exc:
+            detail = getattr(exc, "safe_detail", None)
             events.append({"type": "agent_error", "message": str(exc)[:200]})
+            answer = "Ошибка исполнения: " + str(exc)[:180]
+            if isinstance(detail, str) and detail:
+                answer += "\nДеталь провайдера: " + detail[:420]
             return {
-                "answer": "Ошибка исполнения: " + str(exc)[:180],
+                "answer": answer,
                 "events": events, "tool_calls": executed,
                 "approval_requests": pending_requests,
                 "selected_by": selected_by if count or executed else "none", "model": self.ollama.model,

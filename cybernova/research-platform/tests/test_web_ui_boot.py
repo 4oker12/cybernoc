@@ -36,7 +36,7 @@ class WebUIBootTests(unittest.TestCase):
         parsed=Scripts()
         parsed.feed(html)
         self.assertEqual([x.get("src") for x in parsed.starts],
-                         ["/static/markdown.js?v=20261123-dsml2","/static/app.js?v=20261123-editorial2",
+                         ["/static/markdown.js?v=20261123-dsml2","/static/app.js?v=20261123-composer3",
                           "/static/model-settings.js","/static/ux.js?v=20261122-ui1"])
         self.assertEqual(parsed.ends,4)
         self.assertEqual(html.count("</script>"),4)
@@ -55,6 +55,10 @@ class WebUIBootTests(unittest.TestCase):
         self.assertIn('Grandmaster · NOC / Development',app)
         self.assertIn(".collab-entry .collab-full .md-content>h2",css)
         self.assertIn("selected ultra-clean editorial style",css)
+        self.assertNotIn('id="pasteOutputButton"',html)
+        self.assertIn("Ctrl+V — вставить вывод",html)
+        self.assertIn(".followup-question{",css)
+        self.assertIn("background:#eaf2ff",css)
 
     @unittest.skipUnless(shutil.which("node"),"Node.js unavailable")
     def test_buttons_bind_and_qwen_chatgpt_switch_responds(self):
@@ -127,8 +131,8 @@ const context={document,window,fetch,URLSearchParams,console,
 vm.runInNewContext(app,context);
 if(typeof callbacks.DOMContentLoaded!=='function')throw Error('Init handler missing');
 callbacks.DOMContentLoaded();
-if(typeof byId('pasteOutputButton').listeners.click!=='function')
- throw Error('Clipboard paste button not bound');
+if(byId('pasteOutputButton')!==null)
+ throw Error('Custom clipboard paste button should be removed');
 for(const id of ['sendButton','newSession','modeQwen','modeChatGPT','navChatGPT','navTools']){
  if(typeof byId(id).listeners.click!=='function')throw Error('Button not bound: '+id);
 }
@@ -170,16 +174,6 @@ detail.open=true;detail.listeners.toggle();
 if(detail.children[1].textContent!==largeMessage)
  throw Error('Expansion lost the full original answer');
 
-Promise.resolve().then(async()=>{
- await byId('pasteOutputButton').listeners.click();
- const pasted=byId('messageInput').value;
- if(!pasted.includes('Вывод из терминала:'))
-   throw Error('Clipboard output header was not inserted');
- if(!pasted.includes('PS> Get-Process\\npython 1234'))
-   throw Error('Clipboard text was not preserved');
- if(!byId('uploadStatus').textContent.includes('нажми Enter'))
-   throw Error('Paste action did not tell the user to review and press Enter');
-}).catch(error=>{console.error(error);process.exitCode=1;});
 """
         run=subprocess.run(["node","-e",script,html,app],
                            capture_output=True,text=True,timeout=20)

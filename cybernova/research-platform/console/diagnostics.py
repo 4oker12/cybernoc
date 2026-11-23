@@ -167,6 +167,9 @@ def _clean_timeline(value):
         raw = value.get(key)
         if isinstance(raw, str) and re.fullmatch(r"[0-9a-f]{16,32}", raw):
             result[key] = raw
+    detail = value.get("error_detail")
+    if isinstance(detail, str) and detail:
+        result["error_detail"] = scrub(detail, 420)
     return result if "event" in result else None
 
 
@@ -192,8 +195,11 @@ def span(name: str, **fields):
     try:
         yield
     except BaseException as exc:
-        event(name + "_failure", **fields, duration_ms=round((time.monotonic() - started) * 1000),
-              error_type=type(exc).__name__)
+        code = adapter_error_code(exc)
+        detail = getattr(exc, "safe_detail", None)
+        event(name + "_failure", **fields,
+              duration_ms=round((time.monotonic() - started) * 1000),
+              error_type=type(exc).__name__, error_code=code, error_detail=detail)
         raise
     else:
         event(name + "_complete", **fields, duration_ms=round((time.monotonic() - started) * 1000))

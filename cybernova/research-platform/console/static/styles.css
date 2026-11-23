@@ -636,7 +636,6 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
 .sidebar .task-item:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 
 /* Composer controls use explicit application styling, not browser button defaults. */
-.composer .paste-output-button,
 .composer .diagnostics-download-button{
   appearance:none;-webkit-appearance:none;display:inline-flex;align-items:center;
   justify-content:center;gap:6px;min-height:34px;padding:6px 11px;
@@ -644,11 +643,9 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
   color:var(--text);font:600 11px/1.25 var(--ui-font);white-space:nowrap;
   text-decoration:none;box-shadow:none;cursor:pointer;transition:background .12s,border-color .12s;
 }
-.composer .paste-output-button:hover,
 .composer .diagnostics-download-button:hover{
   background:var(--hover);border-color:var(--accent);color:var(--text);
 }
-.composer .paste-output-button:focus-visible,
 .composer .diagnostics-download-button:focus-visible{
   outline:2px solid var(--accent);outline-offset:2px;
 }
@@ -657,7 +654,7 @@ body{font-family:var(--ui-font);font-weight:400;letter-spacing:0;font-size:calc(
   color:#d9eee3;border-color:#48685a;background:#25362f;
 }
 @media(max-width:680px){
-  .composer .paste-output-button,.composer .diagnostics-download-button{
+  .composer .diagnostics-download-button{
     min-height:32px;padding:6px 9px;font-size:10px;
   }
 }
@@ -695,7 +692,6 @@ body{font-size:calc(15.5px * var(--font-scale,1));line-height:1.58}
 .md-content h4{font-size:15px}
 .md-table{font-size:13px}
 .composer textarea{font-size:15px;line-height:1.6}
-.composer .paste-output-button,
 .composer .diagnostics-download-button{
   font-size:12px;font-weight:750;min-height:36px;
 }
@@ -717,9 +713,6 @@ body{font-size:calc(15.5px * var(--font-scale,1));line-height:1.58}
 :root[data-theme="dark"] .sidebar .task-item.selected{background:#2f4b3b}
 :root[data-theme="dark"] .composer{background:#26392e;border-color:#557060}
 :root[data-theme="dark"] .composer textarea::placeholder{color:#c4d2c8}
-:root[data-theme="dark"] .composer .paste-output-button{
-  background:#314639;border-color:#648371;color:#f5fbf7
-}
 :root[data-theme="dark"] .tool-picker-toggle{
   background:#314639;color:#f5fbf7;border-color:#648371
 }
@@ -736,10 +729,6 @@ body{font-size:calc(15.5px * var(--font-scale,1));line-height:1.58}
 :root[data-theme="light"] .composer .diagnostics-download-button{
   background:#dcefe2;border-color:#84b497;color:#145b3e
 }
-:root[data-theme="light"] .composer .paste-output-button{
-  background:#f3f8f4;border-color:#b4cbbb;color:#243b2d
-}
-.composer .paste-output-button:focus-visible,
 .composer .diagnostics-download-button:focus-visible,
 .sidebar .task-item:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media(max-width:680px){
@@ -747,7 +736,7 @@ body{font-size:calc(15.5px * var(--font-scale,1));line-height:1.58}
     font-size:15px;line-height:1.65
   }
   .sidebar .task-title{font-size:13px}
-  .composer .paste-output-button,.composer .diagnostics-download-button{
+  .composer .diagnostics-download-button{
     font-size:11px;min-height:34px
   }
 }
@@ -820,4 +809,63 @@ html[data-density="relaxed"] .composer{padding:9px 13px 8px}
 }
 @media(max-width:680px){
   .collab-entry .collab-full .md-content>h2{font-size:17px;margin-top:24px}
+}
+
+/* Compact composer controls; clipboard insertion uses native Ctrl+V. */
+.composer-bottom{gap:8px}
+.composer-left{gap:8px}
+.composer .diagnostics-download-button{
+  min-height:28px;padding:4px 8px;gap:4px;border-radius:14px;
+  font-size:10px;line-height:1.15;
+}
+.composer .upload-button{
+  min-height:28px;padding:4px 8px;gap:4px;border-radius:14px;
+  font-size:10px;line-height:1.15;
+}
+.composer .tool-picker-toggle{
+  min-height:28px;padding:4px 8px;gap:5px;border-radius:14px;
+  font-size:10px;line-height:1.15;
+}
+.composer .tool-picker-toggle .tool-picker-plus{width:14px;height:14px;font-size:12px}
+.composer .tool-selection-badge{padding:1px 5px;font-size:8px}
+.composer .send-button{width:28px;height:28px;min-width:28px;font-size:17px}
+.composer .auto-tools-label{font-size:10px;gap:5px}
+.composer-meta{padding-top:6px;font-size:9px}
+@media(max-width:680px){
+  .composer-left{gap:6px}
+  .composer .diagnostics-download-button,.composer .upload-button,
+  .composer .tool-picker-toggle{min-height:27px;padding:4px 7px;font-size:9.5px}
+  .composer .send-button{width:27px;height:27px;min-width:27px;font-size:16px}
+}
+/* Follow-up prompts are highlighted as deliberate next-step choices. */
+.followup-box{margin-top:20px}
+.followup-label{margin-bottom:9px;font-size:12px;font-weight:750;letter-spacing:.01em;color:#315f9b}
+.followup-questions{gap:8px}
+.followup-question{
+  border:1px solid #b9ccef;border-left:3px solid #7399d8;
+  background:#eaf2ff;color:#244b7d;border-radius:13px;
+  padding:8px 13px;font-size:12px;font-weight:650;line-height:1.5;
+  box-shadow:0 1px 2px #315f9b12;
+  transition:background .12s,border-color .12s,transform .12s;
+}
+.followup-question:hover,.followup-question:focus-visible{
+  background:#dce9ff;border-color:#8eafe8;color:#173e70;
+  outline:none;transform:translateX(2px);
+}
+:root[data-theme="dark"] .followup-label{color:#a9c9ff}
+:root[data-theme="dark"] .followup-question{
+  background:#263954;border-color:#4d6d9c;border-left-color:#83a9e9;color:#e0ebff;
+}
+:root[data-theme="dark"] .followup-question:hover,
+:root[data-theme="dark"] .followup-question:focus-visible{
+  background:#30496c;border-color:#81a7e5;color:#fff;
+}
+
+:root[data-theme="light"] .followup-label{color:#315f9b}
+:root[data-theme="light"] .followup-question{
+  background:#eaf2ff;border-color:#b9ccef;border-left-color:#7399d8;color:#244b7d;
+}
+:root[data-theme="light"] .followup-question:hover,
+:root[data-theme="light"] .followup-question:focus-visible{
+  background:#dce9ff;border-color:#8eafe8;color:#173e70;
 }

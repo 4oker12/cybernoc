@@ -187,6 +187,26 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIn("ValueError", report)
         self.assertNotIn("private_test_secret", report)
 
+    def test_model_request_failure_records_safe_provider_reason_only(self):
+        with self.journal():
+            try:
+                with diagnostics.span("model_request",provider="DeepSeek",model="deepseek-flash"):
+                    failure=ValueError("llm_http_400")
+                    failure.safe_detail="type=invalid_request_error; message=Unsupported reasoning_content; api_key=sk-1234567890ABCDEFGHIJ"
+                    raise failure
+            except ValueError:
+                pass
+            report=diagnostics.export_jsonl().decode("utf-8")
+        self.assertIn("llm_http_400",report)
+        self.assertIn("Unsupported reasoning_content",report)
+        self.assertNotIn("sk-1234567890ABCDEFGHIJ",report)
+        item=next(
+            row["timeline"] for row in (json.loads(line) for line in report.splitlines()[1:])
+            if "timeline" in row and row["timeline"].get("event")=="model_request_failure"
+        )
+        self.assertEqual(item["error_code"],"llm_http_400")
+        self.assertIn("reasoning_content",item["error_detail"])
+
     def test_export_drops_unlisted_timeline_values_even_for_forged_logs(self):
         with self.temp_folder() as folder:
             (folder / "console.jsonl").write_text(json.dumps({

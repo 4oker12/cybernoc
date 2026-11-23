@@ -1,8 +1,11 @@
 """No-network tests of pluggable local/hosted model providers."""
 from __future__ import annotations
 
+import io
+import json
 import os
 from pathlib import Path
+from urllib.error import HTTPError
 import sys
 import tempfile
 import unittest
@@ -225,6 +228,46 @@ class ModelProviderTests(unittest.TestCase):
                                      "CYBERNOVA_LLM_TEMPERATURE":"not_a_number"}):
             with self.assertRaises(ModelConfigError):
                 backend.chat([{"role":"user","content":"test"}])
+
+    def test_http_400_exposes_only_redacted_provider_error_metadata(self):
+        backend=OpenAICompatibleClient(
+            base_url="https://api.example/v1",model="deepseek-flash",
+            api_key="test-api-key",transport=None,
+        )
+        body=json.dumps({"error":{
+            "type":"invalid_request_error",
+            "code":"unsupported_parameter",
+            "param":"messages[3].reasoning_content",
+            "message":"Unsupported parameter reasoning_content; api_key=sk-1234567890ABCDEFGHIJ",
+        }}).encode()
+        class RejectingOpener:
+            def open(self,*args,**kwargs):
+                raise HTTPError("https://api.example/v1/chat/completions",400,
+                                "Bad Request",{},io.BytesIO(body))
+        with patch("console.model_providers.request.build_opener",
+                   return_value=RejectingOpener()):
+            with self.assertRaises(ModelConfigError) as ctx:
+                backend._request({"model":"deepseek-flash"})
+        self.assertEqual(str(ctx.exception),"llm_http_400")
+        self.assertIn("unsupported_parameter",ctx.exception.safe_detail)
+        self.assertIn("reasoning_content",ctx.exception.safe_detail)
+        self.assertNotIn("sk-1234567890ABCDEFGHIJ",ctx.exception.safe_detail)
+
+    def test_agent_failure_includes_sanitized_provider_reason(self):
+        class FailingClient:
+            provider="OpenAI-compatible"
+            model="deepseek-flash"
+            def chat(self,*args,**kwargs):
+                raise ModelConfigError(
+                    "llm_http_400",
+                    safe_detail="type=invalid_request_error; param=reasoning_content; message=Unsupported parameter",
+                )
+        result=Agent(FailingClient()).run(
+            [],"Проверь состояние",tools_enabled=False,force_tools=False,
+        )
+        self.assertIn("Ошибка исполнения: llm_http_400",result["answer"])
+        self.assertIn("Деталь провайдера:",result["answer"])
+        self.assertIn("reasoning_content",result["answer"])
 
     def test_json_mode_and_provider_errors_never_echo_credentials(self):
         def transport(payload):
