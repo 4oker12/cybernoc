@@ -108,6 +108,18 @@ class CommunicationStore:
                       event_key TEXT,
                       UNIQUE(task_id,actor,event_key)
                     );
+                    CREATE TABLE IF NOT EXISTS provider_continuation_state (
+                      task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+                      message_seq INTEGER NOT NULL REFERENCES messages(seq) ON DELETE CASCADE,
+                      provider TEXT NOT NULL,
+                      model TEXT NOT NULL,
+                      endpoint TEXT NOT NULL DEFAULT '',
+                      reasoning_content TEXT NOT NULL,
+                      created_at TEXT NOT NULL,
+                      PRIMARY KEY(task_id,message_seq)
+                    );
+                    CREATE INDEX IF NOT EXISTS provider_state_by_task
+                    ON provider_continuation_state(task_id,message_seq);
                     CREATE INDEX IF NOT EXISTS messages_by_task
                     ON messages(task_id,seq);
                     CREATE INDEX IF NOT EXISTS tasks_by_update
@@ -175,7 +187,7 @@ class CommunicationStore:
     def append(
         self, task_id: str, actor: str, kind: str, body: str, *,
         evidence_refs: list[str] | None = None, event_key: str | None = None,
-        status: str | None = None,
+        status: str | None = None, provider_state: dict | None = None,
     ) -> dict:
         self.get_task(task_id)
         if actor not in ACTORS or kind not in KINDS:
@@ -187,6 +199,21 @@ class CommunicationStore:
             raise CommunicationError("invalid_event_key")
         body = _check_text(body)
         evidence_refs = _refs(evidence_refs)
+        continuation = None
+        if provider_state is not None:
+            if actor != "qwen" or kind != "result" or not isinstance(provider_state, dict):
+                raise CommunicationError("invalid_provider_continuation")
+            provider = provider_state.get("provider")
+            model = provider_state.get("model")
+            endpoint = provider_state.get("endpoint", "")
+            reasoning = provider_state.get("reasoning_content")
+            if (not isinstance(provider, str) or not provider or len(provider) > 80
+                    or not isinstance(model, str) or not model or len(model) > 160
+                    or not isinstance(endpoint, str) or len(endpoint) > 500
+                    or not isinstance(reasoning, str) or len(reasoning) > 1800000
+                    or any("\x00" in value for value in (provider, model, endpoint, reasoning))):
+                raise CommunicationError("invalid_provider_continuation")
+            continuation = (provider, model, endpoint, reasoning)
         now = _utc()
         message_id = "msg_" + secrets.token_urlsafe(18)
         with self._lock, self._connection() as db:
@@ -197,6 +224,15 @@ class CommunicationStore:
                     (task_id, actor, event_key),
                 ).fetchone()
                 if row is not None:
+                    if continuation is not None:
+                        db.execute(
+                            "INSERT INTO provider_continuation_state"
+                            "(task_id,message_seq,provider,model,endpoint,reasoning_content,created_at) "
+                            "VALUES(?,?,?,?,?,?,?) ON CONFLICT(task_id,message_seq) DO UPDATE SET "
+                            "provider=excluded.provider,model=excluded.model,endpoint=excluded.endpoint,"
+                            "reasoning_content=excluded.reasoning_content,created_at=excluded.created_at",
+                            (task_id, row["seq"], *continuation, now),
+                        )
                     db.commit()
                     return self._message(row)
             db.execute(
@@ -218,6 +254,13 @@ class CommunicationStore:
             row = db.execute(
                 "SELECT * FROM messages WHERE message_id=?", (message_id,),
             ).fetchone()
+            if continuation is not None:
+                db.execute(
+                    "INSERT INTO provider_continuation_state"
+                    "(task_id,message_seq,provider,model,endpoint,reasoning_content,created_at) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (task_id, row["seq"], *continuation, now),
+                )
             db.commit()
         return self._message(row)
 
@@ -232,6 +275,23 @@ class CommunicationStore:
             ).fetchall()
         return {"task": task, "messages": [self._message(r) for r in rows],
                 "next_after": rows[-1]["seq"] if rows else after}
+
+    def load_provider_continuation(
+        self, task_id: str, message_seq: int, provider: str, model: str, endpoint: str,
+    ) -> str | None:
+        """Load private provider state only for the exact provider/model endpoint."""
+        self.get_task(task_id)
+        if (type(message_seq) is not int or message_seq < 1
+                or not isinstance(provider, str) or not isinstance(model, str)
+                or not isinstance(endpoint, str)):
+            raise CommunicationError("invalid_provider_continuation_lookup")
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT reasoning_content FROM provider_continuation_state "
+                "WHERE task_id=? AND message_seq=? AND provider=? AND model=? AND endpoint=?",
+                (task_id, message_seq, provider, model, endpoint),
+            ).fetchone()
+        return row["reasoning_content"] if row is not None else None
 
     def events(self, *, after: int = 0, limit: int = 30,
                review_only: bool = False) -> dict:
