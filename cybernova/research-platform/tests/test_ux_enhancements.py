@@ -57,7 +57,10 @@ class UXEnhancementTests(unittest.TestCase):
         previous = server.agent.ollama
         client = TestClient(server.app, base_url="http://127.0.0.1:18794")
         try:
-            with patch.object(server, "apply_model_settings", return_value=(replacement, settings)):
+            with patch.object(server, "apply_model_settings", return_value=(replacement, settings)), \
+                 patch.object(server, "test_model_connection", return_value={
+                     "status": "connected", "provider": "DeepSeek", "model": "deepseek-chat",
+                 }):
                 response = client.post("/api/model-config", json={
                     "provider": "openai_compatible",
                     "model": "deepseek-chat",
