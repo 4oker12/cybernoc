@@ -56,6 +56,11 @@ MAX_CONTEXT_HISTORY_CHARS = 2500
 MAX_CONTEXT_TOOL_CALLS = 8
 MAX_CONTEXT_TOOL_CHARS = 3500
 MAX_CONTEXT_SUMMARY_CHARS = 5000
+MAX_VISION_IMAGE_CHARS = 12000000
+MAX_VISION_IMAGES = 3
+_IMAGE_DATA_URL_RE = re.compile(
+    r"^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$"
+)
 APPROVAL_TTL_SECONDS = 3600
 OFFLINE_TOOLS = frozenset({
     "gateway_status", "python_static_review", "http_header_review",
@@ -319,6 +324,64 @@ def _clean_model_answer(content):
     return cleaned
 
 
+def _bounded_context_content(content, limit, *, keep_tail=False):
+    if isinstance(content, str):
+        return content[-limit:] if keep_tail else content[:limit]
+    if isinstance(content, list):
+        blocks = []
+        remaining = limit
+        for part in content[:40]:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text" and isinstance(part.get("text"), str):
+                value = part["text"][-remaining:] if keep_tail else part["text"][:remaining]
+                remaining = max(0, remaining - len(value))
+                if value:
+                    blocks.append({"type": "text", "text": value})
+            elif part.get("type") == "image_url" and isinstance(part.get("image_url"), dict):
+                url = part["image_url"].get("url")
+                if (isinstance(url, str) and len(url) <= MAX_VISION_IMAGE_CHARS
+                        and _IMAGE_DATA_URL_RE.fullmatch(url)):
+                    blocks.append({"type": "image_url", "image_url": {"url": url}})
+        return blocks
+    return str(content or "")[-limit:] if keep_tail else str(content or "")[:limit]
+
+
+def _append_screenshot_to_latest_user(messages, image_data_url):
+    if (not isinstance(image_data_url, str)
+            or len(image_data_url) > MAX_VISION_IMAGE_CHARS
+            or not _IMAGE_DATA_URL_RE.fullmatch(image_data_url)):
+        return False
+    user_index = next(
+        (index for index in range(len(messages) - 1, -1, -1)
+         if isinstance(messages[index], dict) and messages[index].get("role") == "user"),
+        None,
+    )
+    if user_index is None:
+        return False
+    content = messages[user_index].get("content")
+    if isinstance(content, str):
+        blocks = [{"type": "text", "text": content}] if content else []
+    elif isinstance(content, list):
+        blocks = [dict(item) for item in content if isinstance(item, dict)]
+    else:
+        blocks = []
+    images = [
+        index for index, item in enumerate(blocks)
+        if item.get("type") == "image_url"
+    ]
+    while len(images) >= MAX_VISION_IMAGES:
+        blocks.pop(images.pop(0))
+        images = [
+            index for index, item in enumerate(blocks)
+            if item.get("type") == "image_url"
+        ]
+    blocks.append({"type": "text", "text": "Актуальный снимок экрана для визуальной проверки интерфейса:"})
+    blocks.append({"type": "image_url", "image_url": {"url": image_data_url}})
+    messages[user_index]["content"] = blocks
+    return True
+
+
 def _compact_context(messages):
     """Bound model prompt growth while keeping recent assistant-call/tool-result pairs valid."""
     last_user = max(
@@ -337,11 +400,15 @@ def _compact_context(messages):
     history = conversation[:-1][-MAX_CONTEXT_HISTORY_MESSAGES:] if conversation else []
     current = conversation[-1] if conversation else None
     compact = systems + [
-        {**item, "content": str(item.get("content") or "")[-MAX_CONTEXT_HISTORY_CHARS:]}
+        {**item, "content": _bounded_context_content(
+            item.get("content"), MAX_CONTEXT_HISTORY_CHARS, keep_tail=True,
+        )}
         for item in history
     ]
     if current is not None:
-        compact.append({**current, "content": str(current.get("content") or "")[:MAX_PROMPT]})
+        compact.append({**current, "content": _bounded_context_content(
+            current.get("content"), MAX_PROMPT,
+        )})
 
     tail = messages[last_user + 1:]
     groups = []
@@ -380,7 +447,9 @@ def _compact_context(messages):
         elif item.get("role") == "system":
             notes.append({**item, "content": str(item.get("content") or "")[:1500]})
         elif item.get("role") in {"assistant", "user"}:
-            notes.append({**item, "content": str(item.get("content") or "")[:MAX_CONTEXT_HISTORY_CHARS]})
+            notes.append({**item, "content": _bounded_context_content(
+                item.get("content"), MAX_CONTEXT_HISTORY_CHARS,
+            )})
         index += 1
 
     pairs = []
@@ -507,6 +576,14 @@ class Agent:
                              model=getattr(self.ollama, "model", "unknown")):
             return self.ollama.chat(messages, tools, **kwargs)
 
+    def _supports_vision(self):
+        return (
+            getattr(self.ollama, "provider", "") == "OpenAI-compatible"
+            and getattr(self.ollama, "model", "") in {
+                "deepseek-flash", "deepseek-v4-flash",
+            }
+        )
+
     def _call_registered_tool(self, name: str, args: dict, *, mcp=None,
                               authorized_targets=None, user_messages=None,
                               enabled_groups=None, conversation_key=None):
@@ -520,15 +597,14 @@ class Agent:
                 runtime_kwargs["conversation_key"] = conversation_key
             result, is_error = self.local_tool_runtime.call(name, args, **runtime_kwargs)
             if isinstance(result, dict) and isinstance(result.get("image_data_url"), str):
-                # The current DeepSeek/Ollama chat adapter is text-only. Do not
-                # serialize megabytes of base64 into its prompt; use DOM/UIA data.
                 result = dict(result)
-                result.pop("image_data_url", None)
-                result["visual_input"] = {
-                    "captured": True, "forwarded_to_model": False,
-                    "reason": "current_agent_model_adapter_is_text_only",
-                    "alternative": "Use browser_snapshot/browser_network or computer_ui_windows/computer_ui_controls.",
-                }
+                if not self._supports_vision():
+                    result.pop("image_data_url", None)
+                    result["visual_input"] = {
+                        "captured": True, "forwarded_to_model": False,
+                        "reason": "active_model_has_no_supported_vision_input",
+                        "alternative": "Use browser_snapshot or Windows UI Automation controls.",
+                    }
             return result, is_error
         if mcp is None:
             return {"ok": False, "error": "mcp_backend_unavailable"}, True
@@ -1064,6 +1140,22 @@ class Agent:
                     except (BackendError, ToolPolicyError, ValueError, TypeError) as exc:
                         failed = True
                         safe_result = {"ok": False, "error": str(exc)[:200]}
+                    if isinstance(safe_result, dict) and isinstance(
+                            safe_result.get("image_data_url"), str):
+                        image_data_url = safe_result.pop("image_data_url")
+                        forwarded = (
+                            self._supports_vision()
+                            and _append_screenshot_to_latest_user(context, image_data_url)
+                        )
+                        safe_result["visual_input"] = {
+                            "captured": True,
+                            "forwarded_to_model": bool(forwarded),
+                            "reason": None if forwarded else (
+                                "active_model_has_no_supported_vision_input"
+                                if not self._supports_vision()
+                                else "screenshot_payload_invalid_or_too_large"
+                            ),
+                        }
                     serialized = json.dumps(safe_result, ensure_ascii=False)[:MAX_RESULT]
                     safe_event = {
                         "type": kind, "name": str(name)[:80],
