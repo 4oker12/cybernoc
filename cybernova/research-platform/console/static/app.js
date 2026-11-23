@@ -208,7 +208,8 @@ function buildToolBatch(events,count,mode){
   summary.append(
     node("span","tool-batch-title","Инструменты"),
     node("span","tool-batch-count",String(total)),
-    node("span","tool-batch-state",pending?pending+" ожидают решения":errors?errors+" с ошибкой":"выполнено"),
+    node("span","tool-batch-state "+(pending?"is-pending":errors?"is-error":"is-success"),
+      pending?pending+" ожидают решения":errors?errors+" с ошибкой":"выполнено"),
     node("span","tool-batch-mode",modeLabel),
     node("span","tool-batch-preview",preview||"Подробности недоступны")
   );

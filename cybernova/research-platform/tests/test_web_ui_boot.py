@@ -36,10 +36,24 @@ class WebUIBootTests(unittest.TestCase):
         parsed=Scripts()
         parsed.feed(html)
         self.assertEqual([x.get("src") for x in parsed.starts],
-                         ["/static/markdown.js?v=20261123-dsml2","/static/app.js?v=20261123-researcher-behavior-1",
-                          "/static/model-settings.js","/static/ux.js?v=20261122-ui1"])
+                         ["/static/markdown.js?v=20261123-semantic-sections-1","/static/app.js?v=20261123-global-design-1",
+                          "/static/model-settings.js","/static/ux.js?v=20261123-global-design-1"])
         self.assertEqual(parsed.ends,4)
         self.assertEqual(html.count("</script>"),4)
+
+    def test_control_panel_uses_the_same_light_design_language(self):
+        root=ROOT.parent/"control-panel"/"web"
+        html=(root/"index.html").read_text(encoding="utf-8")
+        design=(root/"design-system.css").read_text(encoding="utf-8")
+        self.assertIn('<meta name="color-scheme" content="light">',html)
+        self.assertIn('/design-system.css?v=20261123-github-global-1',html)
+        self.assertGreater(html.index('/design-system.css'),html.index('/style.css'))
+        for selector in ('.sidebar','.nav-link.active','.metric','.panel',
+                         '.ring-node','.participant-status','.auth-modal'):
+            self.assertIn(selector,design)
+        self.assertIn('--blue:#0969da',design)
+        self.assertIn('--purple:#8250df',design)
+        self.assertIn('--green:#1a7f37',design)
 
     def test_chat_headings_and_compact_composer_contract(self):
         html=(STATIC/"index.html").read_text(encoding="utf-8")

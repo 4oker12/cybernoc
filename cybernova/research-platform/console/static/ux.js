@@ -23,7 +23,7 @@
       const summary = create("summary", "tool-batch-summary");
       const title = create("span", "tool-batch-title", "Инструменты");
       const count = create("span", "tool-batch-count", String(items.length));
-      const state = create("span", "tool-batch-state",
+      const state = create("span", "tool-batch-state " + (errors ? "is-error" : "is-success"),
         errors ? errors + " с ошибкой" : "выполнено");
       const preview = create("span", "tool-batch-preview",
         names.slice(0, 3).join(" · ") + (names.length > 3 ? " · +" + (names.length - 3) : ""));

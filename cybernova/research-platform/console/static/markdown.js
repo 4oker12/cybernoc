@@ -44,7 +44,12 @@
   function section(line){
     const m=/^\s*(?:\*\*)?(Рекомендаци[яи](?:\s+по\s+приоритету|\s+Qwen)?|Что\s+проверено|Повторная\s+проверка|Ограничения|Следующ(?:ий|ие)\s+шаг(?:и)?|Критери[йи]\s+успеха|Итог|Вывод|Факты|Гипотезы|Риски|Что проверить)(?:\*\*)?\s*[:—–-]?\s*(.*)$/i.exec(line);
     if(!m)return null;
-    return {title:m[1],detail:m[2]||"",kind:/рекомендац/i.test(m[1])?"recommendation":/шаг|провер/i.test(m[1])?"steps":/критери/i.test(m[1])?"criteria":"finding"};
+    const kind=/рекомендац/i.test(m[1])?"recommendation":
+      /риски|ограничения/i.test(m[1])?"risk":
+      /гипотез/i.test(m[1])?"hypothesis":
+      /шаг|провер/i.test(m[1])?"steps":
+      /критери/i.test(m[1])?"criteria":"finding";
+    return {title:m[1],detail:m[2]||"",kind};
   }
   function normalizeAssistantText(value){
     const text=String(value??"");
@@ -84,12 +89,20 @@
         code.textContent=rows.join("\n");pre.append(code);root.append(pre);continue;
       }
       const heading=/^\s*(#{1,5})\s+(.+)$/.exec(raw);
-      if(heading){const h=el("h"+Math.max(2,Math.min(heading[1].length,5)));inline(h,heading[2]);root.append(h);i++;continue;}
+      if(heading){
+        const semantic=section(heading[2].trim());
+        const classes=semantic?"md-section md-section--"+semantic.kind:"";
+        const h=el("h"+Math.max(2,Math.min(heading[1].length,5)),classes);
+        if(semantic)h.dataset.sectionKind=semantic.kind;
+        inline(h,heading[2]);root.append(h);i++;continue;
+      }
       if(/^([-*_])\1{2,}\s*$/.test(trimmed)){root.append(el("hr"));i++;continue;}
       const note=section(trimmed);
       if(note && !(trimmed.includes("|")&&i+1<lines.length&&divider(cells(lines[i+1]))) &&
          (trimmed.startsWith("**")||note.detail.length<160)){
-        const h=el("h2");inline(h,note.title);root.append(h);
+        const h=el("h2","md-section md-section--"+note.kind);
+        h.dataset.sectionKind=note.kind;
+        inline(h,note.title);root.append(h);
         if(note.detail){inline(root.appendChild(el("p")),note.detail.replace(/^\*+/,""));}
         i++;continue;
       }

@@ -34,7 +34,11 @@ const root=render("## Вывод\n\n**Подтверждено:** 3 успешн
 assert.equal(root.children[0].tag,"h2");
 assert.equal(root.children[2].tag,"h2");
 assert.equal(root.children[0].children[0].textContent,"Вывод");
+assert(root.children[0].className.includes("md-section--finding"));
+assert(root.children[2].className.includes("md-section--steps"));
 assert.equal(render("Вывод: результат").children[0].tag,"h2");
+assert(render("Вывод: результат").children[0].className.includes("md-section--finding"));
+assert(render("Риски: есть").children[0].className.includes("md-section--risk"));
 assert.equal(render("Повторная проверка: расхождений нет").children[0].tag,"h2");
 assert.equal(render("Ограничения: отсутствуют").children[0].tag,"h2");
 const leaked='< | | DSML | | calls>< | | DSML | | invoke name="dev_read">< | | DSML | | parameter name="path">a.py</ | | DSML | | parameter></ | | DSML | | invoke></ | | DSML | | calls>';
