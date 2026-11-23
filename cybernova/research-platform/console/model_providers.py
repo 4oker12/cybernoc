@@ -283,8 +283,17 @@ class OpenAICompatibleClient:
                            else "max_tokens")
         if token_field not in {"max_tokens", "max_completion_tokens"}:
             raise ModelConfigError("invalid_token_parameter")
+        # DeepSeek Max can consume its whole 4K output budget in reasoning.
+        # Give Max a larger ceiling only when explicitly selected; all other
+        # modes keep their previous default and explicit budgets always win.
+        deepseek_max = (
+            self.model.startswith("deepseek-")
+            and os.environ.get("CYBERNOVA_DEEPSEEK_THINKING", "enabled").strip().lower() == "enabled"
+            and os.environ.get("CYBERNOVA_DEEPSEEK_REASONING_EFFORT", "high").strip().lower() == "max"
+        )
+        default_limit = "32768" if deepseek_max else "4096"
         try:
-            max_tokens = int(os.environ.get("CYBERNOVA_LLM_MAX_TOKENS", "4096"))
+            max_tokens = int(os.environ.get("CYBERNOVA_LLM_MAX_TOKENS") or default_limit)
         except ValueError:
             raise ModelConfigError("invalid_llm_max_tokens") from None
         if not 256 <= max_tokens <= 32768:

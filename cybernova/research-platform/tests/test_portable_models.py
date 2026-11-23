@@ -145,12 +145,30 @@ class ModelProviderTests(unittest.TestCase):
             with patch.dict(os.environ, {
                 "CYBERNOVA_DEEPSEEK_THINKING": "enabled",
                 "CYBERNOVA_DEEPSEEK_REASONING_EFFORT": effort,
+                "CYBERNOVA_LLM_MAX_TOKENS": "",
             }):
                 client.chat([{"role": "user", "content": "test"}])
         self.assertEqual([p["model"] for p in sent],
                          ["deepseek-v4-pro", "deepseek-v4-pro"])
         self.assertEqual([p["reasoning_effort"] for p in sent], ["high", "max"])
+        self.assertEqual([p["max_tokens"] for p in sent], [4096, 32768])
         self.assertTrue(all(p["thinking"] == {"type": "enabled"} for p in sent))
+
+    def test_explicit_token_budget_is_not_overridden_by_max_effort(self):
+        sent=[]
+        def transport(payload):
+            sent.append(payload)
+            return {"choices":[{"message":{"content":"ok"}}]}
+        client=OpenAICompatibleClient(
+            base_url="https://api.deepseek.com",model="deepseek-v4-pro",
+            api_key="test-deepseek-key",transport=transport)
+        with patch.dict(os.environ, {
+            "CYBERNOVA_DEEPSEEK_THINKING":"enabled",
+            "CYBERNOVA_DEEPSEEK_REASONING_EFFORT":"max",
+            "CYBERNOVA_LLM_MAX_TOKENS":"2048",
+        }):
+            client.chat([{"role":"user","content":"test"}])
+        self.assertEqual(sent[0]["max_tokens"],2048)
 
     def test_deepseek_can_be_disabled_from_thinking_mode(self):
         transmitted=[]
