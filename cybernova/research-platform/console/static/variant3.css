@@ -255,3 +255,115 @@ html[data-theme="light"] .inspector {
 .token-usage-receipt {
   display: none !important;
 }
+
+
+/* Compact saved research task list: dense, readable, and independently scrollable. */
+:root[data-theme="light"] .sidebar #researchTasks {
+  flex: 0 0 auto;
+  max-height: min(38vh, 292px);
+  min-height: 0;
+  margin-top: 8px;
+  padding-top: 5px;
+  overflow: hidden;
+}
+:root[data-theme="light"] .sidebar #researchTasks > summary {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  font-size: 11px;
+  line-height: 1.25;
+}
+:root[data-theme="light"] .sidebar #researchTasks > #taskList {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  max-height: min(32vh, 252px);
+  padding: 2px 3px 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+:root[data-theme="light"] .sidebar #taskList > .task-item {
+  display: flex;
+  flex: 0 0 36px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: #ffffff;
+  box-shadow: none;
+  overflow: hidden;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+:root[data-theme="light"] .sidebar #taskList > .task-item:hover {
+  background: #f1f8ff;
+  border-color: #d8eaf9;
+}
+:root[data-theme="light"] .sidebar #taskList > .task-item.selected {
+  background: #ddf4ff;
+  border-color: #b6e3ff;
+  color: #0550ae;
+  box-shadow: inset 3px 0 0 #0969da;
+}
+:root[data-theme="light"] .sidebar #taskList .task-title {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  max-height: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+:root[data-theme="light"] .sidebar #taskList .task-state {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  align-self: center;
+  padding: 3px 6px;
+  border: 1px solid #d8dee4;
+  border-radius: 999px;
+  background: #f6f8fa;
+  color: #59636e;
+  font-size: 9px;
+  font-weight: 550;
+  line-height: 1;
+  white-space: nowrap;
+}
+:root[data-theme="light"] .sidebar #taskList .task-state[data-status="completed"] {
+  background: #eaf6ee;
+  border-color: #cde8d4;
+  color: #1f883d;
+}
+:root[data-theme="light"] .sidebar #taskList .task-state[data-status="running"],
+:root[data-theme="light"] .sidebar #taskList .task-state[data-status="in_progress"] {
+  background: #ddf4ff;
+  border-color: #b6e3ff;
+  color: #0550ae;
+}
+:root[data-theme="light"] .sidebar #taskList .task-state[data-status="failed"],
+:root[data-theme="light"] .sidebar #taskList .task-state[data-status="error"] {
+  background: #fff1f0;
+  border-color: #ffcecb;
+  color: #cf222e;
+}
+@media (max-width: 680px) {
+  :root[data-theme="light"] .sidebar #researchTasks {
+    max-height: 30vh;
+  }
+  :root[data-theme="light"] .sidebar #researchTasks > #taskList {
+    max-height: 25vh;
+  }
+}

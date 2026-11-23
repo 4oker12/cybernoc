@@ -795,6 +795,7 @@ async function refreshTaskList(){
       button.dataset.taskId=task.task_id;
       const text=node("span","task-title",task.title||"Исследование");
       const status=node("span","task-state",task.status||"idle");
+      status.dataset.status=String(task.status||"idle").toLowerCase();
       button.append(text,status);
       button.addEventListener("click",()=>resumeTask(task.task_id));
       list.append(button);
