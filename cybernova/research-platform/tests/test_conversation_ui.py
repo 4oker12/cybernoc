@@ -118,8 +118,8 @@ class GPTConversationTests(unittest.TestCase):
         assets={
             "/static/design-system.css":"text/css",
             "/static/ux.css":"text/css",
-            "/static/ux.js":"javascript",
-            "/static/model-settings.js":"javascript",
+            "/static/ux.js":"text/javascript",
+            "/static/model-settings.js":"text/javascript",
         }
         for path,mime in assets.items():
             with self.subTest(path=path):
