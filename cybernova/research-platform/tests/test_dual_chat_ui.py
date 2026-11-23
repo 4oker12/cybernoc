@@ -114,6 +114,7 @@ class DualChatTests(unittest.TestCase):
                             ("/api/siwc/chats","GET"),("/api/profile-settings","GET"),
                             ("/api/profile-settings","POST"),("/api/model-config","GET"),
                             ("/api/model-config","POST"),("/static/markdown.js","GET"),
+                            ("/static/design-system.css","GET"),
                             ("/static/ux.css","GET"),("/static/ux.js","GET"),
                             ("/static/model-settings.js","GET")):
             self.assertTrue(allowed_path(path,method))

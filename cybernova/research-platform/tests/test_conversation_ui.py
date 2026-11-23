@@ -109,6 +109,7 @@ class GPTConversationTests(unittest.TestCase):
         self.assertTrue(allowed_path("/static/ux.js","GET"))
         self.assertTrue(allowed_path("/static/model-settings.js","GET"))
         self.assertTrue(allowed_path("/static/markdown.js","GET"))
+        self.assertTrue(allowed_path("/static/design-system.css","GET"))
         self.assertFalse(allowed_path("/api/siwc/tokens","GET"))
 
     def test_markup_is_loaded_once_and_has_no_html_execution(self):

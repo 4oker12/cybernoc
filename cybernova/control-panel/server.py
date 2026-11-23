@@ -21,7 +21,8 @@ HERE = Path(__file__).resolve().parent
 WEB = HERE / 'web'
 FILES = {'/': ('index.html', 'text/html; charset=utf-8'),
          '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
-         '/style.css': ('style.css', 'text/css; charset=utf-8')}
+         '/style.css': ('style.css', 'text/css; charset=utf-8'),
+         '/design-system.css': ('design-system.css', 'text/css; charset=utf-8')}
 DEFAULT_TOKEN_FILE = Path.home() / '.local/share/cybernova-panel/token'
 
 

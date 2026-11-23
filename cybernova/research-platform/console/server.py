@@ -366,6 +366,11 @@ def styles():
     return FileResponse(ROOT / "static" / "styles.css", media_type="text/css")
 
 
+@app.get("/static/design-system.css")
+def design_system_styles():
+    return FileResponse(ROOT / "static" / "design-system.css", media_type="text/css")
+
+
 @app.get("/static/markdown.js")
 def markdown_javascript():
     return FileResponse(ROOT / "static" / "markdown.js", media_type="text/javascript")
