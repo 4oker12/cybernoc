@@ -36,7 +36,7 @@ class WebUIBootTests(unittest.TestCase):
         parsed=Scripts()
         parsed.feed(html)
         self.assertEqual([x.get("src") for x in parsed.starts],
-                         ["/static/markdown.js?v=20261123-semantic-sections-1","/static/app.js?v=20261123-deepseek-controls-1",
+                         ["/static/markdown.js?v=20261123-semantic-sections-1","/static/app.js?v=20261123-github-green-primary-1",
                           "/static/model-settings.js?v=20261123-deepseek-controls-1","/static/ux.js?v=20261123-global-design-2"])
         self.assertEqual(parsed.ends,4)
         self.assertEqual(html.count("</script>"),4)
@@ -44,14 +44,14 @@ class WebUIBootTests(unittest.TestCase):
     def test_global_github_design_system_covers_the_research_console(self):
         html=(STATIC/"index.html").read_text(encoding="utf-8")
         design=(STATIC/"design-system.css").read_text(encoding="utf-8")
-        self.assertIn('/static/design-system.css?v=20261123-github-green-headings-1',html)
+        self.assertIn('/static/design-system.css?v=20261123-github-green-primary-1',html)
         self.assertGreater(html.index('/static/design-system.css'),html.index('/static/ux.css'))
         for selector in ('.sidebar','.topbar','.chat-msg.from-user .message-body',
                          '.md-content strong','.md-section--risk','.md-code',
                          '.tool-batch','.tool-picker','.collab-entry','.inspector',
                          '.profile-dialog',':root[data-theme="dark"]'):
             self.assertIn(selector,design)
-        self.assertIn('--accent:#0969da',design)
+        self.assertIn('--accent:#1f883d',design)
         self.assertIn('--purple:#8250df',design)
         self.assertIn('--success:#1a7f37',design)
 
@@ -87,6 +87,20 @@ class WebUIBootTests(unittest.TestCase):
         self.assertIn("Ctrl+V — вставить вывод",html)
         self.assertIn(".followup-question{",css)
         self.assertIn("background:#eaf2ff",css)
+
+    def test_green_accent_single_composer_focus_and_compact_usage(self):
+        design=(STATIC/"design-system.css").read_text(encoding="utf-8")
+        variant=(STATIC/"variant3.css").read_text(encoding="utf-8")
+        app=(STATIC/"app.js").read_text(encoding="utf-8")
+        self.assertIn("--accent:#1f883d",design)
+        self.assertIn("--accent-strong:#166534",design)
+        self.assertIn(".composer textarea#messageInput:focus-visible",variant)
+        self.assertIn("outline:none!important;border:0!important",variant)
+        self.assertIn(".token-usage-receipt { display: none !important; }",variant)
+        self.assertIn(".composer-meta #tokenUsageStatus",variant)
+        self.assertIn(".inline-tools .tool-batch-count",variant)
+        self.assertIn(".followup-question:focus:not(:focus-visible)",variant)
+        self.assertIn('"Токены · вход: "+formatTokens(last.input)',app)
 
     def test_deepseek_controls_are_real_and_contextual(self):
         html=(STATIC/"index.html").read_text(encoding="utf-8")

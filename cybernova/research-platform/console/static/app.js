@@ -433,9 +433,9 @@ function updateTokenUsageStatus(mode){
   const last=state.lastUsage[mode],totals=state.usageTotals[mode];
   if(!last){$("tokenUsageStatus").textContent="Токены: —";return;}
   if(!last.available){$("tokenUsageStatus").textContent="Токены: нет usage от провайдера";return;}
-  const lastText=last.total===null?"частично":formatTokens(last.total);
   $("tokenUsageStatus").textContent=
-    "Последний ход: "+lastText+" · сеанс: "+formatTokens(totals.total);
+    "Токены · вход: "+formatTokens(last.input)+" · выход: "+
+    formatTokens(last.output)+" · всего: "+formatTokens(last.total);
   $("tokenUsageStatus").title=
     "Фактический учёт по usage провайдера. Вход: "+formatTokens(totals.input)+
     "; выход: "+formatTokens(totals.output)+
@@ -533,7 +533,7 @@ async function watchUsageProgress(runId,mode="qwen"){
       const progress=await response.json(),usage=progress.usage||{};
       if(state.mode===mode&&usage.available===true){
         $("tokenUsageStatus").textContent=
-          (progress.status==="running"?"Сейчас: ":"Последний ход: ")+
+          (progress.status==="running"?"Сейчас · ":"Токены · ")+
           "вход "+formatTokens(usage.input_tokens)+" · выход "+
           formatTokens(usage.output_tokens)+" · всего "+formatTokens(usage.total_tokens);
         $("tokenUsageStatus").title="Промежуточный usage от провайдера "+
