@@ -671,7 +671,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(out["selected_by"], "none")
         self.assertEqual(mcp.calls, [])
         self.assertEqual(len(lm.prompts), 2)  # Simple conversation skips evidence review.
-        self.assertEqual(lm.prompts[-1][1], [])
+        self.assertIsNone(lm.prompts[-1][1])
         self.assertIn("http_get", [t["function"]["name"] for t in lm.prompts[0][1]])
         self.assertEqual(out["answer"], "Объясню без инструментов.")
 

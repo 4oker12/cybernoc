@@ -128,7 +128,7 @@ class BrowserControlTests(unittest.TestCase):
         ):
             result, failed = runtime._call_impl(
                 "browser_submit", {"name": "Send"},
-                user_messages=[{"role": "user", "content": "Отправь заполненную форму."}],
+                user_messages=[{"role": "user", "content": "Сохрани заполненную форму."}],
                 conversation_key="browser-submit-test",
             )
         self.assertFalse(failed)

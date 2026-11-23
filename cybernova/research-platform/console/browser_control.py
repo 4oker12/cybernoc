@@ -109,7 +109,7 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers."),
     _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
-          "Submit one visible form/button only when the latest user message explicitly asks to send, submit, publish or post that form. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Unrelated writes, DELETE, other write methods, payment, purchase, deletion and account-removal actions remain blocked.",
+          "Submit one visible form/button only when the latest user message explicitly asks to send, submit, save, apply, publish or post that form. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Unrelated writes, DELETE, other write methods, payment, purchase, deletion and account-removal actions remain blocked.",
           {"name": {**STRING, "description": "Exact accessible name of the visible form submit button"}}, ["name"]),
 ]
 BROWSER_CONTROL_NAMES = frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS)
