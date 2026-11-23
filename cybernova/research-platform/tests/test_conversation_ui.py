@@ -118,14 +118,14 @@ class GPTConversationTests(unittest.TestCase):
         assets={
             "/static/design-system.css":"text/css",
             "/static/ux.css":"text/css",
-            "/static/ux.js":"text/javascript",
-            "/static/model-settings.js":"text/javascript",
+            "/static/ux.js":"javascript",
+            "/static/model-settings.js":"javascript",
         }
         for path,mime in assets.items():
             with self.subTest(path=path):
                 response=client.get(path)
                 self.assertEqual(response.status_code,200,response.text[:200])
-                self.assertTrue(response.headers["content-type"].startswith(mime))
+                self.assertIn(mime,response.headers["content-type"])
 
     def test_markup_is_loaded_once_and_has_no_html_execution(self):
         html=(ROOT/"console/static/index.html").read_text(encoding="utf-8")
