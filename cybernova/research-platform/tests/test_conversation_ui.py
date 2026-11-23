@@ -183,7 +183,7 @@ class BrowserMarkdownTests(unittest.TestCase):
         assert(nodes.some(n=>n.tagName==="TABLE"));
         assert(nodes.some(n=>n.tagName==="UL"));
         assert(nodes.some(n=>n.tagName==="PRE"));
-        assert(nodes.some(n=>n.tagName==="STRONG"||n.tagName==="H3"));
+        assert(nodes.some(n=>n.tagName==="STRONG"||n.tagName==="H2"));
         assert(!nodes.some(n=>n.tagName==="IMG"||n.tagName==="SCRIPT"));
         const content=nodes.map(n=>n.textContent||"").join(" ");
         assert(content.includes("<img src=x onerror=alert(1)>"));

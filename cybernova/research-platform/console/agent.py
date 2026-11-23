@@ -259,11 +259,17 @@ def _extract_dsml_calls(content, allowed_names=None):
         return [], text, False
     # Decode HTML entities only for a possible DSML result (including encoded pipes).
     canonical = html.unescape(text).replace("＜", "<").replace("＞", ">").replace("‹", "<").replace("›", ">")
-    if not _DSML_MARKER_RE.search(canonical):
+    marker = _DSML_MARKER_RE.search(canonical)
+    if not marker:
         return [], text, False
+    # Quoted protocol following ordinary prose is never authorized for execution.
+    # We may still remove the markup from a final chat answer below.
+    executable_envelope = not canonical[:marker.start()].strip()
     text = canonical
     calls = []
     for match in _DSML_INVOKE_RE.finditer(text):
+        if not executable_envelope:
+            break
         name = match.group("name").strip()
         if not name:
             continue

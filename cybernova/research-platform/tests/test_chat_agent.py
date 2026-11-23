@@ -547,6 +547,16 @@ class AgentTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertEqual(_clean_model_answer(fragment), "")
 
+    def test_quoted_dsml_in_prose_is_never_executed(self):
+        example = (
+            'В документации встречается: <｜DSML｜calls><｜DSML｜invoke name="dev_read">'
+            '<｜DSML｜parameter name="path" string="true">a.py</｜DSML｜parameter>'
+            '</｜DSML｜invoke></｜DSML｜calls>'
+        )
+        calls, cleaned, found = _extract_dsml_calls(example, {"dev_read"})
+        self.assertTrue(found)
+        self.assertEqual(calls, [])
+        self.assertEqual(cleaned, "В документации встречается:")
     def test_fenced_protocol_sample_is_preserved_as_educational_code(self):
         sample = '```text\n<｜DSML｜invoke name="dev_read">example\n```'
         self.assertEqual(_clean_model_answer(sample), sample)
