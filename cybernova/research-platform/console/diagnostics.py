@@ -302,8 +302,16 @@ def observe_chat(mode, backend, latest_usage):
                     progress = latest_usage(payload.run_id) or {}
                     usage = result.get("usage") or progress.get("usage") or {}
                     partial = result.get("source") == "chatgpt_plan_responses_partial"
-                    status = "failed" if error is not None else "partial" if partial else "completed"
-                    root, code = _chat_error(error) if error is not None else (None, result.get("error_code"))
+                    result_code = result.get("error_code")
+                    handled_provider_failure = (
+                        isinstance(result_code, str) and _ADAPTER_CODE.fullmatch(result_code)
+                    )
+                    status = ("failed" if error is not None or handled_provider_failure
+                              else "partial" if partial else "completed")
+                    root, code = (
+                        _chat_error(error) if error is not None
+                        else (None, result_code if handled_provider_failure else result.get("error_code"))
+                    )
                     stage, upstream = "chat_turn", None
                     if isinstance(code, str) and _ADAPTER_CODE.fullmatch(code):
                         if "_http_" in code:
@@ -320,7 +328,7 @@ def observe_chat(mode, backend, latest_usage):
                                   model=scrub(model, 160), status=status, stage=stage,
                                   duration_ms=round((time.monotonic()-start)*1000),
                                   error_type=(type(root).__name__ if root is not None else
-                                              "SIWCError" if partial else None),
+                                              result.get("error_type") if handled_provider_failure else "SIWCError" if partial else None),
                                   error_code=code, upstream_http_status=upstream,
                                   http_status=getattr(error, "status_code", 500) if error else 200)
                     events = result.get("tool_events", result.get("events", []))

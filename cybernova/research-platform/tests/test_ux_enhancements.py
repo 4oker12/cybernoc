@@ -78,10 +78,6 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn("Инструменты", ux)
         self.assertIn(".tool-batch", css)
         self.assertIn("followup-questions", css)
-        self.assertIn("background:#eaf2ff", css)
-        self.assertIn("border-left:3px solid #7399d8", css)
-        self.assertIn(':root[data-theme="dark"] .followup-question', css)
-        self.assertIn(':root[data-theme="light"] .followup-question', css)
 
     def test_chatgpt_terminal_paste_extension_is_scoped_and_clipboard_only(self):
         import json
@@ -114,6 +110,11 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn("Cybernova contrast and type readability pass", css)
         self.assertIn(':root[data-theme="dark"] .message-body .md-content', css)
         self.assertIn(':root[data-theme="light"] .message-body .md-content', css)
+        self.assertIn(".followup-question{", css)
+        self.assertIn("background:#eaf2ff", css)
+        self.assertIn("border-left:3px solid #7399d8", css)
+        self.assertIn(':root[data-theme="dark"] .followup-question', css)
+        self.assertIn(':root[data-theme="light"] .followup-question', css)
         self.assertIn(".sidebar .task-title{font-size:13.5px", css)
         self.assertIn(".tool-group-description{font-size:11px", css)
 
@@ -130,7 +131,8 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn(".sidebar #gptSidebar", css)
         self.assertIn(".sidebar .sidebar-more[open]>.task-list", css)
         self.assertIn(".sidebar .task-title", css)
-        self.assertIn(".composer .paste-output-button", css)
+        self.assertNotIn(".composer .paste-output-button", css)
+        self.assertIn("Ctrl+V — вставить вывод", html)
         self.assertIn(".composer .diagnostics-download-button", css)
 
     def test_selection_ask_and_nonblocking_composer_are_present(self):

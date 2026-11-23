@@ -5,9 +5,9 @@ import html
 import json
 
 try:
-    from .diagnostics import span as diagnostic_span
+    from .diagnostics import adapter_error_code, span as diagnostic_span
 except ImportError:
-    from diagnostics import span as diagnostic_span
+    from diagnostics import adapter_error_code, span as diagnostic_span
 import os
 import re
 import secrets
@@ -1027,12 +1027,14 @@ class Agent:
             raise BackendError("agent_round_limit")
         except (BackendError, ValueError, TypeError) as exc:
             detail = getattr(exc, "safe_detail", None)
+            code = adapter_error_code(exc)
             events.append({"type": "agent_error", "message": str(exc)[:200]})
             answer = "Ошибка исполнения: " + str(exc)[:180]
             if isinstance(detail, str) and detail:
                 answer += "\nДеталь провайдера: " + detail[:420]
             return {
-                "answer": answer,
+                "answer": answer, "error_code": code,
+                "error_type": type(exc).__name__ if code else None,
                 "events": events, "tool_calls": executed,
                 "approval_requests": pending_requests,
                 "selected_by": selected_by if count or executed else "none", "model": self.ollama.model,

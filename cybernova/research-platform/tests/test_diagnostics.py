@@ -124,6 +124,33 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(error["upstream_http_status"], 429)
         self.assertEqual(error["stage"], "provider_http")
 
+    def test_chat_turn_marks_handled_provider_http_error_as_failed(self):
+        from types import SimpleNamespace
+        run=SimpleNamespace(run_id="e"*32)
+        observe=diagnostics.observe_chat(
+            "researcher",lambda p:("OpenAI-compatible","deepseek-flash"),lambda run_id:{}
+        )
+        @observe
+        def handled(payload):
+            return {
+                "answer":"Ошибка исполнения: llm_http_400",
+                "error_code":"llm_http_400",
+                "error_type":"ModelConfigError",
+                "usage":{"input_tokens":10,"output_tokens":2},
+            }
+        with self.journal():
+            handled(run)
+            report=diagnostics.export_jsonl().decode("utf-8")
+        item=next(
+            row["chat_turn"] for row in (json.loads(line) for line in report.splitlines()[1:])
+            if "chat_turn" in row
+        )
+        self.assertEqual(item["status"],"failed")
+        self.assertEqual(item["stage"],"provider_http")
+        self.assertEqual(item["upstream_http_status"],400)
+        self.assertEqual(item["error_code"],"llm_http_400")
+        self.assertEqual(item["error_type"],"ModelConfigError")
+
     def test_account_gpt_partial_event_omits_response_text_and_uses_progress(self):
         from types import SimpleNamespace
         run = SimpleNamespace(run_id="b" * 32)

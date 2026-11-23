@@ -268,6 +268,7 @@ class ModelProviderTests(unittest.TestCase):
         self.assertIn("Ошибка исполнения: llm_http_400",result["answer"])
         self.assertIn("Деталь провайдера:",result["answer"])
         self.assertIn("reasoning_content",result["answer"])
+        self.assertEqual(result["error_code"],"llm_http_400")
 
     def test_json_mode_and_provider_errors_never_echo_credentials(self):
         def transport(payload):
