@@ -116,7 +116,7 @@ class GPTConversationTests(unittest.TestCase):
         js=(ROOT/"console/static/markdown.js").read_text(encoding="utf-8")
         app=(ROOT/"console/static/app.js").read_text(encoding="utf-8")
         ux=(ROOT/"console/static/ux.js").read_text(encoding="utf-8")
-        self.assertEqual(html.count('src="/static/markdown.js?v=20261123-dsml2"'),1)
+        self.assertEqual(html.count('src="/static/markdown.js?v=20261123-semantic-sections-1"'),1)
         self.assertNotIn("innerHTML",js.split("(function () {",1)[1])
         self.assertIn("CybernovaMarkdown.render",app)
         self.assertIn("function buildToolBatch",app)
