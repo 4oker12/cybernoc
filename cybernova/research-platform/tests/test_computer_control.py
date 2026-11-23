@@ -94,7 +94,10 @@ class ComputerControlTests(unittest.TestCase):
 
     def test_mouse_and_keyboard_targets_reject_sensitive_or_high_impact_controls(self):
         self.assertEqual(_validate_ui_target("Dashboard tab"), "Dashboard tab")
-        for target in ("Save button", "Delete account", "Password field", "API key input"):
+        for target in (
+            "Save button", "Delete account", "Password field", "API key input",
+            "Create profile", "Add account", "New profile",
+        ):
             with self.subTest(target=target):
                 with self.assertRaises(ValueError):
                     _validate_ui_target(target)
@@ -127,6 +130,7 @@ class ComputerControlTests(unittest.TestCase):
         for label in (
             "Delete", "Uninstall", "Quick scan", "Full scan", "Apply",
             "Disable protection", "Quarantine", "Save", "Restart",
+            "Create profile", "Add account", "New profile",
             "OK", "Yes", "Next", "Continue",
         ):
             with self.subTest(label=label):
