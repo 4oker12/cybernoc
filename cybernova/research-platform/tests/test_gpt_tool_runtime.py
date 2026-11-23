@@ -19,7 +19,7 @@ from console.computer_control import (
 
 
 class GPTToolRuntimeTests(unittest.TestCase):
-    def test_tool_catalog_is_separate_and_excludes_unapproved_submit(self):
+    def test_tool_catalog_is_separate_and_includes_intent_gated_submit(self):
         tools = build_tool_catalog()
         names = {item["name"] for item in tools}
         self.assertIn("terminal_run", names)
@@ -33,7 +33,7 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertTrue(GITHUB_NAMES.issubset(names))
         from console.github_write_tools import GITHUB_WRITE_NAMES
         self.assertTrue(GITHUB_WRITE_NAMES.issubset(names))
-        self.assertNotIn("browser_submit", names)
+        self.assertIn("browser_submit", names)
         self.assertTrue({
             "computer_system_overview", "computer_performance_snapshot",
             "computer_process_list", "computer_disk_overview",
@@ -363,7 +363,7 @@ class GPTToolRuntimeTests(unittest.TestCase):
         runtime = GPTToolRuntime()
         result, is_error = runtime.call("browser_submit", {"name": "Submit"})
         self.assertTrue(is_error)
-        self.assertEqual(result["error"], "gpt_tool_not_registered")
+        self.assertEqual(result["error"], "browser_submit_requires_explicit_user_intent")
 
 
 if __name__ == "__main__":

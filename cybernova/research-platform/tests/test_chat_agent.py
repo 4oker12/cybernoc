@@ -670,7 +670,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(out["tool_calls"], 0)
         self.assertEqual(out["selected_by"], "none")
         self.assertEqual(mcp.calls, [])
-        self.assertEqual(len(lm.prompts), 3)  # Includes second-pass audit request.
+        self.assertEqual(len(lm.prompts), 2)  # Simple conversation skips evidence review.
         self.assertEqual(lm.prompts[-1][1], [])
         self.assertIn("http_get", [t["function"]["name"] for t in lm.prompts[0][1]])
         self.assertEqual(out["answer"], "Объясню без инструментов.")
@@ -769,7 +769,7 @@ class AgentTests(unittest.TestCase):
             [], "Ответь обычным текстом", tools_enabled=False,
         )
         self.assertEqual(out["answer"], "Проверка завершена.")
-        self.assertEqual(len(lm.prompts), 3)  # Two draft attempts plus audit.
+        self.assertEqual(len(lm.prompts), 2)  # Two text-only attempts; no tool evidence to review.
         self.assertEqual(lm.prompts[1][1], [])
 
     def test_round_limit_uses_finalizer_and_never_returns_dsml(self):

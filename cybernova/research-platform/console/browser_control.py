@@ -47,7 +47,7 @@ HIGH_IMPACT = re.compile(
 )
 IRREVERSIBLE_SUBMIT_TARGET = re.compile(
     r"(?i)(pay(?:ment)?|purchase|buy\s+now|place\s+order|checkout|"
-    r"\bbook(?:\s+now)?\b|\breserve\b|\bdelete\b|\bremove\b|"
+    r"\bbook(?:\s+now)?\b|\breserve\b|\border\b|\bdelete\b|\bremove\b|"
     r"unsubscribe|\bcancel\b|\brevoke\b|\bdisable\b|\bdeactivate\b|"
     r"\blog\s*out\b|\bsign\s*out\b|\breset\b|\bdisconnect\b|"
     r"\bterminate\b|\berase\b|\bdestroy\b|"
