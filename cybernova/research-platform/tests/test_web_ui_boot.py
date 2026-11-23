@@ -37,7 +37,7 @@ class WebUIBootTests(unittest.TestCase):
         parsed.feed(html)
         self.assertEqual([x.get("src") for x in parsed.starts],
                          ["/static/markdown.js?v=20261123-semantic-sections-1","/static/app.js?v=20261123-global-design-2",
-                          "/static/model-settings.js","/static/ux.js?v=20261123-global-design-1"])
+                          "/static/model-settings.js","/static/ux.js?v=20261123-global-design-2"])
         self.assertEqual(parsed.ends,4)
         self.assertEqual(html.count("</script>"),4)
 
