@@ -433,12 +433,17 @@ def _compact_context(messages):
     return compact
 
 
-def _restore_reasoning_history(persisted_history, in_memory_history):
-    """Reattach transient DeepSeek reasoning to matching persisted visible replies."""
+def _restore_reasoning_history(persisted_history, in_memory_history, provider_identity=None):
+    """Reattach private provider state only to matching visible assistant replies."""
     prior = [
         item for item in in_memory_history
         if isinstance(item, dict) and item.get("role") == "assistant"
         and isinstance(item.get("reasoning_content"), str)
+        and (
+            provider_identity is None
+            or item.get("_provider_identity") is None
+            or tuple(item.get("_provider_identity")) == tuple(provider_identity)
+        )
     ]
     cursor = 0
     restored = []
@@ -446,7 +451,7 @@ def _restore_reasoning_history(persisted_history, in_memory_history):
         if not isinstance(item, dict):
             continue
         copied = dict(item)
-        if copied.get("role") == "assistant":
+        if copied.get("role") == "assistant" and not isinstance(copied.get("reasoning_content"), str):
             body = str(copied.get("content") or "")
             for index in range(cursor, len(prior)):
                 previous = prior[index]
