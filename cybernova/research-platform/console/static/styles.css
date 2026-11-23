@@ -977,3 +977,28 @@ html[data-density="relaxed"] .composer{padding:9px 13px 8px}
   :root[data-theme="light"] .profile-footer{align-items:flex-start;flex-direction:column}
   :root[data-theme="light"] .profile-footer>div{width:100%;justify-content:flex-end}
 }
+
+/* V3 WHITE CANVAS FIX: hard override for the approved white-background layout.
+   Keep blue/green message surfaces; all application workspace surfaces are white. */
+:root[data-theme="light"] {
+  --bg: #ffffff !important;
+  --surface: #ffffff !important;
+  --sidebar: #ffffff !important;
+  --panel: #ffffff !important;
+  --surface-soft: #ffffff !important;
+}
+html[data-theme="light"],
+html[data-theme="light"] body,
+html[data-theme="light"] .app,
+html[data-theme="light"] .main,
+html[data-theme="light"] .conversation,
+html[data-theme="light"] .messages,
+html[data-theme="light"] #messages,
+html[data-theme="light"] #collabMessages,
+html[data-theme="light"] #gptMessages,
+html[data-theme="light"] .sidebar,
+html[data-theme="light"] .composer-area,
+html[data-theme="light"] .inspector {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+}
