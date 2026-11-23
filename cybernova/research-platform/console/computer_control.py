@@ -1696,7 +1696,7 @@ def _ui_action_allowed(user_messages, action: str) -> bool:
         "click": r"(?:нажми|кликни|перейди|открой|выбери|изучи|исследуй|посмотри|осмотри|проанализируй|создай профиль|create profile|click|navigate|open|select|inspect|explore|review)",
         "scroll": r"(?:пролистай|прокрути|посмотри|изучи|исследуй|осмотри|scroll|inspect|explore|review)",
         "type": r"(?:введи|напиши|заполни|впиши|создай профиль|создать профиль|create profile|type|enter\s+text|fill|input)",
-        "key": r"(?:нажми|press|keypress|hotkey|перейди|открой|выбери|изучи|исследуй|посмотри|inspect|explore|navigate)",
+        "key": r"(?:нажми|press|keypress|hotkey|перейди|открой|выбери|изучи|исследуй|посмотри|создай профиль|create profile|inspect|explore|navigate)",
     }
     return bool(re.search(patterns[action], text))
 
@@ -1795,8 +1795,14 @@ def _keyboard_type(window_title: str, text: str, target_description: str,
         raise ValueError("computer_keyboard_focus_not_safe_input")
     try:
         focused.set_edit_text(text)
-    except Exception as exc:
-        raise RuntimeError("computer_keyboard_type_failed:" + type(exc).__name__) from None
+    except Exception:
+        if re.search(r"[{}+^%~]", text):
+            raise ValueError("computer_keyboard_text_requires_plain_uia_input") from None
+        try:
+            from pywinauto.keyboard import send_keys
+            send_keys(text, with_spaces=True, vk_packet=True)
+        except Exception as exc:
+            raise RuntimeError("computer_keyboard_type_failed:" + type(exc).__name__) from None
     return {"ok": True, "window_title": window_title, "target_description": target,
             "characters_typed": len(text)}
 
