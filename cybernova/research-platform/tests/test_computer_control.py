@@ -1,5 +1,6 @@
 """Offline tests for local Windows computer-use tools."""
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import unittest
 from unittest.mock import patch
@@ -12,6 +13,7 @@ from console.computer_control import (
     HIGH_IMPACT_UI, SAFE_UI_CONTROL_TYPES,
     _archive_member_path, _explicit_action_approved,
     _sensitive_component, _ui_action_allowed, _validate_ui_target, _ui_click,
+    _mouse_click, _keyboard_type,
     extract_user_computer_approvals, computer_control_call, _service_overview,
 )
 
@@ -101,6 +103,55 @@ class ComputerControlTests(unittest.TestCase):
             with self.subTest(target=target):
                 with self.assertRaises(ValueError):
                     _validate_ui_target(target)
+
+    def test_mouse_click_and_keyboard_typing_use_guarded_desktop_actions(self):
+        inspection = [{"role": "user", "content": "Изучи интерфейс AdsPower, ничего не создавай."}]
+        class FakeWindow:
+            def __init__(self, focused):
+                self.focused = focused
+            def set_focus(self):
+                return None
+            def get_focus(self):
+                return self.focused
+        class FakeControl:
+            def __init__(self, *, password=False):
+                self.element_info = SimpleNamespace(
+                    control_type="Edit", is_password=password, name="Profile name",
+                )
+                self.value = None
+            def set_edit_text(self, value):
+                self.value = value
+        window = FakeWindow(FakeControl())
+        fake_mouse = SimpleNamespace(
+            size=lambda: (1920, 1080),
+            click=lambda **kwargs: kwargs,
+        )
+        with (
+            patch("console.computer_control._windows_only"),
+            patch("console.computer_control._find_window", return_value=window),
+            patch.dict(sys.modules, {"pyautogui": fake_mouse}),
+        ):
+            clicked = _mouse_click(
+                "AdsPower", 320, 240, "Dashboard tab", "left", 1, inspection,
+            )
+        self.assertTrue(clicked["ok"])
+        typed = _keyboard_type(
+            "AdsPower", "Test Profile", "Profile name",
+            [{"role": "user", "content": "Создай профиль и введи его название."}],
+        )
+        self.assertTrue(typed["ok"])
+        self.assertEqual(window.focused.value, "Test Profile")
+
+        password_window = FakeWindow(FakeControl(password=True))
+        with (
+            patch("console.computer_control._windows_only"),
+            patch("console.computer_control._find_window", return_value=password_window),
+        ):
+            with self.assertRaises(ValueError):
+                _keyboard_type(
+                    "AdsPower", "not-a-real-password", "Profile name",
+                    [{"role": "user", "content": "Введи текст в поле."}],
+                )
 
     def test_computer_schemas_are_strict(self):
         for tool in COMPUTER_TOOLS:
