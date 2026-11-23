@@ -23,7 +23,10 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 try:
-    from .agent import Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS
+    from .agent import (
+        Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS,
+        _restore_reasoning_history,
+    )
     from .followups import generate_followups
     from .tool_policy import REVIEWED_TOOLS
     from .traffic_intelligence import analyze_har, analyze_js, TrafficError
@@ -56,7 +59,10 @@ try:
     from .profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
     from .model_settings import ModelSettingsError, apply_model_settings, get_model_settings
 except ImportError:
-    from agent import Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS
+    from agent import (
+        Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS,
+        _restore_reasoning_history,
+    )
     from followups import generate_followups
     from tool_policy import REVIEWED_TOOLS
     from traffic_intelligence import analyze_har, analyze_js, TrafficError
@@ -955,7 +961,9 @@ def chat(payload: ChatRequest):
             elif message["actor"] == "qwen" and message["kind"] == "result":
                 persisted_history.append({"role": "assistant", "content": message["body"]})
         if persisted_history:
-            state["history"] = persisted_history[-MAX_HISTORY:]
+            state["history"] = _restore_reasoning_history(
+                persisted_history[-MAX_HISTORY:], state["history"],
+            )
         store.append(task_id, "human", "instruction", payload.message,
                      status="running")
         try:
@@ -996,6 +1004,8 @@ def chat(payload: ChatRequest):
         finally:
             _finish_usage_progress(payload.run_id, run_status,
                                    outcome.get("usage") if isinstance(outcome, dict) else None)
+        # Reasoning is private provider continuation state, not UI/API content.
+        history_reasoning_content = outcome.pop("_history_reasoning_content", None)
         # Raw arguments are never exposed in the chat response.
         requests = outcome.pop("approval_requests", [])
         EvidenceJournal(store).record_tool_events(
@@ -1007,7 +1017,10 @@ def chat(payload: ChatRequest):
                 **item, "turn": state["turns"] + 1,
             }
         state["history"].append({"role": "user", "content": payload.message[:10000]})
-        state["history"].append({"role": "assistant", "content": outcome["answer"][:16000]})
+        assistant_history = {"role": "assistant", "content": outcome["answer"][:16000]}
+        if isinstance(history_reasoning_content, str):
+            assistant_history["reasoning_content"] = history_reasoning_content
+        state["history"].append(assistant_history)
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
         current_status = store.get_task(task_id)["status"]
@@ -1055,10 +1068,14 @@ def approve(payload: ApprovalRequest):
             raise HTTPException(
                 status_code=502, detail="approved_action_failed: " + type(exc).__name__
             ) from exc
+        history_reasoning_content = result.pop("_history_reasoning_content", None)
         state["history"].append({
             "role": "user", "content": "Разрешаю один вызов MCP-инструмента: " + item["tool"],
         })
-        state["history"].append({"role": "assistant", "content": result["answer"][:16000]})
+        assistant_history = {"role": "assistant", "content": result["answer"][:16000]}
+        if isinstance(history_reasoning_content, str):
+            assistant_history["reasoning_content"] = history_reasoning_content
+        state["history"].append(assistant_history)
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
         state["pending_approvals"].clear()

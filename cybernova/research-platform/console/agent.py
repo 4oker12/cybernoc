@@ -433,6 +433,47 @@ def _compact_context(messages):
     return compact
 
 
+def _restore_reasoning_history(persisted_history, in_memory_history):
+    """Reattach transient DeepSeek reasoning to matching persisted visible replies."""
+    prior = [
+        item for item in in_memory_history
+        if isinstance(item, dict) and item.get("role") == "assistant"
+        and isinstance(item.get("reasoning_content"), str)
+    ]
+    cursor = 0
+    restored = []
+    for item in persisted_history:
+        if not isinstance(item, dict):
+            continue
+        copied = dict(item)
+        if copied.get("role") == "assistant":
+            body = str(copied.get("content") or "")
+            for index in range(cursor, len(prior)):
+                previous = prior[index]
+                previous_body = str(previous.get("content") or "")
+                if body and previous_body.startswith(body):
+                    copied["reasoning_content"] = previous["reasoning_content"]
+                    cursor = index + 1
+                    break
+        restored.append(copied)
+    return restored
+
+
+def _controller_tool_turn(name: str, arguments: dict, reasoning_content=None) -> dict:
+    """Build a synthetic controller tool turn without dropping DeepSeek thinking state."""
+    message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{
+            "id": "cybernova_controller_" + name,
+            "function": {"name": name, "arguments": arguments},
+        }],
+    }
+    if isinstance(reasoning_content, str):
+        message["reasoning_content"] = reasoning_content
+    return message
+
+
 def _allowed_http(url: str, hosts: set[str]) -> bool:
     try:
         u = parse.urlsplit(url)
@@ -550,7 +591,10 @@ class Agent:
                 "provider": getattr(self.ollama, "provider", "Ollama / configured LLM"),
             }
 
+        history_reasoning_content = None
+
         def finalize_answer():
+            nonlocal history_reasoning_content
             final_instruction = (
                 "Сформируй итоговый ответ пользователю на языке его последнего сообщения. "
                 "Все инструменты сейчас отключены: ничего не вызывай и не имитируй. "
@@ -567,6 +611,10 @@ class Agent:
                         final_instruction + " Верни только обычный текст, без протокола и без пустого ответа.",
                 })
                 final = self._model_chat(final_context, [])
+                history_reasoning_content = (
+                    final.get("reasoning_content")
+                    if isinstance(final.get("reasoning_content"), str) else None
+                )
                 record_usage(final)
                 publish_usage()
                 answer = _clean_model_answer(final.get("content"))
@@ -590,6 +638,7 @@ class Agent:
             return "\n".join(lines)
 
         def result_payload(answer):
+            nonlocal history_reasoning_content
             # Second model pass checks every substantive claim against the
             # evidence already in the conversation. It cannot invoke tools
             # and must never be described as a new physical/network test.
@@ -630,6 +679,10 @@ class Agent:
                     corrected = _clean_model_answer(checked.get("content"))
                     if corrected and re.search(r"(?im)^#{2,3}\s+Повторная проверка\b", corrected):
                         answer = corrected
+                        history_reasoning_content = (
+                            checked.get("reasoning_content")
+                            if isinstance(checked.get("reasoning_content"), str) else None
+                        )
                         review = {"status": "completed", "passes": 2,
                                   "scope": "existing_evidence_only"}
                     else:
@@ -640,7 +693,7 @@ class Agent:
                     review = {"status": "unavailable", "passes": 1,
                               "scope": "existing_evidence_only",
                               "reason": type(exc).__name__}
-            return {
+            payload = {
                 "answer": answer,
                 "review": review,
                 "events": events,
@@ -650,6 +703,10 @@ class Agent:
                 "model": self.ollama.model,
                 "usage": usage_report(),
             }
+            if isinstance(history_reasoning_content, str):
+                # Internal-only metadata; server.py removes it before returning JSON.
+                payload["_history_reasoning_content"] = history_reasoning_content
+            return payload
 
         # Only client-visible role/content history enters the model; never forward
         # hidden arguments or previous tool outputs as executable instructions.
@@ -678,7 +735,13 @@ class Agent:
 
         for msg in history[-16:]:
             if msg.get("role") in ("user", "assistant") and isinstance(msg.get("content"), str):
-                context.append({"role": msg["role"], "content": msg["content"][:MAX_PROMPT]})
+                history_item = {
+                    "role": msg["role"],
+                    "content": msg["content"][:MAX_PROMPT],
+                }
+                if msg["role"] == "assistant" and isinstance(msg.get("reasoning_content"), str):
+                    history_item["reasoning_content"] = msg["reasoning_content"]
+                context.append(history_item)
         context.append({"role": "user", "content": text})
         events = []
         pending_requests = []
@@ -731,6 +794,11 @@ class Agent:
                         "Достигнут лимит инструментальных итераций. Подготовь итог по уже собранным данным."})
                     return result_payload(finalize_answer())
                 result = self._model_chat(_compact_context(context), tools if tools_enabled else [])
+                history_reasoning_content = (
+                    result.get("reasoning_content")
+                    if isinstance(result.get("reasoning_content"), str) else None
+                )
+                assistant_reasoning_content = history_reasoning_content
                 record_usage(result)
                 publish_usage()
                 dsml_calls, clean_content, had_dsml = _extract_dsml_calls(
@@ -760,6 +828,8 @@ class Agent:
                         *[{"role": item["role"], "content": str(item.get("content") or "")[:1500]}
                           for item in context[-6:] if item["role"] in ("user", "assistant", "tool")],
                     ], json_mode=True)
+                    if isinstance(candidate.get("reasoning_content"), str):
+                        assistant_reasoning_content = candidate["reasoning_content"]
                     record_usage(candidate)
                     publish_usage()
                     try:
@@ -851,13 +921,9 @@ class Agent:
                                 "Реальный инструмент " + chosen +
                                 " уже вызван контроллером. Отдели полученные факты "
                                 "от ошибок и гипотез. Не утверждай, что инструментов нет."})
-                            context.append({
-                                "role": "assistant", "content": "",
-                                "tool_calls": [{
-                                    "id": "cybernova_controller_" + chosen,
-                                    "function": {"name": chosen, "arguments": chosen_args},
-                                }],
-                            })
+                            context.append(_controller_tool_turn(
+                                chosen, chosen_args, assistant_reasoning_content,
+                            ))
                             context.append({"role": "tool", "tool_name": chosen,
                                             "content": serialized})
                             continue
@@ -886,13 +952,9 @@ class Agent:
                             "Если нужен конкретный исходный файл, вызывай dev_read; "
                             "если нужно менять код, используй dev_edit/dev_test. "
                             "Не утверждай, что у тебя нет доступа к репозиторию."})
-                        context.append({
-                            "role": "assistant", "content": "",
-                            "tool_calls": [{
-                                "id": "cybernova_controller_dev_list",
-                                "function": {"name": "dev_list", "arguments": {"limit": 100}},
-                            }],
-                        })
+                        context.append(_controller_tool_turn(
+                            "dev_list", {"limit": 100}, assistant_reasoning_content,
+                        ))
                         context.append({"role": "tool", "tool_name": "dev_list",
                                         "content": json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]})
                         continue
@@ -910,10 +972,10 @@ class Agent:
                     "role": "assistant", "content": result.get("content") or "",
                     "tool_calls": calls,
                 }
-                # DeepSeek thinking mode requires reasoning_content to be
-                # echoed unchanged on the next request when tools are enabled.
-                if isinstance(result.get("reasoning_content"), str):
-                    assistant_turn["reasoning_content"] = result["reasoning_content"]
+                # DeepSeek thinking mode requires the exact reasoning payload
+                # from the response that produced this tool selection.
+                if isinstance(assistant_reasoning_content, str):
+                    assistant_turn["reasoning_content"] = assistant_reasoning_content
                 context.append(assistant_turn)
                 for raw in calls[:MAX_CALLS-count]:
                     function = raw.get("function", {}) if isinstance(raw, dict) else {}
@@ -1060,18 +1122,23 @@ class Agent:
         args = validate_dynamic_arguments(args, available[name]["inputSchema"])
         result, is_error = mcp.call(name, args)
         # No tool definitions here: a second tool requires another full user turn.
-        prompt = [
-            {"role": "system", "content":
-             "Ты CYBERNOVA. Пользователь явно разрешил ОДИН запрос к MCP. "
-             "Ниже фактический результат. Сделай вывод без вымышленных фактов. "
-             "Не утверждай, что выполнялись другие действия."},
-            *[{"role": row["role"], "content": row["content"][:4500]}
-              for row in history[-8:] if row.get("role") in {"assistant", "user"}
-              and isinstance(row.get("content"), str)],
-            {"role": "user", "content":
-             "Разрешённый MCP-вызов " + name + " завершён. "
-             "Результат: " + json.dumps(result, ensure_ascii=False)[:MAX_RESULT]},
-        ]
+        prompt = [{
+            "role": "system", "content":
+            "Ты CYBERNOVA. Пользователь явно разрешил ОДИН запрос к MCP. "
+            "Ниже фактический результат. Сделай вывод без вымышленных фактов. "
+            "Не утверждай, что выполнялись другие действия.",
+        }]
+        for row in history[-8:]:
+            if row.get("role") in {"assistant", "user"} and isinstance(row.get("content"), str):
+                history_item = {"role": row["role"], "content": row["content"][:4500]}
+                if row["role"] == "assistant" and isinstance(row.get("reasoning_content"), str):
+                    history_item["reasoning_content"] = row["reasoning_content"]
+                prompt.append(history_item)
+        prompt.append({
+            "role": "user", "content":
+            "Разрешённый MCP-вызов " + name + " завершён. "
+            "Результат: " + json.dumps(result, ensure_ascii=False)[:MAX_RESULT],
+        })
         message = self._model_chat(prompt, [])
         raw_usage = message.get("_usage") or {}
         input_tokens = raw_usage.get("input_tokens")
@@ -1090,7 +1157,7 @@ class Agent:
             "requests": 1, "measured_requests": 1 if measured else 0,
             "complete": measured, "provider": getattr(self.ollama, "provider", "Configured LLM"),
         }
-        return {
+        outcome = {
             "answer": str(message.get("content") or "Результат получен, пояснение отсутствует."),
             "tool_calls": 1,
             "selected_by": "user_approved",
@@ -1103,3 +1170,6 @@ class Agent:
                 "result": result,
             }],
         }
+        if isinstance(message.get("reasoning_content"), str):
+            outcome["_history_reasoning_content"] = message["reasoning_content"]
+        return outcome

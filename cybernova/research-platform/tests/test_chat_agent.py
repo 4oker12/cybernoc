@@ -12,6 +12,7 @@ from console.agent import (
     Agent, _arguments, _allowed_http, _safe_args, _tool_schema,
     BackendError, MCPClient, OllamaClient, BASE_SYSTEM,
     _extract_dsml_calls, _clean_model_answer, _compact_context,
+    _restore_reasoning_history,
 )
 from console.model_providers import OpenAICompatibleClient, _normalize_context
 
@@ -120,6 +121,87 @@ class AgentTests(unittest.TestCase):
         Agent(lm,lambda:mcp).run([],"Проверь подсеть",force_tools=False)
         assistant_turn=next(x for x in lm.prompts[1][0] if x.get("tool_calls"))
         self.assertEqual(assistant_turn["reasoning_content"],"Select subnet summary tool.")
+
+    def test_previous_turn_reasoning_survives_history_rebuild(self):
+        persisted = [
+            {"role": "user", "content": "Предыдущий запрос"},
+            {"role": "assistant", "content": "Ответ, сохранённый в журнале"},
+        ]
+        in_memory = [
+            {"role": "user", "content": "Предыдущий запрос"},
+            {
+                "role": "assistant",
+                "content": "Ответ, сохранённый в журнале с дополнительной частью",
+                "reasoning_content": "private DeepSeek continuation state",
+            },
+        ]
+        restored = _restore_reasoning_history(persisted, in_memory)
+        self.assertEqual(
+            restored[-1]["reasoning_content"],
+            "private DeepSeek continuation state",
+        )
+        self.assertNotIn("reasoning_content", persisted[-1])
+
+    def test_prior_turn_reasoning_is_forwarded_to_the_next_model_request(self):
+        lm = FakeOllama([
+            {"role": "assistant", "content": "Новый ответ.", "reasoning_content": "new reasoning"},
+            {"role": "assistant", "content": "## Повторная проверка\nПроверено."},
+        ])
+        prior = [{
+            "role": "assistant", "content": "Предыдущий ответ.",
+            "reasoning_content": "prior reasoning must be passed unchanged",
+        }]
+        Agent(lm, lambda: FakeMCP()).run(
+            prior, "Продолжи", tools_enabled=False, force_tools=False,
+        )
+        prior_turn = next(
+            item for item in lm.prompts[0][0]
+            if item.get("role") == "assistant" and item.get("content") == "Предыдущий ответ."
+        )
+        self.assertEqual(
+            prior_turn["reasoning_content"],
+            "prior reasoning must be passed unchanged",
+        )
+
+    def test_controller_developer_fallback_keeps_reasoning_content(self):
+        class DeveloperMCP(FakeMCP):
+            def initialize(self):
+                return TOOLS + [{
+                    "name": "dev_list",
+                    "description": "List repository files",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"limit": {"type": "integer"}},
+                    },
+                }]
+
+            def call(self, name, args):
+                if name == "dev_list":
+                    self.calls.append((name, args))
+                    return {"ok": True, "files": ["README.md"]}, False
+                return super().call(name, args)
+
+        mcp = DeveloperMCP()
+        lm = FakeOllama([
+            {
+                "role": "assistant",
+                "content": "Начинаю проверку проекта.",
+                "reasoning_content": "The controller should inspect the repository tree.",
+            },
+            {"role": "assistant", "content": "Структура проекта получена."},
+            {"role": "assistant", "content": "## Повторная проверка\nПроверено."},
+        ])
+        Agent(lm, lambda: mcp).run(
+            [], "Изучи проект и проверь код", force_tools=False,
+        )
+        synthetic_turn = next(
+            item for item in lm.prompts[1][0]
+            if item.get("role") == "assistant" and item.get("tool_calls")
+        )
+        self.assertEqual(
+            synthetic_turn["reasoning_content"],
+            "The controller should inspect the repository tree.",
+        )
 
     def test_all_registered_tools_visible_to_active_model(self):
         names = [t["function"]["name"] for t in _tool_schema(TOOLS, False)]
