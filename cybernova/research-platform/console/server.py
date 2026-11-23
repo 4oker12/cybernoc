@@ -435,6 +435,7 @@ class ModelSettingsRequest(BaseModel):
     base_url: str = Field(default="", max_length=500)
     api_key: str | None = Field(default=None, max_length=10000)
     clear_api_key: bool = False
+    reasoning_effort: str | None = Field(default=None, pattern="^(none|low|high|max)$")
 
 
 class CollaborationStartRequest(BaseModel):
@@ -632,8 +633,8 @@ def get_model_config():
 @app.post("/api/model-config")
 def save_model_config(payload: ModelSettingsRequest):
     try:
-        connection = test_model_connection(payload.dict())
-        client, settings = apply_model_settings(payload.dict())
+        connection = test_model_connection(payload.model_dump())
+        client, settings = apply_model_settings(payload.model_dump())
         # Current requests keep their existing client object; subsequent turns
         # and background continuations receive the newly selected provider.
         agent.ollama = client

@@ -133,6 +133,25 @@ class ModelProviderTests(unittest.TestCase):
                          "I should inspect the subnet tool.")
         self.assertEqual(normalized[3]["tool_call_id"],"call_deepseek_1")
 
+    def test_pro_model_sends_high_and_max_reasoning_effort(self):
+        sent = []
+        def transport(payload):
+            sent.append(payload)
+            return {"choices": [{"message": {"content": "ok"}}]}
+        client = OpenAICompatibleClient(
+            base_url="https://api.deepseek.com", model="deepseek-v4-pro",
+            api_key="test-deepseek-key", transport=transport)
+        for effort in ("high", "max"):
+            with patch.dict(os.environ, {
+                "CYBERNOVA_DEEPSEEK_THINKING": "enabled",
+                "CYBERNOVA_DEEPSEEK_REASONING_EFFORT": effort,
+            }):
+                client.chat([{"role": "user", "content": "test"}])
+        self.assertEqual([p["model"] for p in sent],
+                         ["deepseek-v4-pro", "deepseek-v4-pro"])
+        self.assertEqual([p["reasoning_effort"] for p in sent], ["high", "max"])
+        self.assertTrue(all(p["thinking"] == {"type": "enabled"} for p in sent))
+
     def test_deepseek_can_be_disabled_from_thinking_mode(self):
         transmitted=[]
         def transport(payload):

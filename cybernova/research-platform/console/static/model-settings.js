@@ -50,6 +50,36 @@
     });
     addField(grid, "Провайдер", provider);
 
+    const preset = el("select");
+    preset.id = "modelPreset";
+    [
+      ["deepseek-flash", "DeepSeek Flash — быстрее"],
+      ["deepseek-v4-pro", "DeepSeek V4 Pro — сложные задачи"],
+      ["custom", "Другой идентификатор…"],
+    ].forEach(([value, label]) => {
+      const option = el("option", "", label);
+      option.value = value;
+      preset.append(option);
+    });
+    addField(grid, "Модель DeepSeek", preset);
+
+    const effort = el("select");
+    effort.id = "modelReasoningEffort";
+    [
+      ["none", "Выкл — без глубоких рассуждений"],
+      ["low", "Low — быстро"],
+      ["high", "High — подробно (по умолчанию)"],
+      ["max", "Max — максимальная глубина"],
+    ].forEach(([value, label]) => {
+      const option = el("option", "", label);
+      option.value = value;
+      effort.append(option);
+    });
+    effort.value = "high";
+    addField(grid, "Глубина рассуждений", effort);
+    panel.append(el("p", "model-reasoning-note",
+      "Pro и Max могут увеличить время ответа и расходы на API. Flash поддерживает изображения; Pro — только текст."));
+
     const model = el("input");
     model.id = "modelId";
     model.type = "text";
@@ -95,12 +125,23 @@
     save.id = "modelConfigSave";
     actions.append(save);
     panel.append(actions);
-    panel.append(el("p", "model-config-note", "Изменение применяется к следующим запросам без перезапуска Cybernova. Для DeepSeek укажи свой API-ключ и точный идентификатор модели. Не вставляй ключ ChatGPT: OAuth-подключение настраивается отдельно."));
+    panel.append(el("p", "model-config-note", "Настройки вступают в силу со следующего запроса без перезапуска. При переключении Flash / Pro используется сохранённый локально API-ключ; в чат ключ не отправляй. ChatGPT подключается отдельно."));
     const uiPanel = panels.querySelector('[data-profile-panel="ui"]');
     uiPanel?.after(panel);
     if (!uiPanel) panels.append(panel);
 
-    provider.addEventListener("change", updateProviderFields);
+    provider.addEventListener("change", () => {
+      if (provider.value === "deepseek" &&
+          !["deepseek-flash", "deepseek-v4-pro"].includes(model.value.trim())) {
+        model.value = "deepseek-flash";
+        preset.value = "deepseek-flash";
+      }
+      updateProviderFields();
+    });
+    preset.addEventListener("change", () => {
+      if (preset.value !== "custom") model.value = preset.value;
+      updateProviderFields();
+    });
     save.addEventListener("click", saveModelConfig);
     updateProviderFields();
   }
@@ -112,6 +153,13 @@
     if (!provider || !base || !key) return;
     const value = provider.value;
     const remote = value !== "ollama";
+    const isDeepseek = value === "deepseek";
+    $("modelPreset").closest(".model-config-field").hidden = !isDeepseek;
+    $("modelReasoningEffort").closest(".model-config-field").hidden = !isDeepseek;
+    const reasoningNote = document.querySelector("#modelConfigPanel .model-reasoning-note");
+    if (reasoningNote) reasoningNote.hidden = !isDeepseek;
+    $("modelId").closest(".model-config-field").hidden = isDeepseek &&
+      $("modelPreset").value !== "custom";
     base.disabled = !remote;
     key.disabled = !remote;
     base.closest(".model-config-field").hidden = !remote;
@@ -125,6 +173,20 @@
     )) {
       $("modelId").value = "deepseek-flash";
     }
+  }
+
+  function updateQuickButton(config) {
+    const button = $("modelQuickSettings");
+    if (!button) return;
+    const deepseek = config.provider === "openai_compatible" &&
+      /api\.deepseek\.com/i.test(config.base_url || "") &&
+      /^deepseek-/.test(config.model || "");
+    const effort = ["none", "low", "high", "max"].includes(config.reasoning_effort) ?
+      config.reasoning_effort : "high";
+    button.dataset.deepseek = String(deepseek);
+    button.textContent = "Глубина: " + effort.toUpperCase() + " ▾";
+    button.title = "Выбрать Flash / Pro и глубину рассуждений (сейчас " + effort.toUpperCase() + ")";
+    button.hidden = !deepseek || !$("modeQwen")?.classList.contains("selected");
   }
 
   async function loadModelConfig() {
@@ -141,6 +203,11 @@
       $("modelProvider").value = config.provider === "ollama" ? "ollama" :
         deepseek ? "deepseek" : "openai_compatible";
       $("modelId").value = config.model || "";
+      $("modelPreset").value = ["deepseek-flash", "deepseek-v4-pro"].includes(config.model) ?
+        config.model : "custom";
+      $("modelReasoningEffort").value =
+        ["none", "low", "high", "max"].includes(config.reasoning_effort) ?
+        config.reasoning_effort : "high";
       $("modelBaseUrl").value = config.base_url || "";
       $("modelApiKey").value = "";
       $("modelApiKey").placeholder = config.api_key_configured ?
@@ -148,6 +215,7 @@
       status.textContent = (config.api_key_hint || "Статус ключа неизвестен") +
         " · " + (config.restart_required ? "потребуется перезапуск" : "применяется без перезапуска");
       updateProviderFields();
+      updateQuickButton(config);
     } catch (error) {
       status.textContent = "Ошибка загрузки: " + String(error.message || error);
     }
@@ -159,8 +227,10 @@
     const providerChoice = $("modelProvider").value;
     const payload = {
       provider: providerChoice === "ollama" ? "ollama" : "openai_compatible",
-      model: $("modelId").value.trim(),
+      model: providerChoice === "deepseek" && $("modelPreset").value !== "custom" ?
+        $("modelPreset").value : $("modelId").value.trim(),
       base_url: providerChoice === "deepseek" ? "https://api.deepseek.com" : $("modelBaseUrl").value.trim(),
+      reasoning_effort: providerChoice === "deepseek" ? $("modelReasoningEffort").value : null,
       api_key: $("modelApiKey").value || null,
       clear_api_key: false,
     };
@@ -186,6 +256,7 @@
             " · следующие запросы используют эту модель";
       const title = $("modelName");
       if (title && stateModeIsResearcher()) title.textContent = data.settings?.model || payload.model;
+      updateQuickButton(data.settings || {});
       window.dispatchEvent(new CustomEvent("cybernova:model-config-applied", {detail:data.settings || {}}));
     } catch (error) {
       status.textContent = "Не удалось применить: " + String(error.message || error);
@@ -204,6 +275,8 @@
       const tab = event.target.closest("[data-profile-tab]");
       if (tab?.dataset.profileTab === "model") void loadModelConfig();
     });
+    window.addEventListener("cybernova:open-model-settings", () => void loadModelConfig());
+    void loadModelConfig();
   }
   document.addEventListener("DOMContentLoaded", init);
 })();

@@ -367,3 +367,28 @@ html[data-theme="light"] .inspector {
     max-height: 25vh;
   }
 }
+
+/* DeepSeek quick model controls: compact GitHub-green, not a second toolbar. */
+:root[data-theme="light"] .model-quick-settings {
+  display:inline-flex;align-items:center;gap:4px;
+  background:#eaf6ee;color:#1a7f37;border:1px solid #cde8d4;
+  border-radius:999px;padding:5px 9px;font-size:11px;font-weight:650;
+  white-space:nowrap;cursor:pointer;box-shadow:none;
+}
+:root[data-theme="light"] .model-quick-settings:hover {
+  background:#dafbe1;border-color:#1f883d;
+}
+.model-quick-settings[hidden] {display:none!important}
+.model-reasoning-note {
+  margin:2px 0 12px;padding:9px 11px;border:1px solid var(--line);
+  border-radius:9px;color:var(--muted);font-size:12px;line-height:1.55;
+}
+:root[data-theme="light"] .model-reasoning-note {
+  border-color:#cde8d4;background:#f2faf4;color:#346b45;
+}
+:root[data-theme="dark"] .model-quick-settings {
+  display:inline-flex;align-items:center;background:#173b2a;color:#3fb950;
+  border:1px solid #276b3b;border-radius:999px;padding:5px 9px;
+  font-size:11px;font-weight:650;white-space:nowrap;cursor:pointer;
+}
+@media(max-width:680px){.model-quick-settings{padding:4px 7px;font-size:10px}}

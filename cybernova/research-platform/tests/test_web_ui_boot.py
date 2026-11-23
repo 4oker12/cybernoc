@@ -36,8 +36,8 @@ class WebUIBootTests(unittest.TestCase):
         parsed=Scripts()
         parsed.feed(html)
         self.assertEqual([x.get("src") for x in parsed.starts],
-                         ["/static/markdown.js?v=20261123-semantic-sections-1","/static/app.js?v=20261123-task-statuses-1",
-                          "/static/model-settings.js","/static/ux.js?v=20261123-global-design-2"])
+                         ["/static/markdown.js?v=20261123-semantic-sections-1","/static/app.js?v=20261123-deepseek-controls-1",
+                          "/static/model-settings.js?v=20261123-deepseek-controls-1","/static/ux.js?v=20261123-global-design-2"])
         self.assertEqual(parsed.ends,4)
         self.assertEqual(html.count("</script>"),4)
 
@@ -87,6 +87,18 @@ class WebUIBootTests(unittest.TestCase):
         self.assertIn("Ctrl+V — вставить вывод",html)
         self.assertIn(".followup-question{",css)
         self.assertIn("background:#eaf2ff",css)
+
+    def test_deepseek_controls_are_real_and_contextual(self):
+        html=(STATIC/"index.html").read_text(encoding="utf-8")
+        script=(STATIC/"model-settings.js").read_text(encoding="utf-8")
+        app=(STATIC/"app.js").read_text(encoding="utf-8")
+        self.assertIn('id="modelQuickSettings"',html)
+        self.assertIn('preset.id = "modelPreset"',script)
+        self.assertIn('effort.id = "modelReasoningEffort"',script)
+        self.assertIn('["deepseek-v4-pro", "DeepSeek V4 Pro',script)
+        self.assertIn('["max", "Max',script)
+        self.assertIn('reasoning_effort:',script)
+        self.assertIn('openProfileSettings("model")',app)
 
     def test_green_heading_hierarchy_and_clear_task_statuses(self):
         design=(STATIC/"design-system.css").read_text(encoding="utf-8")

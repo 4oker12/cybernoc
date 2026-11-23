@@ -625,6 +625,7 @@ function setMode(mode){
   $("collabSidebar").hidden=!collab;
   $("gptTopModel").hidden=!gpt;
   $("modelName").hidden=gpt;
+  $("modelQuickSettings").hidden=!qwen || $("modelQuickSettings").dataset.deepseek!=="true";
   $("modelName").textContent=collab?"ChatGPT ↔ DeepSeek":state.qwenModel;
   document.querySelector(".connection-label").hidden=!qwen;
   document.querySelector(".upload-button").hidden=!qwen;
@@ -1342,12 +1343,13 @@ async function loadProfileSettings(){
     $("profileSaveStatus").textContent="Не удалось загрузить настройки: "+String(err.message||err);
   }
 }
-async function openProfileSettings(){
+async function openProfileSettings(tabName="user"){
   if(!state.profileSettings)await loadProfileSettings();
-  selectProfileTab("user");
+  selectProfileTab(tabName);
   const dialog=$("profileDialog");
   if(typeof dialog.showModal==="function")dialog.showModal();
   else dialog.setAttribute("open","");
+  if(tabName==="model")window.dispatchEvent(new Event("cybernova:open-model-settings"));
 }
 async function saveProfileSettings(){
   if(state.qwenRunning||state.gptRunning||state.collabRunning)return;
@@ -1669,7 +1671,8 @@ function init(){
   $("collabFinish").addEventListener("click",finishCollab);
   $("collabResume").addEventListener("click",continueCollab);
   $("collabNew").addEventListener("click",newCollab);
-  $("navProfile").addEventListener("click",openProfileSettings);
+  $("navProfile").addEventListener("click",()=>openProfileSettings());
+  $("modelQuickSettings").addEventListener("click",()=>openProfileSettings("model"));
   $("profileClose").addEventListener("click",()=>$("profileDialog").close());
   $("profileCancel").addEventListener("click",()=>$("profileDialog").close());
   $("profileSave").addEventListener("click",saveProfileSettings);
