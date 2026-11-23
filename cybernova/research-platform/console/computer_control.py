@@ -62,8 +62,8 @@ EMAIL_VALUE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 HIGH_IMPACT_UI = re.compile(
     r"(?i)(delete|remove|uninstall|format|reset|restore|shutdown|restart|"
     r"disable|deactivate|turn\s+off|stop|kill|terminate|submit|send|purchase|"
-    r"pay|confirm|apply|save|scan|quarantine|clean|allow|block|enable|"
-    r"install|update|оплат|удал|сброс|восстанов|отключ|выключ|перезапуск|"
+    r"pay|confirm|apply|save|create|add|new|scan|quarantine|clean|allow|block|enable|"
+    r"install|update|созда|добав|новый|новая|оплат|удал|сброс|восстанов|отключ|выключ|перезапуск|"
     r"останов|подтверд|примен|сохран|скан|карантин|очист|разреш|установ|обнов|"
     r"\b(ok|yes|next|continue|finish|accept|agree|да|ок|далее|продолжить|готово)\b)"
 )
@@ -1794,11 +1794,7 @@ def _keyboard_type(window_title: str, text: str, target_description: str,
             or _sensitive_component(info.name or "")):
         raise ValueError("computer_keyboard_focus_not_safe_input")
     try:
-        from pywinauto.keyboard import send_keys
-    except ImportError:
-        raise RuntimeError("pywinauto_dependency_missing") from None
-    try:
-        send_keys(text, with_spaces=True, vk_packet=True)
+        focused.set_edit_text(text)
     except Exception as exc:
         raise RuntimeError("computer_keyboard_type_failed:" + type(exc).__name__) from None
     return {"ok": True, "window_title": window_title, "target_description": target,
