@@ -152,7 +152,7 @@ COMPUTER_TOOLS = [
           "Launch one allowlisted Windows diagnostic or settings application without elevation or shell execution.",
           {"app": {"type": "string", "enum": sorted(APP_COMMANDS)}}, ["app"]),
     _tool("computer_screenshot",
-          "Capture the visible local desktop when the current user task directly requests a screenshot. The image may include personal information."),
+          "Capture the visible local desktop for an explicitly requested screenshot or read-only visual inspection of an app/interface. The image may include personal information."),
     _tool("computer_ui_windows",
           "List visible top-level desktop windows by title for local UI navigation. No window contents or input values are read."),
     _tool("computer_ui_controls",
@@ -1418,20 +1418,40 @@ def extract_user_computer_approvals(messages) -> set[str]:
     if latest_user_index is None:
         return set()
     latest = str(messages[latest_user_index].get("content") or "").casefold()
-    # Fail closed: a negated instruction is never authorization.
-    if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
-        return set()
     approvals = set()
-    if _explicit_action_approved(messages, r"(?:скриншот|снимок экрана|screenshot|capture screen)", []):
+    screenshot_denied = bool(re.search(
+        r"(?:\bне\s+(?:делай|делать|делайте|сделай|сделать|разрешаю|разрешать)\b|"
+        r"\b(?:запрещаю|отказываюсь)\b|\b(?:do\s+not|don't|never)\s+"
+        r"(?:take|capture|make|show)\b).{0,45}"
+        r"(?:скриншот|снимок\s+экрана|screenshot|capture\s+screen)|"
+        r"(?:скриншот|снимок\s+экрана|screenshot|capture\s+screen).{0,30}"
+        r"(?:не\s+(?:делай|делать|нужно|надо)|запрещён|запрещен|not\s+allowed)",
+        latest,
+    ))
+    screenshot_requested = bool(re.search(
+        r"(?:скриншот|снимок\s+экрана|screenshot|capture\s+screen)", latest,
+    ))
+    visual_inspection_requested = bool(re.search(
+        r"(?:изучи|исследуй|осмотри|посмотри|проанализируй|изучить|исследовать|"
+        r"осмотреть|посмотреть|inspect|explore|examine|review|analy[sz]e)"
+        r".{0,100}(?:интерфейс|окно|приложение|экран|dashboard|adspower|"
+        r"application|window|screen|app)|"
+        r"(?:интерфейс|окно|приложение|экран|dashboard|adspower|application|"
+        r"window|screen|app).{0,100}"
+        r"(?:изучи|исследуй|осмотри|посмотри|проанализируй|inspect|explore|examine|review)",
+        latest,
+    ))
+    if not screenshot_denied and (screenshot_requested or visual_inspection_requested):
         approvals.add("computer_screenshot")
+    # Other actions remain fail-closed when the user negates or cancels them.
+    if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
+        return approvals
     previous_assistant = ""
     for index in range(latest_user_index - 1, -1, -1):
         item = messages[index]
         if isinstance(item, dict) and item.get("role") == "assistant":
             previous_assistant = str(item.get("content") or "").casefold()
             break
-    if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
-        return approvals
     scan_context = latest
     if re.fullmatch(r"\s*(да|yes|подтверждаю|разрешаю)[!. ]*\s*", latest):
         for index in range(latest_user_index - 1, -1, -1):
@@ -1520,7 +1540,7 @@ def _screenshot() -> dict:
         return {"ok": False, "error": "desktop_screenshot_unavailable",
                 "details": type(exc).__name__}
     return {"ok": True, "image_data_url": "data:image/jpeg;base64," + encoded,
-            "note": "Desktop image is being sent to Account GPT for visual analysis."}
+            "note": "Desktop image captured; the active agent decides whether its model supports visual input."}
 
 
 def _desktop():
