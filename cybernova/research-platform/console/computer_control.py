@@ -158,6 +158,35 @@ COMPUTER_TOOLS = [
     _tool("computer_ui_controls",
           "Inspect visible, enabled, non-input UI control labels in one exact window. Text fields, password fields and document contents are excluded.",
           {"window_title": STRING}, ["window_title"]),
+    _tool("computer_ui_inputs",
+          "List visible, enabled text-input field labels and bounds in one exact window. Never reads field values; password and secret fields are excluded.",
+          {"window_title": STRING}, ["window_title"]),
+    _tool("computer_mouse_click",
+          "Click a visible point in an exact window for safe navigation. Requires a task that asks to inspect or navigate the interface and a harmless target description. Save, submit, delete, confirmation and secret targets are blocked.",
+          {"window_title": STRING, "x": INTEGER, "y": INTEGER,
+           "target_description": STRING,
+           "button": {"type": "string", "enum": ["left", "right"]},
+           "click_count": {"type": "integer", "enum": [1, 2]}},
+          ["window_title", "x", "y", "target_description", "button", "click_count"]),
+    _tool("computer_mouse_scroll",
+          "Scroll within an exact window for read-only inspection. Requires a task that asks to inspect or navigate the interface.",
+          {"window_title": STRING, "x": INTEGER, "y": INTEGER,
+           "amount": INTEGER, "target_description": STRING},
+          ["window_title", "x", "y", "amount", "target_description"]),
+    _tool("computer_keyboard_type",
+          "Type non-secret text into the currently focused control in an exact window. Only available when the user explicitly asks to fill or enter text; password, token and API-key content is blocked.",
+          {"window_title": STRING, "text": STRING, "target_description": STRING},
+          ["window_title", "text", "target_description"]),
+    _tool("computer_keyboard_keypress",
+          "Press a limited safe navigation key or shortcut in an exact window. Destructive shortcuts and clipboard access are not available.",
+          {"window_title": STRING,
+           "key": {"type": "string", "enum": [
+             "TAB", "SHIFT+TAB", "ESC", "ENTER", "UP", "DOWN", "LEFT", "RIGHT",
+             "PAGEUP", "PAGEDOWN", "HOME", "END", "CTRL+TAB",
+             "CTRL+SHIFT+TAB", "ALT+LEFT", "ALT+RIGHT", "CTRL+L", "CTRL+F", "CTRL+A"
+           ]},
+           "target_description": STRING},
+          ["window_title", "key", "target_description"]),
     _tool("computer_ui_click",
           "Click one exact visible navigation control in one exact window. Only buttons/tabs/tree/list/menu links are eligible. Destructive, security-changing, scan, save, submit and confirmation labels are blocked.",
           {"window_title": STRING, "control_name": STRING,
@@ -1613,6 +1642,182 @@ def _ui_controls(window_title: str) -> dict:
             "controls": rows, "count": len(rows)}
 
 
+def _ui_inputs(window_title: str) -> dict:
+    window = _find_window(window_title)
+    rows = []
+    for control in window.descendants():
+        try:
+            info = control.element_info
+            name = (info.name or "").strip()
+            kind = info.control_type or ""
+            automation_id = (getattr(info, "automation_id", "") or "").strip()
+            if kind not in {"Edit", "ComboBox"}:
+                continue
+            if getattr(info, "is_password", False) or _sensitive_component(name):
+                continue
+            if not control.is_visible() or not control.is_enabled():
+                continue
+            rect = control.rectangle()
+            rows.append({
+                "name": _redact(name)[:120],
+                "automation_id": _redact(automation_id)[:100],
+                "control_type": kind,
+                "rectangle": [rect.left, rect.top, rect.right, rect.bottom],
+            })
+        except Exception:
+            continue
+        if len(rows) >= 60:
+            break
+    return {"ok": True, "window_title": window_title, "inputs": rows, "count": len(rows)}
+
+
+def _latest_ui_task_text(user_messages) -> str:
+    if not isinstance(user_messages, list):
+        return ""
+    for item in reversed(user_messages):
+        if isinstance(item, dict) and item.get("role") == "user":
+            return str(item.get("content") or "").casefold()[:12000]
+    return ""
+
+
+def _ui_action_allowed(user_messages, action: str) -> bool:
+    text = _latest_ui_task_text(user_messages)
+    if not text:
+        return False
+    denied = {
+        "click": r"(?:не\\s+(?:нажимай|кликай|переходи)|don't\\s+click|do\\s+not\\s+click)",
+        "scroll": r"(?:не\\s+(?:прокручивай|пролистывай)|don't\\s+scroll|do\\s+not\\s+scroll)",
+        "type": r"(?:не\\s+(?:вводи|печатай|заполняй)|don't\\s+type|do\\s+not\\s+type)",
+        "key": r"(?:не\\s+нажимай\\s+клавиш|don't\\s+press|do\\s+not\\s+press)",
+    }
+    if re.search(denied[action], text):
+        return False
+    patterns = {
+        "click": r"(?:нажми|кликни|перейди|открой|выбери|изучи|исследуй|посмотри|осмотри|проанализируй|click|navigate|open|select|inspect|explore|review)",
+        "scroll": r"(?:пролистай|прокрути|посмотри|изучи|исследуй|осмотри|scroll|inspect|explore|review)",
+        "type": r"(?:введи|напиши|заполни|впиши|type|enter\\s+text|fill|input)",
+        "key": r"(?:нажми|press|keypress|hotkey|перейди|открой|выбери|изучи|исследуй|посмотри|inspect|explore|navigate)",
+    }
+    return bool(re.search(patterns[action], text))
+
+
+def _validate_ui_target(target_description: str) -> str:
+    if (not isinstance(target_description, str) or not target_description.strip()
+            or len(target_description) > 120):
+        raise ValueError("computer_ui_target_description_invalid")
+    target = target_description.strip()
+    if HIGH_IMPACT_UI.search(target) or _sensitive_component(target) or SECRET_VALUE.search(target):
+        raise ValueError("computer_ui_high_impact_target_blocked")
+    return target
+
+
+def _mouse_click(window_title: str, x: int, y: int, target_description: str,
+                 button: str, click_count: int, user_messages=None) -> dict:
+    _windows_only()
+    target = _validate_ui_target(target_description)
+    if not _ui_action_allowed(user_messages, "click"):
+        raise ValueError("computer_ui_click_task_intent_required")
+    if type(x) is not int or type(y) is not int or not (0 <= x <= 20000 and 0 <= y <= 20000):
+        raise ValueError("computer_mouse_coordinates_invalid")
+    if button not in {"left", "right"} or click_count not in {1, 2}:
+        raise ValueError("computer_mouse_action_invalid")
+    window = _find_window(window_title)
+    window.set_focus()
+    try:
+        import pyautogui
+    except ImportError:
+        raise RuntimeError("pyautogui_dependency_missing") from None
+    width, height = pyautogui.size()
+    if x >= width or y >= height:
+        raise ValueError("computer_mouse_coordinates_out_of_screen")
+    pyautogui.click(x=x, y=y, clicks=click_count, interval=0.12, button=button)
+    return {
+        "ok": True, "window_title": window_title,
+        "target_description": target, "x": x, "y": y,
+        "button": button, "click_count": click_count,
+    }
+
+
+def _mouse_scroll(window_title: str, x: int, y: int, amount: int,
+                  target_description: str, user_messages=None) -> dict:
+    _windows_only()
+    target = _validate_ui_target(target_description)
+    if not _ui_action_allowed(user_messages, "scroll"):
+        raise ValueError("computer_ui_scroll_task_intent_required")
+    if type(x) is not int or type(y) is not int or not (0 <= x <= 20000 and 0 <= y <= 20000):
+        raise ValueError("computer_mouse_coordinates_invalid")
+    if type(amount) is not int or amount == 0 or abs(amount) > 10:
+        raise ValueError("computer_mouse_scroll_amount_invalid")
+    window = _find_window(window_title)
+    window.set_focus()
+    try:
+        import pyautogui
+    except ImportError:
+        raise RuntimeError("pyautogui_dependency_missing") from None
+    width, height = pyautogui.size()
+    if x >= width or y >= height:
+        raise ValueError("computer_mouse_coordinates_out_of_screen")
+    pyautogui.moveTo(x, y, duration=0.08)
+    pyautogui.scroll(amount, x=x, y=y)
+    return {"ok": True, "window_title": window_title, "target_description": target,
+            "x": x, "y": y, "scroll_amount": amount}
+
+
+def _keyboard_type(window_title: str, text: str, target_description: str,
+                   user_messages=None) -> dict:
+    _windows_only()
+    target = _validate_ui_target(target_description)
+    if not _ui_action_allowed(user_messages, "type"):
+        raise ValueError("computer_keyboard_type_task_intent_required")
+    if not isinstance(text, str) or not text or len(text) > 2000:
+        raise ValueError("computer_keyboard_text_invalid")
+    if SECRET_VALUE.search(text) or re.search(
+        r"(?i)(?:sk-[A-Za-z0-9_-]{16,}|(?:api[_-]?key|password|passwd|secret|token)\\s*[:=])",
+        text,
+    ):
+        raise ValueError("computer_keyboard_sensitive_text_blocked")
+    window = _find_window(window_title)
+    window.set_focus()
+    try:
+        from pywinauto.keyboard import send_keys
+    except ImportError:
+        raise RuntimeError("pywinauto_dependency_missing") from None
+    send_keys(text, with_spaces=True, vk_packet=True)
+    return {"ok": True, "window_title": window_title, "target_description": target,
+            "characters_typed": len(text)}
+
+
+_SAFE_KEYPRESS = {
+    "TAB": "{TAB}", "SHIFT+TAB": "+{TAB}", "ESC": "{ESC}", "ENTER": "{ENTER}",
+    "UP": "{UP}", "DOWN": "{DOWN}", "LEFT": "{LEFT}", "RIGHT": "{RIGHT}",
+    "PAGEUP": "{PGUP}", "PAGEDOWN": "{PGDN}", "HOME": "{HOME}", "END": "{END}",
+    "CTRL+TAB": "^{TAB}", "CTRL+SHIFT+TAB": "^+{TAB}",
+    "ALT+LEFT": "%{LEFT}", "ALT+RIGHT": "%{RIGHT}",
+    "CTRL+L": "^l", "CTRL+F": "^f", "CTRL+A": "^a",
+}
+
+
+def _keyboard_keypress(window_title: str, key: str, target_description: str,
+                       user_messages=None) -> dict:
+    _windows_only()
+    target = _validate_ui_target(target_description)
+    if not _ui_action_allowed(user_messages, "key"):
+        raise ValueError("computer_keyboard_key_task_intent_required")
+    if key not in _SAFE_KEYPRESS:
+        raise ValueError("computer_keyboard_key_blocked")
+    text = _latest_ui_task_text(user_messages)
+    if key == "ENTER" and not re.search(r"(?:нажми\\s+enter|press\\s+enter|enter\\s+key)", text):
+        raise ValueError("computer_keyboard_enter_requires_explicit_intent")
+    window = _find_window(window_title)
+    window.set_focus()
+    try:
+        from pywinauto.keyboard import send_keys
+    except ImportError:
+        raise RuntimeError("pywinauto_dependency_missing") from None
+    send_keys(_SAFE_KEYPRESS[key])
+    return {"ok": True, "window_title": window_title, "target_description": target, "key": key}
+
+
 def _ui_click(window_title: str, control_name: str, control_type: str) -> dict:
     if control_type not in SAFE_UI_CONTROL_TYPES:
         raise ValueError("computer_ui_control_type_blocked")
@@ -1705,6 +1910,36 @@ def computer_control_call(name: str, args: dict, *, user_messages=None) -> tuple
             if set(args) != {"window_title"}:
                 raise ValueError("computer_ui_controls_arguments_invalid")
             return _ui_controls(args["window_title"]), False
+        if name == "computer_ui_inputs":
+            if set(args) != {"window_title"}:
+                raise ValueError("computer_ui_inputs_arguments_invalid")
+            return _ui_inputs(args["window_title"]), False
+        if name == "computer_mouse_click":
+            if set(args) != {"window_title", "x", "y", "target_description", "button", "click_count"}:
+                raise ValueError("computer_mouse_click_arguments_invalid")
+            return _mouse_click(
+                args["window_title"], args["x"], args["y"], args["target_description"],
+                args["button"], args["click_count"], user_messages,
+            ), False
+        if name == "computer_mouse_scroll":
+            if set(args) != {"window_title", "x", "y", "amount", "target_description"}:
+                raise ValueError("computer_mouse_scroll_arguments_invalid")
+            return _mouse_scroll(
+                args["window_title"], args["x"], args["y"], args["amount"],
+                args["target_description"], user_messages,
+            ), False
+        if name == "computer_keyboard_type":
+            if set(args) != {"window_title", "text", "target_description"}:
+                raise ValueError("computer_keyboard_type_arguments_invalid")
+            return _keyboard_type(
+                args["window_title"], args["text"], args["target_description"], user_messages,
+            ), False
+        if name == "computer_keyboard_keypress":
+            if set(args) != {"window_title", "key", "target_description"}:
+                raise ValueError("computer_keyboard_keypress_arguments_invalid")
+            return _keyboard_keypress(
+                args["window_title"], args["key"], args["target_description"], user_messages,
+            ), False
         if name == "computer_ui_click":
             if set(args) != {"window_title", "control_name", "control_type"}:
                 raise ValueError("computer_ui_click_arguments_invalid")
