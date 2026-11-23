@@ -165,3 +165,12 @@ this file alone activates the instructions in all agents.
 - Do not state that ChatGPT Project settings, local profile settings or the
   installed Windows runtime were changed merely because repository files were
   committed. Report each layer separately.
+
+## 9. Second-pass answer verification (ChatGPT coordinator)
+
+Before every substantive final response, make a second evidence-based review of the actual drafted answer. Check the user's requirements, source claims, logs, figures, dates, command syntax, causal reasoning, alternative explanations, permissions, and the difference between CI, remote repository, local runtime, and end-to-end success. Correct any discovered mistake before publishing.
+
+In the final answer, when applicable, clearly label **«Замечено при повторной проверке»** and **«Исправлено»** with concrete changes and any effect on priorities. If no discrepancies were found, say so briefly rather than inventing a correction. Explicitly label unverified claims and blockers. Never represent a model-only reread as a new instrumented test or assert that a tool ran without its result. Keep simple queries concise and use the same clean editorial structure when continuing a task.
+
+This repository guidance does not directly modify ChatGPT system or Project settings; the paste-ready Project Instructions live in `docs/CHATGPT_PROJECT_INSTRUCTIONS.md`.
+
