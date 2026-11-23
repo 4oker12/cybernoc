@@ -652,7 +652,7 @@ class GPTToolRuntime:
                         return {
                             "ok": False, "status": "task_intent_required",
                             "error": "browser_submit_requires_explicit_user_intent",
-                            "message": "Отправка формы не выполнялась: последнее сообщение пользователя должно прямо просить отправить, опубликовать или передать эту форму.",
+                            "message": "Отправка формы не выполнялась: последнее сообщение пользователя должно прямо просить отправить, сохранить, применить или передать эту форму.",
                         }, True
                 key, entry = self._browser_pool.acquire(conversation_key)
                 try:

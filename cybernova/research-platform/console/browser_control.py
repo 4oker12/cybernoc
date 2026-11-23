@@ -84,7 +84,7 @@ BROWSER_CONTROL_TOOLS = [
           {"label": {**STRING, "description": "Exact select label"},
            "value": {**STRING, "description": "Option label or value"}}, ["label", "value"]),
     _tool("browser_click_button",
-          "Click one visible button by exact accessible name. GET navigation is allowed. If the button submits a form and the user explicitly asked to send it, use browser_submit; unrelated non-GET requests remain blocked.",
+          "Click one visible button by exact accessible name. GET navigation is allowed. If the button submits a form and the user explicitly asked to send, save or apply it, use browser_submit; unrelated non-GET requests remain blocked.",
           {"name": {**STRING, "description": "Exact accessible name of one button"}}, ["name"]),
     _tool("browser_back",
           "Navigate back one page in the isolated Chromium session."),
