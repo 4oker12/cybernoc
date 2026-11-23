@@ -49,6 +49,11 @@ class FakeOllama:
         if not self.messages:raise AssertionError("Unexpected LLM call")
         return self.messages.pop(0)
 
+class FakeVisionClient(FakeOllama):
+    provider = "OpenAI-compatible"
+    model = "deepseek-flash"
+
+
 class FakeLocalToolRuntime:
     def __init__(self, *, image=False):
         self.calls = []
@@ -201,6 +206,43 @@ class AgentTests(unittest.TestCase):
         )
         self.assertEqual(client.list_models(), ["deepseek-flash"])
         self.assertEqual(urls, ["https://api.deepseek.com/models"])
+
+    def test_deepseek_flash_receives_desktop_screenshot_as_user_image(self):
+        local = FakeLocalToolRuntime(image=True)
+        first = calls(("computer_system_overview", {}))
+        first["reasoning_content"] = "Need the screenshot to inspect the UI."
+        lm = FakeVisionClient([
+            first,
+            {"role": "assistant", "content": "На снимке виден интерфейс приложения."},
+        ])
+        out = Agent(lm, lambda: FakeMCP(), local_tool_runtime=local).run(
+            [], "Изучи интерфейс AdsPower", force_tools=False,
+            tool_groups=["computer"],
+        )
+        self.assertEqual(out["tool_calls"], 1)
+        user_message = next(
+            item for item in lm.prompts[1][0] if item.get("role") == "user"
+        )
+        self.assertIsInstance(user_message["content"], list)
+        image_block = next(
+            item for item in user_message["content"] if item.get("type") == "image_url"
+        )
+        self.assertEqual(image_block["image_url"]["url"], "data:image/png;base64,AAAA")
+        self.assertTrue(out["events"][0]["result"]["visual_input"]["forwarded_to_model"])
+        self.assertNotIn("image_data_url", json.dumps(out["events"], ensure_ascii=False))
+        self.assertNotIn("AAAA", json.dumps(out["events"], ensure_ascii=False))
+
+    def test_image_blocks_survive_deepseek_context_normalization(self):
+        image = "data:image/jpeg;base64,AAAA"
+        normalized = _normalize_context([{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Inspect this window."},
+                {"type": "image_url", "image_url": {"url": image}},
+            ],
+        }])
+        self.assertEqual(normalized[0]["content"][0]["text"], "Inspect this window.")
+        self.assertEqual(normalized[0]["content"][1]["image_url"]["url"], image)
 
     def test_prior_turn_reasoning_is_forwarded_to_the_next_model_request(self):
         lm = FakeOllama([
