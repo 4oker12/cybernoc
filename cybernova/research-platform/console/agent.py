@@ -334,7 +334,11 @@ def _bounded_context_content(content, limit, *, keep_tail=False):
             if not isinstance(part, dict):
                 continue
             if part.get("type") == "text" and isinstance(part.get("text"), str):
-                value = part["text"][-remaining:] if keep_tail else part["text"][:remaining]
+                value = (
+                    part["text"][-remaining:] if keep_tail and remaining > 0
+                    else part["text"][:remaining] if not keep_tail and remaining > 0
+                    else ""
+                )
                 remaining = max(0, remaining - len(value))
                 if value:
                     blocks.append({"type": "text", "text": value})
