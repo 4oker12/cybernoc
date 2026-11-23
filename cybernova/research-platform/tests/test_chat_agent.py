@@ -265,34 +265,19 @@ class AgentTests(unittest.TestCase):
             "prior reasoning must be passed unchanged",
         )
 
-    def test_second_pass_echoes_reasoning_for_the_draft_answer(self):
-        lm = FakeOllama([
-            {
-                "role": "assistant",
-                "content": "Черновик ответа.",
-                "reasoning_content": "first-pass reasoning must be echoed",
-            },
-            {
-                "role": "assistant",
-                "content": "## Повторная проверка\nПроверено.",
-                "reasoning_content": "review-pass reasoning",
-            },
-        ])
+    def test_simple_conversation_turn_skips_unneeded_second_pass(self):
+        lm = FakeOllama([{
+            "role": "assistant",
+            "content": "Короткий ответ.",
+            "reasoning_content": "first-pass reasoning",
+        }])
         outcome = Agent(lm, lambda: FakeMCP()).run(
             [], "Сформируй ответ", tools_enabled=False, force_tools=False,
         )
-        draft = next(
-            item for item in lm.prompts[1][0]
-            if item.get("role") == "assistant" and item.get("content") == "Черновик ответа."
-        )
-        self.assertEqual(
-            draft["reasoning_content"],
-            "first-pass reasoning must be echoed",
-        )
-        self.assertEqual(
-            outcome["_history_reasoning_content"],
-            "review-pass reasoning",
-        )
+        self.assertEqual(outcome["answer"], "Короткий ответ.")
+        self.assertEqual(outcome["review"]["status"], "not_required")
+        self.assertEqual(len(lm.prompts), 1)
+        self.assertEqual(outcome["_history_reasoning_content"], "first-pass reasoning")
 
     def test_controller_developer_fallback_keeps_reasoning_content(self):
         class DeveloperMCP(FakeMCP):
@@ -320,11 +305,13 @@ class AgentTests(unittest.TestCase):
                 "reasoning_content": "The controller should inspect the repository tree.",
             },
             {"role": "assistant", "content": "Структура проекта получена."},
-            {"role": "assistant", "content": "## Повторная проверка\nПроверено."},
+            {"role": "assistant", "content": "Проверка результата завершена."},
         ])
-        Agent(lm, lambda: mcp).run(
+        outcome = Agent(lm, lambda: mcp).run(
             [], "Изучи проект и проверь код", force_tools=False,
         )
+        self.assertEqual(outcome["review"]["status"], "completed")
+        self.assertEqual(outcome["answer"], "Проверка результата завершена.")
         synthetic_turn = next(
             item for item in lm.prompts[1][0]
             if item.get("role") == "assistant" and item.get("tool_calls")

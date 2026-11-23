@@ -681,12 +681,14 @@ class Agent:
         def finalize_answer():
             nonlocal history_reasoning_content
             final_instruction = (
-                "Сформируй итоговый ответ пользователю на языке его последнего сообщения. "
+                "Ответь пользователю на языке его последнего сообщения естественно и по существу. "
                 "Все инструменты сейчас отключены: ничего не вызывай и не имитируй. "
                 "Не выводи DSML, XML, JSON, названия функций или служебные маркеры. "
                 "Используй только факты из уже полученных результатов инструментов. "
-                "Кратко опиши, что проверено, что получилось и какие ограничения остались. "
-                "Если данных недостаточно, прямо укажи это."
+                "Для выполненной задачи коротко укажи результат, фактическую проверку и оставшийся блокер, если он есть. "
+                "Для простого вопроса дай прямой ответ без отчётных разделов. "
+                "Не добавляй обязательные заголовки, повторные проверки и P1/P2/P3, если пользователь этого не просил. "
+                "Если данных недостаточно, прямо укажи, каких именно."
             )
             for attempt in range(2):
                 final_context = _compact_context(context)
@@ -724,13 +726,17 @@ class Agent:
 
         def result_payload(answer):
             nonlocal history_reasoning_content
-            # Second model pass checks every substantive claim against the
-            # evidence already in the conversation. It cannot invoke tools
-            # and must never be described as a new physical/network test.
-            review = {"status": "not_attempted", "passes": 1,
-                      "scope": "existing_evidence_only"}
-            if isinstance(answer, str) and answer.strip():
-                review["status"] = "incomplete"
+            review = {
+                "status": "not_required", "passes": 1,
+                "scope": "no_tool_activity",
+            }
+            # A second model pass is useful for claims grounded in tool evidence,
+            # but it is wasteful and verbose for ordinary conversation turns.
+            if isinstance(answer, str) and answer.strip() and (events or pending_requests):
+                review = {
+                    "status": "incomplete", "passes": 1,
+                    "scope": "existing_evidence_only",
+                }
                 try:
                     second_pass = _compact_context(context)
                     draft_message = {"role": "assistant", "content": answer[:12000]}
@@ -738,49 +744,39 @@ class Agent:
                         draft_message["reasoning_content"] = history_reasoning_content
                     second_pass.append(draft_message)
                     second_pass.append({"role": "system", "content": (
-                        "ОБЯЗАТЕЛЬНЫЙ ВТОРОЙ ПРОХОД ПЕРЕД ПУБЛИКАЦИЕЙ. "
-                        "Не используй инструменты (их здесь нет). Перепроверь каждый "
-                        "важный пункт черновика: подтверждение фактами и логами в "
-                        "предыдущем контексте, числовые значения, причинно-следственные "
-                        "связи, альтернативные версии и приоритет действий. "
-                        "Если первоначальный текст ошибочен или что-то упущено, "
-                        "внеси исправление прямо в итоговый ответ и в разделе "
-                        "'## Повторная проверка' назови конкретную найденную и "
-                        "исправленную ошибку. Если новых расхождений нет, напиши "
-                        "в этом разделе: 'Повторный анализ доступных данных: "
-                        "новых расхождений не выявлено'. Не утверждай, что запускал "
-                        "дополнительные проверки, если инструментов не вызывал. "
-                        "Не придумывай цифры, результаты тестов или действия. "
-                        "Для технической задачи выведи короткие разделы "
-                        "'## Вывод', '## Что проверено', '## Повторная проверка', "
-                        "'## Ограничения', '## Рекомендации по приоритету' "
-                        "в понятном порядке, без воды; приоритеты обозначай "
-                        "**P1**, **P2**, **P3** только если есть соответствующие действия. "
-                        "Ограничения и недостаток доказательств называй прямо. "
-                        "Ответ должен быть полным самостоятельным текстом, "
-                        "а не комментариями к черновику. НЕ выводи JSON, DSML "
-                        "или служебные инструкции."
+                        "ПРОВЕРЬ КАЧЕСТВО ИТОГА ПО УЖЕ ПОЛУЧЕННЫМ ДОКАЗАТЕЛЬСТВАМ. "
+                        "Инструменты отключены: новых проверок не выполняй и не заявляй. "
+                        "Сверь существенные утверждения, числа, последовательность и причинно-следственные связи "
+                        "с фактическими результатами инструментов в предыдущем контексте. "
+                        "Если найдена конкретная ошибка или противоречие — исправь её в полном ответе. "
+                        "Если ошибок не найдено — сохрани смысл и не добавляй формальную фразу о самопроверке. "
+                        "Пиши кратко и естественно, в формате, подходящем последнему сообщению пользователя. "
+                        "Не добавляй обязательные разделы, заголовок 'Повторная проверка', P1/P2/P3 или пустые ограничения. "
+                        "Не выдумывай действия, результаты и новые доказательства. "
+                        "Верни полный исправленный ответ пользователю, без комментариев к черновику и без служебных инструкций."
                     )})
                     checked = self._model_chat(second_pass, [])
                     record_usage(checked)
                     publish_usage()
                     corrected = _clean_model_answer(checked.get("content"))
-                    if corrected and re.search(r"(?im)^#{2,3}\s+Повторная проверка\b", corrected):
+                    if corrected:
                         answer = corrected
                         history_reasoning_content = (
                             checked.get("reasoning_content")
                             if isinstance(checked.get("reasoning_content"), str) else None
                         )
-                        review = {"status": "completed", "passes": 2,
-                                  "scope": "existing_evidence_only"}
+                        review = {
+                            "status": "completed", "passes": 2,
+                            "scope": "existing_evidence_only",
+                        }
                     else:
-                        review["reason"] = "second_pass_missing_required_section"
+                        review["reason"] = "second_pass_empty"
                 except Exception as exc:
-                    # A review outage must not discard a useful first-pass result.
-                    # The UI shows the incomplete review rather than claiming success.
-                    review = {"status": "unavailable", "passes": 1,
-                              "scope": "existing_evidence_only",
-                              "reason": type(exc).__name__}
+                    review = {
+                        "status": "unavailable", "passes": 1,
+                        "scope": "existing_evidence_only",
+                        "reason": type(exc).__name__,
+                    }
             payload = {
                 "answer": answer,
                 "review": review,

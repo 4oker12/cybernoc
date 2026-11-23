@@ -29,6 +29,7 @@ class ProfileSettingsTests(unittest.TestCase):
     def test_defaults_and_atomic_persistence_round_trip(self):
         defaults = self.profile_store.load()
         self.assertEqual(defaults["ui"]["theme"], "light")
+        self.assertEqual(defaults["researcher"]["behavior"]["autonomy"], 80)
         self.assertTrue(defaults["privacy"]["share_with_researcher"])
         defaults["user"]["display_name"] = "Operator"
         saved = self.profile_store.save(defaults)
@@ -61,6 +62,22 @@ class ProfileSettingsTests(unittest.TestCase):
         self.assertIn("Отвечай кратко", chatgpt)
         self.assertNotIn("Сначала изучай архитектуру", chatgpt)
         self.assertIn("не расширяют scope", researcher)
+
+    def test_researcher_behavior_sliders_are_persisted_validated_and_added_to_prompt(self):
+        settings = default_settings()
+        settings["researcher"]["behavior"]["autonomy"] = 90
+        settings["researcher"]["behavior"]["brevity"] = 95
+        saved = self.profile_store.save(settings)
+        self.assertEqual(saved["researcher"]["behavior"]["autonomy"], 90)
+        instructions = mode_instructions_for(saved, "researcher")
+        self.assertIn("Самостоятельность 90/100", instructions)
+        self.assertIn("Краткость 95/100", instructions)
+        self.assertNotIn("Самостоятельность", mode_instructions_for(saved, "chatgpt"))
+
+        invalid = default_settings()
+        invalid["researcher"]["behavior"]["skepticism"] = 101
+        with self.assertRaises(ProfileSettingsError):
+            self.profile_store.save(invalid)
 
     def test_invalid_settings_are_rejected(self):
         settings = default_settings()

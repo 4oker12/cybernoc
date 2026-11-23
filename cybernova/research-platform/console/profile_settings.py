@@ -18,6 +18,15 @@ except ImportError:
     from communication import _db_path
 
 
+RESEARCHER_BEHAVIOR_DEFAULTS = {
+    "autonomy": 80,
+    "initiative": 75,
+    "skepticism": 85,
+    "vigilance": 85,
+    "neutrality": 95,
+    "brevity": 80,
+}
+
 DEFAULT_SETTINGS = {
     "user": {
         "display_name": "",
@@ -32,6 +41,7 @@ DEFAULT_SETTINGS = {
     "researcher": {
         "description": "",
         "instructions": "",
+        "behavior": dict(RESEARCHER_BEHAVIOR_DEFAULTS),
     },
     "chatgpt": {
         "description": "",
@@ -85,6 +95,16 @@ def normalize_settings(value: object) -> dict:
                 if len(item) > limit:
                     raise ProfileSettingsError("profile_text_too_long_" + key)
                 result[section][key] = item.strip()
+            elif section == "researcher" and key == "behavior":
+                if not isinstance(item, dict) or set(item) - set(RESEARCHER_BEHAVIOR_DEFAULTS):
+                    raise ProfileSettingsError("invalid_researcher_behavior")
+                behavior = {}
+                for behavior_key, default_value in RESEARCHER_BEHAVIOR_DEFAULTS.items():
+                    behavior_value = item.get(behavior_key, default_value)
+                    if type(behavior_value) is not int or not 0 <= behavior_value <= 100:
+                        raise ProfileSettingsError("invalid_researcher_behavior_" + behavior_key)
+                    behavior[behavior_key] = behavior_value
+                result[section][key] = behavior
             elif section == "privacy":
                 if type(item) is not bool:
                     raise ProfileSettingsError("invalid_profile_privacy_" + key)
@@ -212,7 +232,7 @@ def mode_instructions_for(settings: dict, mode: str) -> str:
     profile = settings.get(mode, {})
     description = profile.get("description", "").strip()
     instructions = profile.get("instructions", "").strip()
-    if not description and not instructions:
+    if not description and not instructions and mode != "researcher":
         return ""
     parts = [
         "ДОПОЛНИТЕЛЬНЫЕ НАСТРОЙКИ РЕЖИМА, ЗАДАННЫЕ ВЛАДЕЛЬЦЕМ CYBERNOVA.",
@@ -224,4 +244,31 @@ def mode_instructions_for(settings: dict, mode: str) -> str:
         parts.append("Описание режима: " + description)
     if instructions:
         parts.append("Дополнительные инструкции: " + instructions)
+    if mode == "researcher":
+        behavior = dict(RESEARCHER_BEHAVIOR_DEFAULTS)
+        supplied = profile.get("behavior")
+        if isinstance(supplied, dict):
+            behavior.update({
+                key: value for key, value in supplied.items()
+                if key in RESEARCHER_BEHAVIOR_DEFAULTS
+                and type(value) is int and 0 <= value <= 100
+            })
+        parts.append(
+            "НАСТРОЙКИ ПОВЕДЕНИЯ ИССЛЕДОВАТЕЛЯ (0–100; это предпочтения стиля "
+            "и работы, а не новые права):\n"
+            f"- Самостоятельность {behavior['autonomy']}/100: самостоятельно выполняй "
+            "безопасные и обратимые шаги; не проси подтверждение на каждое рутинное действие, "
+            "но соблюдай реальные границы доступа и внешних побочных эффектов.\n"
+            f"- Инициативность {behavior['initiative']}/100: продолжай очевидные независимые "
+            "этапы и предлагай рабочую альтернативу после сбоя, не расширяя исходную цель.\n"
+            f"- Скептицизм {behavior['skepticism']}/100: проверяй предположения, числа и "
+            "причинные связи; ищи опровергающие признаки, когда причина неоднозначна.\n"
+            f"- Бдительность {behavior['vigilance']}/100: проверяй точный объект, процесс, "
+            "профиль и scope; замечай аномалии и не допускай раскрытия секретов.\n"
+            f"- Непредвзятость {behavior['neutrality']}/100: рассматривай альтернативные "
+            "объяснения и не подгоняй факты под первую гипотезу.\n"
+            f"- Краткость {behavior['brevity']}/100: предпочитай компактный диалог и "
+            "короткий отчёт о результате; расширяй объяснение только при реальной сложности "
+            "или прямой просьбе пользователя."
+        )
     return "\n\n".join(parts)[:12500]

@@ -73,12 +73,13 @@ function showReviewStatus(message,review){
   if(!review||!message?.wrap)return;
   const meta=message.wrap.querySelector?.(".message-meta");
   if(!meta)return;
+  if(review.status==="not_required")return;
   const complete=review.status==="completed";
   const badge=node("span","review-status "+(complete?"is-completed":"is-incomplete"),
-    complete?"Самопроверка модели":"Самопроверка не завершена");
+    complete?"Проверка результата":"Проверка не завершена");
   badge.title=complete?
-    "Второй проход модели по доступным данным, а не новый инструментальный тест":
-    "Второй проход отсутствует или завершён с ошибкой. Вывод не получил повторной сверки.";
+    "Второй проход сверил ответ с уже полученными данными инструментов; новых тестов он не выполнял":
+    "Проверка результата не завершилась; это не означает, что инструментальные действия не выполнены.";
   meta.append(badge);
 }
 function renderMessage(role,content,pending=false,containerId="messages"){
@@ -1215,7 +1216,7 @@ function toolsPanel(show){
 const DEFAULT_PROFILE_SETTINGS={
   user:{display_name:"",role:"",about:"",preferences:""},
   privacy:{share_with_researcher:true,share_with_chatgpt:true},
-  researcher:{description:"",instructions:""},
+  researcher:{description:"",instructions:"",behavior:{autonomy:80,initiative:75,skepticism:85,vigilance:85,neutrality:95,brevity:80}},
   chatgpt:{description:"",instructions:""},
   ui:{theme:"light",density:"comfortable",font_scale:100,sidebar_width:300,chat_width:1040,show_technical_details:false},
 };
@@ -1243,6 +1244,7 @@ function populateProfileSettings(settings){
   const value=settings||d;
   const user=value.user||d.user, privacy=value.privacy||d.privacy;
   const researcher=value.researcher||d.researcher, chatgpt=value.chatgpt||d.chatgpt;
+  const behavior={...d.researcher.behavior,...(researcher.behavior||{})};
   const ui=value.ui||d.ui;
   $("profileName").value=user.display_name||"";
   $("profileRole").value=user.role||"";
@@ -1252,6 +1254,12 @@ function populateProfileSettings(settings){
   $("shareChatGPT").checked=privacy.share_with_chatgpt!==false;
   $("researcherDescription").value=researcher.description||"";
   $("researcherInstructions").value=researcher.instructions||"";
+  for(const key of ["autonomy","initiative","skepticism","vigilance","neutrality","brevity"]){
+    const input=$("researcher"+key[0].toUpperCase()+key.slice(1));
+    const output=$(input.id+"Value");
+    input.value=String(behavior[key]);
+    output.textContent=input.value;
+  }
   $("chatgptDescription").value=chatgpt.description||"";
   $("chatgptInstructions").value=chatgpt.instructions||"";
   $("uiTheme").value=ui.theme||"light";
@@ -1277,6 +1285,14 @@ function collectProfileSettings(){
     researcher:{
       description:$("researcherDescription").value,
       instructions:$("researcherInstructions").value,
+      behavior:{
+        autonomy:Number($("researcherAutonomy").value),
+        initiative:Number($("researcherInitiative").value),
+        skepticism:Number($("researcherSkepticism").value),
+        vigilance:Number($("researcherVigilance").value),
+        neutrality:Number($("researcherNeutrality").value),
+        brevity:Number($("researcherBrevity").value),
+      },
     },
     chatgpt:{
       description:$("chatgptDescription").value,
@@ -1641,6 +1657,9 @@ function init(){
     const tab=event.target.closest("[data-profile-tab]");
     if(tab)selectProfileTab(tab.dataset.profileTab);
   });
+  for(const id of ["researcherAutonomy","researcherInitiative","researcherSkepticism","researcherVigilance","researcherNeutrality","researcherBrevity"]){
+    $(id).addEventListener("input",()=>{$(id+"Value").textContent=$(id).value;});
+  }
   void loadProfileSettings();
   $("applyResearchScope").addEventListener("click",applyResearchScope);
   $("modeQwen").addEventListener("click",()=>setMode("qwen"));

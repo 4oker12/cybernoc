@@ -60,8 +60,7 @@ except ImportError:
 # model-specific generic approval layer.
 SHARED_LOCAL_TOOLS = (
     COMPUTER_TOOL_NAMES
-    | frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS
-                if item["name"] != "browser_submit")
+    | frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS)
     | frozenset({"terminal_run", "terminal_status"})
     | GITHUB_NAMES | GITHUB_WRITE_NAMES
 )

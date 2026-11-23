@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
-  <meta name="theme-color" content="#212121">
+  <meta name="theme-color" content="#ffffff">
   <title>Cybernova — Исследователь и ChatGPT</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261123-composer3">
+  <link rel="stylesheet" href="/static/styles.css?v=20261123-github-settings-1">
   <link rel="stylesheet" href="/static/ux.css?v=20261122-ui1">
   <script defer src="/static/markdown.js?v=20261123-dsml2"></script>
-  <script defer src="/static/app.js?v=20261123-composer3"></script>
+  <script defer src="/static/app.js?v=20261123-researcher-behavior-1"></script>
   <script defer src="/static/model-settings.js"></script>
   <script defer src="/static/ux.js?v=20261122-ui1"></script>
 </head>
@@ -266,7 +266,43 @@
       </section>
       <section class="profile-panel" data-profile-panel="researcher" hidden>
         <h3>Профиль исследователя Cybernova</h3>
-        <p class="profile-help">Базовая миссия Cybernova и ограничения безопасности сохраняются. Эти поля добавляют персональные настройки, но не расширяют scope и права инструментов.</p>
+        <p class="profile-help">Базовая миссия Cybernova и ограничения безопасности сохраняются. Ползунки регулируют стиль и самостоятельность работы, но не расширяют scope и права инструментов.</p>
+        <div class="researcher-behavior">
+          <h4>Поведение исследователя</h4>
+          <p class="researcher-behavior-help">Настройки применяются к следующим сообщениям. Значение 100 означает более выраженное качество.</p>
+          <div class="researcher-behavior-grid">
+            <div class="behavior-control">
+              <label for="researcherAutonomy"><span>Самостоятельность</span><output id="researcherAutonomyValue">80</output></label>
+              <input id="researcherAutonomy" type="range" min="0" max="100" step="5" value="80">
+              <p>Выполнять безопасные шаги без постоянных уточнений.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherInitiative"><span>Инициативность</span><output id="researcherInitiativeValue">75</output></label>
+              <input id="researcherInitiative" type="range" min="0" max="100" step="5" value="75">
+              <p>Продолжать очевидные этапы и искать альтернативы.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherSkepticism"><span>Скептицизм</span><output id="researcherSkepticismValue">85</output></label>
+              <input id="researcherSkepticism" type="range" min="0" max="100" step="5" value="85">
+              <p>Проверять предположения и причинно-следственные связи.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherVigilance"><span>Бдительность</span><output id="researcherVigilanceValue">85</output></label>
+              <input id="researcherVigilance" type="range" min="0" max="100" step="5" value="85">
+              <p>Замечать аномалии, неверные объекты и нарушения scope.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherNeutrality"><span>Непредвзятость</span><output id="researcherNeutralityValue">95</output></label>
+              <input id="researcherNeutrality" type="range" min="0" max="100" step="5" value="95">
+              <p>Учитывать конкурирующие объяснения и опровергающие факты.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherBrevity"><span>Краткость</span><output id="researcherBrevityValue">80</output></label>
+              <input id="researcherBrevity" type="range" min="0" max="100" step="5" value="80">
+              <p>Отвечать компактно, не превращая диалог в постоянный отчёт.</p>
+            </div>
+          </div>
+        </div>
         <label for="researcherDescription">Описание роли / специализации</label><textarea id="researcherDescription" rows="3" maxlength="2000" placeholder="Каким исследователем должна быть модель, на чём специализироваться…"></textarea>
         <label for="researcherInstructions">Дополнительный системный промпт</label><textarea id="researcherInstructions" rows="7" maxlength="10000" placeholder="Методология, приоритеты, формат отчётов, обязательные этапы анализа…"></textarea>
       </section>

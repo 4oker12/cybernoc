@@ -22,6 +22,7 @@ from collections import OrderedDict
 from threading import RLock
 
 try:
+    from .tool_policy import task_intent_matches
     from .browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from .developer_tools import SOURCE
     from .research_web import RESEARCH_WEB_TOOLS, research_web_call
@@ -29,6 +30,7 @@ try:
     from .github_tools import GITHUB_TOOLS, GITHUB_NAMES, github_call
     from .github_write_tools import GITHUB_WRITE_TOOLS, GITHUB_WRITE_NAMES, github_write_call
 except ImportError:
+    from tool_policy import task_intent_matches
     from browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from developer_tools import SOURCE
     from research_web import RESEARCH_WEB_TOOLS, research_web_call
@@ -62,7 +64,6 @@ EXPLICIT_ONLY_TOOLS = frozenset()  # Full local tool pool is exposed in automati
 
 _TOOL_NAMES = frozenset(
     item["name"] for item in BROWSER_CONTROL_TOOLS
-    if item["name"] != "browser_submit"
 ) | frozenset(item["name"] for item in RESEARCH_WEB_TOOLS) | {
     "terminal_run", "terminal_status",
 } | COMPUTER_TOOL_NAMES | GITHUB_NAMES | GITHUB_WRITE_NAMES
@@ -266,11 +267,7 @@ def build_tool_catalog() -> list[dict]:
             status_schema,
         ),
     ]
-    rows.extend(
-        _convert_mcp_tool(item)
-        for item in BROWSER_CONTROL_TOOLS
-        if item["name"] != "browser_submit"
-    )
+    rows.extend(_convert_mcp_tool(item) for item in BROWSER_CONTROL_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in RESEARCH_WEB_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in COMPUTER_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in GITHUB_TOOLS)
@@ -638,7 +635,25 @@ class GPTToolRuntime:
             # thread. They never hold the runtime-wide lock while Playwright runs.
             if name.startswith("browser_"):
                 if name == "browser_submit":
-                    raise ValueError("browser_submit_requires_separate_approval")
+                    latest_user = ""
+                    for message in reversed(user_messages or []):
+                        if isinstance(message, dict) and message.get("role") == "user":
+                            content = message.get("content")
+                            if isinstance(content, str):
+                                latest_user = content
+                            elif isinstance(content, list):
+                                latest_user = " ".join(
+                                    str(part.get("text") or "") for part in content
+                                    if isinstance(part, dict) and part.get("type") == "text"
+                                )
+                            break
+                    description = str(self.tool_map[name].get("description") or "")
+                    if not task_intent_matches(name, description, latest_user):
+                        return {
+                            "ok": False, "status": "task_intent_required",
+                            "error": "browser_submit_requires_explicit_user_intent",
+                            "message": "Отправка формы не выполнялась: последнее сообщение пользователя должно прямо просить отправить, опубликовать или передать эту форму.",
+                        }, True
                 key, entry = self._browser_pool.acquire(conversation_key)
                 try:
                     with entry["call_lock"]:

@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from console import research_web
+from console import research_web, browser_tools
 from console.research_web import (
     ResearchWebError, google_search, research_source_open,
     sanitize_search_query, _parse_bing_rss, _bing_html_fallback,
@@ -30,6 +30,35 @@ class FakeUpstream:
 
 
 class ResearchWebTests(unittest.TestCase):
+    def test_readonly_browser_accepts_any_public_https_host_without_manual_allowlist(self):
+        parsed, host = browser_tools._url_parts("https://docs.python.org/3/library/", set())
+        self.assertEqual(parsed.scheme, "https")
+        self.assertEqual(host, "docs.python.org")
+        with self.assertRaisesRegex(ValueError, "private_hostname"):
+            browser_tools._url_parts("https://router.local/", set())
+        with self.assertRaisesRegex(ValueError, "ip_literal"):
+            browser_tools._url_parts("https://127.0.0.1/admin", set())
+
+    def test_readonly_browser_open_uses_public_reader_without_gateway_host_allowlist(self):
+        page = {
+            "ok": True, "url": "https://vendor.example/advisory",
+            "http_status": 200, "title": "Advisory", "headings": [],
+            "text_excerpt": "Public advisory", "links": [],
+            "source_sha256": "a" * 64, "content_type": "text/html",
+            "redirects": 0, "rendering": "html_only_no_javascript",
+        }
+        with (
+            patch.dict("os.environ", {"CYBERNOVA_BROWSER_HOSTS": ""}),
+            patch.object(browser_tools, "_read_page", return_value=page) as reader,
+        ):
+            result = browser_tools.browser_call(
+                "browser_open", {"url": "https://vendor.example/advisory"}, FakeUpstream(),
+            )
+        self.assertTrue(result["ok"])
+        reader.assert_called_once_with(
+            "https://vendor.example/advisory", set(), fetcher=None,
+        )
+
     def test_search_query_redacts_private_identifiers_and_secrets(self):
         value = sanitize_search_query(
             "CVE-2026-12345 Apache 2.4.25 10.9.55.44 "

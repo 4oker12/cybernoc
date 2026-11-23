@@ -45,6 +45,15 @@ HIGH_IMPACT = re.compile(
     r"оплат|купить|заказать|оформить|подтвердить|брон|резерв|"
     r"удал|отмен|отпис|выйти|сброс|отключ|разорвать|деактив|стереть)"
 )
+IRREVERSIBLE_SUBMIT_TARGET = re.compile(
+    r"(?i)(pay(?:ment)?|purchase|buy\s+now|place\s+order|checkout|"
+    r"\bbook(?:\s+now)?\b|\breserve\b|\bdelete\b|\bremove\b|"
+    r"unsubscribe|\bcancel\b|\brevoke\b|\bdisable\b|\bdeactivate\b|"
+    r"\blog\s*out\b|\bsign\s*out\b|\breset\b|\bdisconnect\b|"
+    r"\bterminate\b|\berase\b|\bdestroy\b|"
+    r"оплат|купить|оформить\s+заказ|брон|резерв|удал|отмен|отпис|"
+    r"сброс|отключ|разорвать|деактив|стереть)"
+)
 
 def _tool(name: str, description: str, properties=None, required=None):
     return {
@@ -75,7 +84,7 @@ BROWSER_CONTROL_TOOLS = [
           {"label": {**STRING, "description": "Exact select label"},
            "value": {**STRING, "description": "Option label or value"}}, ["label", "value"]),
     _tool("browser_click_button",
-          "Click one visible button by exact accessible name. GET navigation is allowed; non-GET requests are blocked. Payment/order/booking confirmation buttons require browser_submit instead.",
+          "Click one visible button by exact accessible name. GET navigation is allowed. If the button submits a form and the user explicitly asked to send it, use browser_submit; unrelated non-GET requests remain blocked.",
           {"name": {**STRING, "description": "Exact accessible name of one button"}}, ["name"]),
     _tool("browser_back",
           "Navigate back one page in the isolated Chromium session."),
@@ -100,8 +109,8 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers."),
     _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
-          "SUBMIT or confirm a form/button. This may change remote state or create an order/booking. Requires explicit user approval. After approval, permits at most one same-origin POST request; cross-origin and other write methods remain blocked.",
-          {"name": {**STRING, "description": "Exact accessible name of the submit/confirm button"}}, ["name"]),
+          "Submit one visible form/button only when the latest user message explicitly asks to send, submit, publish or post that form. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Unrelated writes, DELETE, other write methods, payment, purchase, deletion and account-removal actions remain blocked.",
+          {"name": {**STRING, "description": "Exact accessible name of the visible form submit button"}}, ["name"]),
 ]
 BROWSER_CONTROL_NAMES = frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS)
 APPROVAL_TOOL_NAMES = frozenset({"browser_submit"})
@@ -526,8 +535,11 @@ class BrowserSession:
                     self._allow_post_remaining -= 1
                     self._allowed_request_count += 1
                 else:
-                    self._blocked.append({"url": _safe_url(raw), "method": method,
-                                          "reason": "write_request_requires_approved_submit"})
+                    self._blocked.append({
+                        "url": _safe_url(raw), "method": method,
+                        "reason": "write_request_requires_approved_submit",
+                        "suggested_tool": "browser_submit" if method == "POST" else None,
+                    })
                     route.abort("blockedbyclient")
                     return
             route.continue_()
@@ -799,7 +811,17 @@ class BrowserSession:
                     "message": "Кнопка или форма похожа на оформление, покупку, оплату или бронирование. Для неё нужен отдельный запрос разрешения.",
                 }
             if name == "browser_submit":
-                self._allow_post_origin = _origin(self._page.url)
+                submit_target = form_action or self._page.url
+                validate_public_url(submit_target, self._authorized_hosts)
+                if IRREVERSIBLE_SUBMIT_TARGET.search(target + " " + submit_target):
+                    return {
+                        "ok": False, "status": "manual_action_required",
+                        "reason": "financial_or_destructive_submit_target",
+                        "button": target[:180],
+                        "form_action": _safe_url(submit_target),
+                        "message": "Эта кнопка относится к оплате, удалению или другому необратимому действию. Общего разрешения на отправку формы недостаточно; действие оставлено человеку.",
+                    }
+                self._allow_post_origin = _origin(submit_target)
                 self._allow_post_remaining = 1
                 self._allowed_request_count = 0
             try:
@@ -819,7 +841,8 @@ class BrowserSession:
             result = self._snapshot()
             if name == "browser_submit":
                 result["approved_submit"] = True
-                result["same_origin_post_requests_allowed"] = self._allowed_request_count
+                result["approved_post_requests_allowed"] = self._allowed_request_count
+                result["approved_submit_origin"] = _origin(submit_target)
                 result["other_write_requests"] = "blocked"
             return result
         raise ValueError("unknown_browser_control_tool")

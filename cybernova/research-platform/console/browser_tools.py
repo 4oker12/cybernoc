@@ -27,9 +27,9 @@ BROWSER_TOOLS = [{
     "description": (
         "Read ONE public HTTPS web page with a guarded HTML-only browser. "
         "Returns real HTTP status, title, headings, visible text excerpt, "
-        "SHA256 and links for navigation. Requires exact hostname in "
-        "Cybernova browser allowlist or authorized MCP gateway scope. "
-        "No JavaScript, cookies, logins, scans or internal IPs."
+        "SHA256 and links for navigation. Any public HTTPS hostname is allowed; "
+        "DNS is pinned to a globally routable address and TLS is verified. "
+        "No JavaScript, cookies, logins, scans or internal/private IPs."
     ),
     "inputSchema": {
         "type": "object",
@@ -43,7 +43,8 @@ BROWSER_TOOLS = [{
 BROWSER_NAMES = frozenset(t["name"] for t in BROWSER_TOOLS)
 
 
-def _url_parts(value: str, allowed_hosts: set[str]):
+def _url_parts(value: str, allowed_hosts: set[str] | None = None):
+    """Validate a public HTTPS URL; hostname allowlists are not required for passive reads."""
     if not isinstance(value, str) or len(value) > 850 or not value.startswith("https://"):
         raise ValueError("https_url_required")
     if any(ord(c) < 32 for c in value) or "\\" in value:
@@ -62,8 +63,12 @@ def _url_parts(value: str, allowed_hosts: set[str]):
     except ValueError as exc:
         if str(exc) == "ip_literal_forbidden":
             raise
-    if host not in allowed_hosts:
-        raise ValueError("browser_host_not_allowed")
+    if (host in {"localhost", "localhost.localdomain", "home.arpa"}
+            or host.endswith((".localhost", ".local", ".lan", ".internal", ".home"))):
+        raise ValueError("private_hostname_forbidden")
+    # allowed_hosts is retained for API compatibility with existing callers.
+    # Public hosts are validated by DNS pinning and _public_ip below, not a
+    # deployment allowlist. This reader never accesses private/reserved IPs.
     return u, host
 
 

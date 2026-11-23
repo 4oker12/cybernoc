@@ -6,6 +6,7 @@ from types import ModuleType
 from unittest.mock import patch
 import sys
 import unittest
+from threading import RLock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -68,7 +69,7 @@ class BrowserControlTests(unittest.TestCase):
             "browser_console", "browser_network",
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
-        self.assertIn("explicit user approval", submit["description"])
+        self.assertIn("latest user message explicitly asks", submit["description"])
 
     def test_browser_tools_are_shared_with_the_deepseek_agent(self):
         from console.agent import Agent
@@ -93,14 +94,46 @@ class BrowserControlTests(unittest.TestCase):
             [], "Проверь доступные инструменты", force_tools=False,
         )
         deepseek_names = {item["function"]["name"] for item in model.tool_history[0]}
-        self.assertEqual(model.tool_history[-1], [])  # Second answer review never receives tools.
+        self.assertEqual(len(model.tool_history), 1)  # No redundant review pass without tool activity.
         gpt_names = {item["name"] for item in runtime.tools}
         for name in ("browser_navigate", "browser_snapshot", "browser_follow_link",
                      "browser_tabs", "browser_network"):
             self.assertIn(name, gpt_names)
             self.assertIn(name, deepseek_names)
-        self.assertNotIn("browser_submit", gpt_names)
-        self.assertNotIn("browser_submit", deepseek_names)
+        self.assertIn("browser_submit", gpt_names)
+        self.assertIn("browser_submit", deepseek_names)
+
+    def test_browser_submit_requires_explicit_current_user_intent_and_dispatches_when_requested(self):
+        from console.gpt_tool_runtime import GPTToolRuntime
+        runtime = GPTToolRuntime()
+
+        denied, failed = runtime._call_impl(
+            "browser_submit", {"name": "Send"},
+            user_messages=[{"role": "user", "content": "Изучи страницу и проверь поля."}],
+            conversation_key="browser-submit-test",
+        )
+        self.assertTrue(failed)
+        self.assertEqual(denied["error"], "browser_submit_requires_explicit_user_intent")
+
+        class FakeSession:
+            def set_authorized_hosts(self, hosts):
+                self.authorized_hosts = set(hosts or [])
+
+        entry = {"session": FakeSession(), "call_lock": RLock()}
+        with (
+            patch.object(runtime._browser_pool, "acquire", return_value=("test", entry)),
+            patch.object(runtime._browser_pool, "release"),
+            patch("console.gpt_tool_runtime.browser_control_call",
+                  return_value=({"ok": True, "approved_post_requests_allowed": 1}, False)) as dispatch,
+        ):
+            result, failed = runtime._call_impl(
+                "browser_submit", {"name": "Send"},
+                user_messages=[{"role": "user", "content": "Отправь заполненную форму."}],
+                conversation_key="browser-submit-test",
+            )
+        self.assertFalse(failed)
+        self.assertTrue(result["ok"])
+        dispatch.assert_called_once_with("browser_submit", {"name": "Send"}, entry["session"])
 
     def test_persistent_profile_disables_tab_restore_without_deleting_login_data(self):
         with TemporaryDirectory() as temp:
@@ -276,19 +309,21 @@ class BrowserControlTests(unittest.TestCase):
     def test_browser_route_requires_one_approved_same_origin_post(self):
         browser = BrowserSession()
         try:
-            with patch.object(browser, "_host_is_public", return_value=True):
+            with patch("console.browser_control.validate_public_url", return_value=("forms.example.net", ["8.8.8.8"])):
                 denied = FakeRoute("https://example.org/order", "POST")
                 browser._route(denied)
                 self.assertTrue(denied.aborted)
+                self.assertEqual(browser._blocked[-1]["suggested_tool"], "browser_submit")
 
-                browser._allow_post_origin = "https://example.org"
+                # One user-approved POST may go to the exact visible form action origin.
+                browser._allow_post_origin = "https://forms.example.net"
                 browser._allow_post_remaining = 1
-                allowed = FakeRoute("https://example.org/order", "POST")
+                allowed = FakeRoute("https://forms.example.net/submit", "POST")
                 browser._route(allowed)
                 self.assertTrue(allowed.continued)
                 self.assertEqual(browser._allow_post_remaining, 0)
 
-                second = FakeRoute("https://example.org/confirm", "POST")
+                second = FakeRoute("https://forms.example.net/confirm", "POST")
                 browser._route(second)
                 self.assertTrue(second.aborted)
 
