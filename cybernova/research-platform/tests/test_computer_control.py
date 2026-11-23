@@ -242,6 +242,24 @@ class ComputerControlTests(unittest.TestCase):
             ]),
             set(),
         )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Изучи интерфейс AdsPower, ничего не создавай и не изменяй настройки."},
+            ]),
+            {"computer_screenshot"},
+        )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Сделай снимок экрана, но не изменяй настройки."},
+            ]),
+            {"computer_screenshot"},
+        )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Не делай снимок экрана, просто прочитай UI Automation."},
+            ]),
+            set(),
+        )
         with patch("console.computer_control._screenshot",
                    return_value={"ok": True, "image_data_url": "data:image/jpeg;base64,AA=="}) as screenshot:
             result, failed = computer_control_call(
