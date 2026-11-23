@@ -116,7 +116,7 @@ class GPTConversationTests(unittest.TestCase):
         js=(ROOT/"console/static/markdown.js").read_text(encoding="utf-8")
         app=(ROOT/"console/static/app.js").read_text(encoding="utf-8")
         ux=(ROOT/"console/static/ux.js").read_text(encoding="utf-8")
-        self.assertEqual(html.count('src="/static/markdown.js?v=20261122-ui1"'),1)
+        self.assertEqual(html.count('src="/static/markdown.js?v=20261123-dsml2"'),1)
         self.assertNotIn("innerHTML",js.split("(function () {",1)[1])
         self.assertIn("CybernovaMarkdown.render",app)
         self.assertIn("function buildToolBatch",app)
@@ -172,13 +172,14 @@ class BrowserMarkdownTests(unittest.TestCase):
         const rawProtocol='< | | DSML | | calls>< | | DSML | | invoke name="dev_read">< | | DSML | | parameter name="path">agent.py';
         const cleaned=window.CybernovaMarkdown.normalizeAssistantText(rawProtocol);
         assert(!cleaned.includes("invoke name="));
-        assert(cleaned.includes("служебный протокол"));
+        assert(cleaned.toLowerCase().includes("служебный протокол"));
         assert(window.CybernovaMarkdown.normalizeAssistantText("DSML — формат протокола").includes("DSML"));
         const rendered=window.CybernovaMarkdown.render(input);
         const nodes=[];
         const visit=(n)=>{nodes.push(n);for(const c of n.children||[])visit(c)};
         visit(rendered);
-        assert(nodes.some(n=>n.className==="md-note md-note-recommendation"));
+        assert(nodes.some(n=>n.tagName==="H2" && (n.children||[]).some(x=>(x.textContent||"").includes("Рекомендация"))));
+        assert(!nodes.some(n=>n.className==="md-note md-note-recommendation"));
         assert(nodes.some(n=>n.tagName==="TABLE"));
         assert(nodes.some(n=>n.tagName==="UL"));
         assert(nodes.some(n=>n.tagName==="PRE"));
