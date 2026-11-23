@@ -135,10 +135,14 @@ class ComputerControlTests(unittest.TestCase):
                 "AdsPower", 320, 240, "Dashboard tab", "left", 1, inspection,
             )
         self.assertTrue(clicked["ok"])
-        typed = _keyboard_type(
-            "AdsPower", "Test Profile", "Profile name",
-            [{"role": "user", "content": "Создай профиль и введи его название."}],
-        )
+        with (
+            patch("console.computer_control._windows_only"),
+            patch("console.computer_control._find_window", return_value=window),
+        ):
+            typed = _keyboard_type(
+                "AdsPower", "Test Profile", "Profile name",
+                [{"role": "user", "content": "Создай профиль и введи его название."}],
+            )
         self.assertTrue(typed["ok"])
         self.assertEqual(window.focused.value, "Test Profile")
 
