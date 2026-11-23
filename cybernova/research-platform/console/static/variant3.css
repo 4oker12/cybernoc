@@ -228,3 +228,30 @@ html[data-theme="light"] .inspector {
   background: #ffffff !important;
   background-color: #ffffff !important;
 }
+
+
+/* Final visual tuning from the approved chat mockup:
+   white canvas, pale-blue assistant cards, green user/actions. */
+:root[data-theme="light"] .chat-msg.from-user .message-body {
+  background: #edf7ef;
+  border-color: #d5ead9;
+}
+:root[data-theme="light"] .chat-msg.from-agent .message-body,
+:root[data-theme="light"] .chat-msg.from-chatgpt .message-body {
+  background: #f0f7ff;
+  border-color: #d7e9fb;
+}
+:root[data-theme="light"] .composer {
+  border-color: #b8d9c2;
+}
+:root[data-theme="light"] .composer:focus-within {
+  border-color: #1f883d;
+  box-shadow: 0 0 0 3px rgba(31,136,61,.13);
+}
+
+/* Hide token counts/receipts in the user-facing chat.
+   Provider usage is still collected internally for diagnostics. */
+#tokenUsageStatus,
+.token-usage-receipt {
+  display: none !important;
+}
