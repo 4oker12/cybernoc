@@ -11,8 +11,8 @@ from console.computer_control import (
     APP_COMMANDS, COMPUTER_TOOLS, COMPUTER_TOOL_NAMES,
     HIGH_IMPACT_UI, SAFE_UI_CONTROL_TYPES,
     _archive_member_path, _explicit_action_approved,
-    _sensitive_component, _ui_click, extract_user_computer_approvals,
-    computer_control_call, _service_overview,
+    _sensitive_component, _ui_action_allowed, _validate_ui_target, _ui_click,
+    extract_user_computer_approvals, computer_control_call, _service_overview,
 )
 
 
@@ -63,7 +63,9 @@ class ComputerControlTests(unittest.TestCase):
             "computer_list_directory", "computer_search_files",
             "computer_search_everywhere", "computer_read_text_file", "computer_open_folder",
             "computer_open_app", "computer_screenshot",
-            "computer_ui_windows", "computer_ui_controls", "computer_ui_click",
+            "computer_ui_windows", "computer_ui_controls", "computer_ui_inputs",
+            "computer_ui_click", "computer_mouse_click", "computer_mouse_scroll",
+            "computer_keyboard_type", "computer_keyboard_keypress",
             "computer_defender_status", "computer_defender_events",
             "computer_defender_scan", "computer_defender_scan_status",
             "computer_installed_programs", "computer_power_overview",
@@ -73,6 +75,29 @@ class ComputerControlTests(unittest.TestCase):
             "computer_plan_file_organization", "computer_apply_file_organization",
         }.issubset(names))
         self.assertEqual(COMPUTER_TOOL_NAMES, names)
+
+    def test_mouse_keyboard_actions_require_matching_user_intent(self):
+        inspection = [{"role": "user", "content": (
+            "Изучи интерфейс AdsPower, ничего не создавай и не изменяй настройки."
+        )}]
+        self.assertTrue(_ui_action_allowed(inspection, "click"))
+        self.assertTrue(_ui_action_allowed(inspection, "scroll"))
+        self.assertTrue(_ui_action_allowed(inspection, "key"))
+        self.assertFalse(_ui_action_allowed(inspection, "type"))
+        self.assertFalse(_ui_action_allowed(
+            [{"role": "user", "content": "Не нажимай на вкладки."}], "click",
+        ))
+        self.assertTrue(_ui_action_allowed(
+            [{"role": "user", "content": "Введи название профиля в поле Profile name."}],
+            "type",
+        ))
+
+    def test_mouse_and_keyboard_targets_reject_sensitive_or_high_impact_controls(self):
+        self.assertEqual(_validate_ui_target("Dashboard tab"), "Dashboard tab")
+        for target in ("Save button", "Delete account", "Password field", "API key input"):
+            with self.subTest(target=target):
+                with self.assertRaises(ValueError):
+                    _validate_ui_target(target)
 
     def test_computer_schemas_are_strict(self):
         for tool in COMPUTER_TOOLS:
