@@ -6,6 +6,7 @@ cannot execute or authorize any suggested action.
 from __future__ import annotations
 
 import json
+import re
 
 try:
     from .agent import MODEL, OLLAMA_URL, post_json
@@ -19,6 +20,113 @@ MAX_HISTORY_CHARS = 2200
 MAX_PROJECT_INSTRUCTIONS_CHARS = 1800
 MAX_TASK_TITLE_CHARS = 160
 MAX_TASK_HOSTS = 20
+
+
+# Explicit offers at the end of an answer become one-click prompts.
+_OFFER_MARKER = re.compile(
+    r"(?i)\b(?:если\s+(?:(?:тебе|вам)\s+)?(?:интересно|хочешь|хотите|нужно|удобно)"
+    r"|при\s+желании|дальше\s+(?:могу|можем|можно)|могу\s+(?:также|отдельно|ещё)"
+    r"|можем\s+(?:дальше|затем))\b"
+)
+_OFFER_AUX = re.compile(
+    r"(?i)\b(?:могу|можем|можно)\s+(?:(?:также|отдельно|ещё|дополнительно)\s+)?"
+)
+_ACTION_MAP = {
+    "разобрать": "Разбери", "разберу": "Разбери",
+    "показать": "Покажи", "покажу": "Покажи",
+    "рассказать": "Расскажи", "расскажу": "Расскажи",
+    "объяснить": "Объясни", "объясню": "Объясни",
+    "сравнить": "Сравни", "сравню": "Сравни",
+    "проверить": "Проверь", "проверю": "Проверь",
+    "посчитать": "Посчитай", "посчитаю": "Посчитай",
+    "составить": "Составь", "составлю": "Составь",
+    "подготовить": "Подготовь", "подготовлю": "Подготовь",
+    "перейти": "Перейди", "перейдём": "Перейдём",
+    "развить": "Развей", "разовью": "Развей",
+    "детализировать": "Детализируй", "детализирую": "Детализируй",
+    "расписать": "Распиши", "распишу": "Распиши",
+    "найти": "Найди", "найду": "Найди",
+    "подобрать": "Подбери", "подберу": "Подбери",
+    "описать": "Опиши", "опишу": "Опиши",
+    "изучить": "Изучи", "изучу": "Изучи",
+    "исследовать": "Исследуй", "исследую": "Исследуй",
+    "смоделировать": "Смоделируй", "смоделирую": "Смоделируй",
+    "построить": "Построй", "построю": "Построй",
+    "сделать": "Сделай", "сделаю": "Сделай",
+    "собрать": "Собери", "соберу": "Собери",
+    "дать": "Дай", "дам": "Дай",
+    "углубиться": "Углубись", "углублюсь": "Углубись",
+    "продолжить": "Продолжи", "продолжу": "Продолжи",
+    "помочь": "Помоги", "помогу": "Помоги",
+}
+_ACTION_PATTERN = "|".join(re.escape(word) for word in sorted(_ACTION_MAP, key=len, reverse=True))
+_OFFER_SPLIT = re.compile(
+    r"(?i)\s+(?:или|либо|а также)\s+(?=(?:" + _ACTION_PATTERN + r")\b)"
+)
+_FIRST_PERSON_ACTION = re.compile(
+    r"(?i)\b(?:" + "|".join(
+        re.escape(word) for word in _ACTION_MAP if word.endswith(("у", "ю", "ём"))
+    ) + r")\b"
+)
+
+
+def extract_explicit_offers(answer: object) -> dict | None:
+    """Convert a final 'I can also...' offer into prompts and trim it from display.
+
+    The original answer remains in session history. Only the visible copy is
+    shortened, because the same offer is represented by clickable buttons.
+    """
+    if not isinstance(answer, str) or not answer.strip():
+        return None
+    chunks = re.split(r"(\n[ \t]*\n)", answer.strip())
+    for index in range(len(chunks) - 1, -1, -2):
+        paragraph = chunks[index]
+        marker = _OFFER_MARKER.search(paragraph)
+        if not marker:
+            continue
+        tail = paragraph[marker.start():]
+        auxiliary = _OFFER_AUX.search(tail)
+        if auxiliary:
+            actions = tail[auxiliary.end():]
+        else:
+            first_person = _FIRST_PERSON_ACTION.search(tail)
+            if not first_person:
+                continue
+            actions = tail[first_person.start():]
+        actions = actions.strip(" \t—–-:,.")
+        prompts = []
+        for clause in _OFFER_SPLIT.split(actions):
+            words = clause.strip(" \t—–-:,.").split()
+            if not words:
+                continue
+            fillers = []
+            while words and words[0].casefold().strip(",") in {
+                "также", "ещё", "дополнительно", "отдельно", "подробнее",
+                "детально", "пошагово",
+            }:
+                fillers.append(words.pop(0))
+            if not words:
+                continue
+            verb = words[0].casefold().strip(",")
+            imperative = _ACTION_MAP.get(verb)
+            if imperative:
+                qualifier = " ".join(fillers)
+                if fillers and fillers[-1] in {"подробнее", "детально", "пошагово"}:
+                    qualifier += ","
+                prompt = " ".join([imperative, qualifier, *words[1:]]).strip()
+            else:
+                prompt = "Продолжи тему: " + " ".join([*fillers, *words])
+            prompt = prompt.rstrip(" .!?;:") + "?"
+            if 12 <= len(prompt) <= MAX_QUESTION_CHARS:
+                prompts.append(prompt)
+        questions = normalize_questions({"questions": prompts})
+        if not questions:
+            continue
+        prefix = paragraph[:marker.start()].rstrip(" \t—–-:,")
+        chunks[index] = prefix
+        return {"answer": "".join(chunks).strip(), "questions": questions}
+    return None
+
 
 FOLLOWUP_SYSTEM = (
     "Ты помогаешь продолжить именно текущую задачу пользователя в CYBERNOVA. "

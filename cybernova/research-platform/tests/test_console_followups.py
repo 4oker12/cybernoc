@@ -5,10 +5,42 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from console.followups import generate_followups, normalize_questions
+from console.followups import generate_followups, normalize_questions, extract_explicit_offers
 
 
 class FollowupTests(unittest.TestCase):
+    def test_explicit_closing_offer_becomes_prompts_and_is_removed_from_display(self):
+        answer = (
+            "Кусочек 7. Из чего состоит арбитражник\n"
+            "Он выбирает товар и запускает рекламу.\n\n"
+            "Вот и вся схема. Если интересно — могу разобрать отдельно, куда уходит "
+            "каждый рубль на каждом шаге, или показать пример из другой ниши, "
+            "например арбитраж трафика."
+        )
+        result = extract_explicit_offers(answer)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["answer"], (
+            "Кусочек 7. Из чего состоит арбитражник\n"
+            "Он выбирает товар и запускает рекламу.\n\n"
+            "Вот и вся схема."
+        ))
+        self.assertEqual(result["questions"], [
+            "Разбери отдельно, куда уходит каждый рубль на каждом шаге?",
+            "Покажи пример из другой ниши, например арбитраж трафика?",
+        ])
+
+    def test_explicit_offer_supports_single_action(self):
+        answer = "Итог.\n\nЕсли хочешь, могу подробнее рассказать, как работает эта схема."
+        result = extract_explicit_offers(answer)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["answer"], "Итог.")
+        self.assertEqual(result["questions"], [
+            "Расскажи подробнее, как работает эта схема?"
+        ])
+
+    def test_no_explicit_offer_is_left_unchanged(self):
+        self.assertIsNone(extract_explicit_offers("Готово.\n\nПроверка завершена."))
+
     def test_normalization_deduplicates_and_limits_to_three(self):
         raw = {"questions": [
             "  Что означает ошибка DNS?  ",

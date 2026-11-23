@@ -273,7 +273,10 @@ async function loadFollowups(sid,turn,reply){
     const result=await requestJson("/api/followups",{session_id:sid,turn:turn});
     // Ignore late completions after a new message or session reset.
     if(state.sessionId!==sid||state.turns!==turn||!reply.wrap.isConnected)return;
-    if(result.source!=="qwen"||result.turn!==turn)return;
+    if(!["qwen","offer"].includes(result.source)||result.turn!==turn)return;
+    if(typeof result.answer_without_offer==="string"){
+      setFormatted(reply.body,result.answer_without_offer);
+    }
     renderFollowups(reply,result.questions);
   }catch(_){
     // Suggestions are optional; a timeout must not affect the chat.

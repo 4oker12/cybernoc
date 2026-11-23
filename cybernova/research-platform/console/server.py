@@ -27,7 +27,7 @@ try:
         Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS,
         _restore_reasoning_history,
     )
-    from .followups import generate_followups
+    from .followups import generate_followups, extract_explicit_offers
     from .tool_policy import REVIEWED_TOOLS
     from .traffic_intelligence import analyze_har, analyze_js, TrafficError
     from .traffic_tools import TrafficToolClient, LOCAL_TOOLS, MAX_ARTIFACTS
@@ -63,7 +63,7 @@ except ImportError:
         Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS,
         _restore_reasoning_history,
     )
-    from followups import generate_followups
+    from followups import generate_followups, extract_explicit_offers
     from tool_policy import REVIEWED_TOOLS
     from traffic_intelligence import analyze_har, analyze_js, TrafficError
     from traffic_tools import TrafficToolClient, LOCAL_TOOLS, MAX_ARTIFACTS
@@ -348,7 +348,8 @@ def _session(session_id: str | None) -> tuple[str, dict]:
             return session_id, session
         key = secrets.token_urlsafe(24)
         session = {"last": now, "history": [], "lock": RLock(), "turns": 0,
-                   "followups_turn": None, "followups": [], "pending_approvals": {},
+                   "followups_turn": None, "followups": [], "followups_answer": None,
+                   "followups_source": None, "pending_approvals": {},
                    "traffic_artifacts": {}, "scope": scope_profile([]), "task_id": None}
         sessions[key] = session
         while len(sessions) > MAX_SESSIONS:
@@ -1296,7 +1297,9 @@ def followups(payload: FollowupsRequest):
             raise HTTPException(status_code=409, detail="stale_turn")
         if state.get("followups_turn") == payload.turn:
             return {"turn": payload.turn, "questions": state["followups"],
-                    "source": "qwen", "cached": True}
+                    "answer_without_offer": state.get("followups_answer"),
+                    "source": state.get("followups_source") or "qwen",
+                    "cached": True}
         history = [dict(item) for item in state["history"][-6:]]
         task_id = state.get("task_id")
         scope = dict(state.get("scope") or {})
@@ -1314,10 +1317,22 @@ def followups(payload: FollowupsRequest):
         }
         profile = profile_settings_store().load()
         project_instructions = mode_instructions_for(profile, "researcher")
-        questions = generate_followups(
-            history, task_context=task_context,
-            project_instructions=project_instructions,
+        # Prefer explicit offers from the assistant's closing paragraph. Convert
+        # them directly into clickable prompts and avoid a redundant LLM call.
+        offer = extract_explicit_offers(
+            history[-1].get("content", "") if history else ""
         )
+        if offer:
+            questions = offer["questions"]
+            answer_without_offer = offer["answer"]
+            source = "offer"
+        else:
+            questions = generate_followups(
+                history, task_context=task_context,
+                project_instructions=project_instructions,
+            )
+            answer_without_offer = None
+            source = "qwen"
     except Exception:
         # Suggestions are optional: never break chat or invent fallback text.
         return {"turn": payload.turn, "questions": [], "source": "unavailable"}
@@ -1326,8 +1341,11 @@ def followups(payload: FollowupsRequest):
             raise HTTPException(status_code=409, detail="stale_turn")
         state["followups_turn"] = payload.turn
         state["followups"] = questions
-    return {"turn": payload.turn, "questions": questions, "source": "qwen",
-            "cached": False}
+        state["followups_answer"] = answer_without_offer
+        state["followups_source"] = source
+    return {"turn": payload.turn, "questions": questions,
+            "answer_without_offer": answer_without_offer,
+            "source": source, "cached": False}
 
 
 @app.post("/api/reset")
