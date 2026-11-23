@@ -15,6 +15,7 @@ sys.path.insert(0,str(ROOT))
 from console import server, siwc_chat_store, communication
 from console.tunnel_access import allowed_path
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 
 class GPTConversationTests(unittest.TestCase):
@@ -111,6 +112,20 @@ class GPTConversationTests(unittest.TestCase):
         self.assertTrue(allowed_path("/static/markdown.js","GET"))
         self.assertTrue(allowed_path("/static/design-system.css","GET"))
         self.assertFalse(allowed_path("/api/siwc/tokens","GET"))
+
+    def test_all_referenced_console_static_assets_have_serving_routes(self):
+        client=TestClient(server.app,base_url="http://127.0.0.1:18794")
+        assets={
+            "/static/design-system.css":"text/css",
+            "/static/ux.css":"text/css",
+            "/static/ux.js":"javascript",
+            "/static/model-settings.js":"javascript",
+        }
+        for path,mime in assets.items():
+            with self.subTest(path=path):
+                response=client.get(path)
+                self.assertEqual(response.status_code,200,response.text[:200])
+                self.assertTrue(response.headers["content-type"].startswith(mime))
 
     def test_markup_is_loaded_once_and_has_no_html_execution(self):
         html=(ROOT/"console/static/index.html").read_text(encoding="utf-8")

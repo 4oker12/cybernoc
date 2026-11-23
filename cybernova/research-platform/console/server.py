@@ -376,6 +376,21 @@ def markdown_javascript():
     return FileResponse(ROOT / "static" / "markdown.js", media_type="text/javascript")
 
 
+@app.get("/static/ux.css")
+def ux_styles():
+    return FileResponse(ROOT / "static" / "ux.css", media_type="text/css")
+
+
+@app.get("/static/ux.js")
+def ux_javascript():
+    return FileResponse(ROOT / "static" / "ux.js", media_type="text/javascript")
+
+
+@app.get("/static/model-settings.js")
+def model_settings_javascript():
+    return FileResponse(ROOT / "static" / "model-settings.js", media_type="text/javascript")
+
+
 @app.get("/static/app.js")
 def javascript():
     return FileResponse(ROOT / "static" / "app.js", media_type="text/javascript")
