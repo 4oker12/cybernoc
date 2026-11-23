@@ -84,6 +84,35 @@ class GatewayTests(unittest.TestCase):
         )["messages"], [])
         self.assertEqual(len(reopened.events(after=0)["messages"]), 2)
 
+    def test_provider_continuation_is_private_and_survives_database_reopen(self):
+        tid = self.task["task_id"]
+        message = self.db.append(
+            tid, "qwen", "result", "Visible answer", status="completed",
+            provider_state={
+                "provider": "OpenAI-compatible",
+                "model": "deepseek-flash",
+                "endpoint": "https://api.deepseek.com/chat/completions",
+                "reasoning_content": "private continuation state",
+            },
+        )
+        reopened = CommunicationStore(self.path)
+        self.assertEqual(
+            reopened.load_provider_continuation(
+                tid, message["seq"], "OpenAI-compatible", "deepseek-flash",
+                "https://api.deepseek.com/chat/completions",
+            ),
+            "private continuation state",
+        )
+        self.assertIsNone(reopened.load_provider_continuation(
+            tid, message["seq"], "OpenAI-compatible", "deepseek-v4-pro",
+            "https://api.deepseek.com/chat/completions",
+        ))
+        self.assertNotIn("reasoning_content", reopened.read_dialog(tid)["messages"][0])
+        self.assertNotIn(
+            "private continuation state",
+            json.dumps(reopened.read_dialog(tid), ensure_ascii=False),
+        )
+
     def test_idempotency_key_does_not_queue_second_time(self):
         self.db.append(self.task["task_id"], "qwen", "result", "Ответ",
                        status="needs_review")
