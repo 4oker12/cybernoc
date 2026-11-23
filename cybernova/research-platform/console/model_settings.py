@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 from pathlib import Path
+from urllib import parse
 
 try:
     from .agent import OLLAMA_URL, OllamaClient
@@ -132,6 +133,51 @@ def get_model_settings() -> dict:
         "api_key_hint": "Ключ сохранён локально" if configured else "Ключ не задан",
         "restart_required": False,
     }
+
+
+def test_model_connection(payload: dict) -> dict:
+    """Verify DeepSeek credentials and model availability without a billable completion."""
+    if not isinstance(payload, dict):
+        raise ModelSettingsError("invalid_model_settings")
+    if payload.get("provider") != "openai_compatible":
+        return {"status": "not_required"}
+    base_url = payload.get("base_url", "")
+    if not isinstance(base_url, str):
+        raise ModelSettingsError("invalid_model_base_url")
+    try:
+        parsed = parse.urlsplit(base_url)
+    except ValueError:
+        raise ModelSettingsError("invalid_model_base_url") from None
+    if parsed.hostname != "api.deepseek.com":
+        return {"status": "not_checked", "provider": "openai_compatible"}
+    model = payload.get("model")
+    if not isinstance(model, str) or not _VALID_MODEL.fullmatch(model.strip()):
+        raise ModelSettingsError("invalid_model_id")
+    data = _data_dir()
+    _, values = _read_runtime_env(data)
+    key_path = _key_path(data, values)
+    supplied_key = payload.get("api_key")
+    api_key = supplied_key.strip() if isinstance(supplied_key, str) and supplied_key.strip() else (
+        _read_key(key_path) or os.environ.get("CYBERNOVA_LLM_API_KEY", "").strip()
+    )
+    try:
+        client = OpenAICompatibleClient(
+            base_url=base_url.strip(), model=model.strip(), api_key=api_key,
+        )
+        model_ids = client.list_models()
+    except ModelConfigError as exc:
+        code = str(exc)
+        if code.endswith("_401") or code.endswith("_403"):
+            raise ModelSettingsError("deepseek_authentication_failed") from None
+        if code.endswith("_429"):
+            raise ModelSettingsError("deepseek_rate_limited") from None
+        if code in {"remote_api_key_required", "llm_base_url_required", "invalid_llm_url",
+                    "remote_model_requires_https"}:
+            raise ModelSettingsError(code) from None
+        raise ModelSettingsError("deepseek_connection_failed") from None
+    if model.strip() not in model_ids:
+        raise ModelSettingsError("deepseek_model_not_available")
+    return {"status": "connected", "provider": "DeepSeek", "model": model.strip()}
 
 
 def apply_model_settings(payload: dict):
