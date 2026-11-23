@@ -57,7 +57,7 @@ try:
     from .siwc_chat_store import GPTChatStore, GPTChatError
     from .research_scope import ResearchScopeStore, scope_profile
     from .profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
-    from .model_settings import ModelSettingsError, apply_model_settings, get_model_settings
+    from .model_settings import ModelSettingsError, apply_model_settings, get_model_settings, test_model_connection
 except ImportError:
     from agent import (
         Agent, MCPClient, MODEL, OLLAMA_URL, APPROVAL_TTL_SECONDS,
@@ -93,7 +93,7 @@ except ImportError:
     from siwc_chat_store import GPTChatStore, GPTChatError
     from research_scope import ResearchScopeStore, scope_profile
     from profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
-    from model_settings import ModelSettingsError, apply_model_settings, get_model_settings
+    from model_settings import ModelSettingsError, apply_model_settings, get_model_settings, test_model_connection
 
 ROOT = Path(__file__).resolve().parent
 
@@ -130,6 +130,37 @@ sessions_lock = RLock()
 run_usage_progress: OrderedDict[str, dict] = OrderedDict()
 run_usage_lock = RLock()
 agent = Agent(local_tool_runtime=deepseek_tool_runtime)
+
+
+def _provider_identity(client):
+    return (
+        str(getattr(client, "provider", "configured")),
+        str(getattr(client, "model", "")),
+        str(getattr(client, "endpoint", "")),
+    )
+
+
+def _provider_state_payload(client, reasoning_content):
+    if not isinstance(reasoning_content, str):
+        return None
+    provider, model, endpoint = _provider_identity(client)
+    if not model:
+        return None
+    return {
+        "provider": provider, "model": model, "endpoint": endpoint,
+        "reasoning_content": reasoning_content,
+    }
+
+
+def _attach_provider_state(store, task_id, row, history_item, client):
+    if row.get("actor") == "qwen" and row.get("kind") == "result":
+        reasoning = store.load_provider_continuation(
+            task_id, row["seq"], *_provider_identity(client),
+        )
+        if isinstance(reasoning, str):
+            history_item["reasoning_content"] = reasoning
+            history_item["_provider_identity"] = _provider_identity(client)
+    return history_item
 
 
 def _begin_usage_progress(run_id: str) -> None:
@@ -581,11 +612,12 @@ def get_model_config():
 @app.post("/api/model-config")
 def save_model_config(payload: ModelSettingsRequest):
     try:
+        connection = test_model_connection(payload.dict())
         client, settings = apply_model_settings(payload.dict())
         # Current requests keep their existing client object; subsequent turns
         # and background continuations receive the newly selected provider.
         agent.ollama = client
-        return {"settings": settings, "applied": True}
+        return {"settings": settings, "connection": connection, "applied": True}
     except ModelSettingsError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
 
@@ -959,10 +991,14 @@ def chat(payload: ChatRequest):
                 persisted_history.append({"role": "user", "content":
                                           "[" + message["actor"] + "] " + message["body"]})
             elif message["actor"] == "qwen" and message["kind"] == "result":
-                persisted_history.append({"role": "assistant", "content": message["body"]})
+                history_item = {"role": "assistant", "content": message["body"]}
+                persisted_history.append(_attach_provider_state(
+                    store, task_id, message, history_item, agent.ollama,
+                ))
         if persisted_history:
             state["history"] = _restore_reasoning_history(
                 persisted_history[-MAX_HISTORY:], state["history"],
+                provider_identity=_provider_identity(agent.ollama),
             )
         store.append(task_id, "human", "instruction", payload.message,
                      status="running")
@@ -1020,14 +1056,18 @@ def chat(payload: ChatRequest):
         assistant_history = {"role": "assistant", "content": outcome["answer"][:16000]}
         if isinstance(history_reasoning_content, str):
             assistant_history["reasoning_content"] = history_reasoning_content
+            assistant_history["_provider_identity"] = _provider_identity(agent.ollama)
         state["history"].append(assistant_history)
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
         current_status = store.get_task(task_id)["status"]
         final_status = ("needs_review" if current_status == "needs_review"
                         else "blocked" if requests else "completed")
-        event = store.append(task_id, "qwen", "result",
-                             outcome["answer"][:12000], status=final_status)
+        event = store.append(
+            task_id, "qwen", "result", outcome["answer"][:12000],
+            status=final_status,
+            provider_state=_provider_state_payload(agent.ollama, history_reasoning_content),
+        )
     return {"session_id": sid, "task_id": task_id, "event_seq": event["seq"],
             "turn": state["turns"], "run_id": payload.run_id, **outcome}
 
@@ -1075,6 +1115,7 @@ def approve(payload: ApprovalRequest):
         assistant_history = {"role": "assistant", "content": result["answer"][:16000]}
         if isinstance(history_reasoning_content, str):
             assistant_history["reasoning_content"] = history_reasoning_content
+            assistant_history["_provider_identity"] = _provider_identity(agent.ollama)
         state["history"].append(assistant_history)
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
@@ -1084,9 +1125,11 @@ def approve(payload: ApprovalRequest):
         EvidenceJournal(communication_store()).record_tool_events(
             state["task_id"], result.get("events") or [],
         )
-        communication_store().append(state["task_id"], "qwen", "result",
-                                     str(result["answer"])[:12000],
-                                     status="completed")
+        communication_store().append(
+            state["task_id"], "qwen", "result", str(result["answer"])[:12000],
+            status="completed",
+            provider_state=_provider_state_payload(agent.ollama, history_reasoning_content),
+        )
         return {"ok": True, "decision": "approved", "session_id": payload.session_id,
                 "task_id": state["task_id"],
                 "turn": state["turns"], **result}
@@ -1197,13 +1240,20 @@ def communication_resume(payload: ResumeTaskRequest):
     with state["lock"]:
         state["task_id"] = payload.task_id
         state["scope"] = research_scope_store().load(payload.task_id)
-        state["history"] = [
-            {"role": "assistant" if row["actor"] == "qwen" else "user",
-             "content": row["body"][:10000]}
-            for row in dialog["messages"]
-            if row["actor"] in {"human", "qwen", "chatgpt"}
-            and row["kind"] in {"instruction", "feedback", "result"}
-        ][-MAX_HISTORY:]
+        restored_history = []
+        for row in dialog["messages"]:
+            if row["actor"] not in {"human", "qwen", "chatgpt"}:
+                continue
+            if row["kind"] not in {"instruction", "feedback", "result"}:
+                continue
+            history_item = {
+                "role": "assistant" if row["actor"] == "qwen" else "user",
+                "content": row["body"][:10000],
+            }
+            restored_history.append(_attach_provider_state(
+                store, payload.task_id, row, history_item, agent.ollama,
+            ))
+        state["history"] = restored_history[-MAX_HISTORY:]
         state["turns"] = len([x for x in state["history"] if x["role"] == "assistant"])
     return {"session_id": sid, "task": task, "scope": state["scope"],
             "messages": dialog["messages"], "turn": state["turns"]}
