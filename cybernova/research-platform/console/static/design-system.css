@@ -630,3 +630,43 @@ html.model-running #sendStatus::before{background:var(--accent);box-shadow:0 0 0
 :root[data-theme="dark"] .tool-access.tool-auto{background:#173b2a;border-color:#276b3b;color:#7ee787}
 :root[data-theme="dark"] .tool-access.tool-ask{background:#1f3b5b;border-color:#316dba;color:#a5d6ff}
 :root[data-theme="dark"] .selection-ask{background:#2f81f7;border-color:#2f81f7;color:#fff}
+
+
+/* Ensure the editorial chat hierarchy wins over legacy per-role typography. */
+.chat-msg.from-agent .message-body .md-content,
+.chat-msg.from-chatgpt .message-body .md-content,
+.collab-entry .collab-full .md-content{
+  font-size:15.5px;line-height:1.72;letter-spacing:0;color:var(--text);
+}
+.chat-msg.from-agent .md-content>h2:not(.md-section),
+.chat-msg.from-chatgpt .md-content>h2:not(.md-section){
+  margin:25px 0 10px;padding:0 0 8px;border:0;border-bottom:1px solid var(--line);
+  color:var(--text);font-size:20px;font-weight:700;line-height:1.35;letter-spacing:-.02em;
+}
+.chat-msg.from-agent .md-content>h2:not(.md-section):first-child,
+.chat-msg.from-chatgpt .md-content>h2:not(.md-section):first-child{
+  margin-top:3px;padding-bottom:8px;border:0;border-bottom:1px solid var(--line);
+}
+.chat-msg.from-agent .md-content>h3,
+.chat-msg.from-chatgpt .md-content>h3{
+  margin:20px 0 8px;color:var(--accent-strong);font-size:16px;font-weight:700;line-height:1.4;
+}
+:root[data-theme="light"] .chat-msg .md-content strong,
+:root[data-theme="light"] .collab-entry .collab-full .md-content strong{color:#0550ae}
+:root[data-theme="light"] .chat-msg .md-content em,
+:root[data-theme="light"] .collab-entry .collab-full .md-content em{color:#6639ba}
+:root[data-theme="light"] .chat-msg .md-content a,
+:root[data-theme="light"] .collab-entry .collab-full .md-content a{color:#0969da}
+:root[data-theme="dark"] .chat-msg .md-content strong,
+:root[data-theme="dark"] .collab-entry .collab-full .md-content strong{color:#79c0ff}
+:root[data-theme="dark"] .chat-msg .md-content em,
+:root[data-theme="dark"] .collab-entry .collab-full .md-content em{color:#d2a8ff}
+:root[data-theme="dark"] .chat-msg .md-content a,
+:root[data-theme="dark"] .collab-entry .collab-full .md-content a{color:#79c0ff}
+@media(max-width:680px){
+  .chat-msg.from-agent .message-body .md-content,
+  .chat-msg.from-chatgpt .message-body .md-content,
+  .collab-entry .collab-full .md-content{font-size:14px;line-height:1.65}
+  .chat-msg.from-agent .md-content>h2:not(.md-section),
+  .chat-msg.from-chatgpt .md-content>h2:not(.md-section){font-size:18px}
+}
