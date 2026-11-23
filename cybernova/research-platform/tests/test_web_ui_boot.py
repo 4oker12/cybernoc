@@ -60,7 +60,7 @@ class WebUIBootTests(unittest.TestCase):
         html=(root/"index.html").read_text(encoding="utf-8")
         design=(root/"design-system.css").read_text(encoding="utf-8")
         self.assertIn('<meta name="color-scheme" content="light">',html)
-        self.assertIn('/design-system.css?v=20261123-github-global-3',html)
+        self.assertIn('/design-system.css?v=20261123-github-global-2',html)
         self.assertGreater(html.index('/design-system.css'),html.index('/style.css'))
         for selector in ('.sidebar','.nav-link.active','.metric','.panel',
                          '.ring-node','.participant-status','.auth-modal'):
