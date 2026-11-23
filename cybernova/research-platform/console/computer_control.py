@@ -58,6 +58,9 @@ SECRET_VALUE = re.compile(
     r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|"
     r"secret|authorization|cookie)\s*[:=]\s*[^\s,;]+)"
 )
+SENSITIVE_UI_TARGET = re.compile(
+    r"(?i)(?:api[\s_-]?key|password|passwd|secret|token|credential|cookie|login)"
+)
 EMAIL_VALUE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 HIGH_IMPACT_UI = re.compile(
     r"(?i)(delete|remove|uninstall|format|reset|restore|shutdown|restart|"
@@ -1625,7 +1628,7 @@ def _ui_controls(window_title: str) -> dict:
             kind = info.control_type or ""
             if not name or kind not in SAFE_UI_CONTROL_TYPES:
                 continue
-            if _sensitive_component(name) or HIGH_IMPACT_UI.search(name):
+            if _sensitive_component(name) or SENSITIVE_UI_TARGET.search(name) or HIGH_IMPACT_UI.search(name):
                 continue
             if not control.is_visible() or not control.is_enabled():
                 continue
@@ -1653,7 +1656,8 @@ def _ui_inputs(window_title: str) -> dict:
             automation_id = (getattr(info, "automation_id", "") or "").strip()
             if kind not in {"Edit", "ComboBox"}:
                 continue
-            if getattr(info, "is_password", False) or _sensitive_component(name):
+            if (getattr(info, "is_password", False) or _sensitive_component(name)
+                    or SENSITIVE_UI_TARGET.search(name)):
                 continue
             if not control.is_visible() or not control.is_enabled():
                 continue
@@ -1706,7 +1710,8 @@ def _validate_ui_target(target_description: str) -> str:
             or len(target_description) > 120):
         raise ValueError("computer_ui_target_description_invalid")
     target = target_description.strip()
-    if HIGH_IMPACT_UI.search(target) or _sensitive_component(target) or SECRET_VALUE.search(target):
+    if (HIGH_IMPACT_UI.search(target) or _sensitive_component(target)
+            or SENSITIVE_UI_TARGET.search(target) or SECRET_VALUE.search(target)):
         raise ValueError("computer_ui_high_impact_target_blocked")
     return target
 
@@ -1846,7 +1851,8 @@ def _ui_click(window_title: str, control_name: str, control_type: str) -> dict:
         raise ValueError("computer_ui_control_type_blocked")
     if not isinstance(control_name, str) or not control_name.strip() or len(control_name) > 140:
         raise ValueError("computer_ui_control_name_invalid")
-    if HIGH_IMPACT_UI.search(control_name) or _sensitive_component(control_name):
+    if (HIGH_IMPACT_UI.search(control_name) or _sensitive_component(control_name)
+            or SENSITIVE_UI_TARGET.search(control_name)):
         raise ValueError("computer_ui_high_impact_action_blocked")
     window = _find_window(window_title)
     matches = []
