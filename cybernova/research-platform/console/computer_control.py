@@ -1685,17 +1685,17 @@ def _ui_action_allowed(user_messages, action: str) -> bool:
     if not text:
         return False
     denied = {
-        "click": r"(?:не\\s+(?:нажимай|кликай|переходи)|don't\\s+click|do\\s+not\\s+click)",
-        "scroll": r"(?:не\\s+(?:прокручивай|пролистывай)|don't\\s+scroll|do\\s+not\\s+scroll)",
-        "type": r"(?:не\\s+(?:вводи|печатай|заполняй)|don't\\s+type|do\\s+not\\s+type)",
-        "key": r"(?:не\\s+нажимай\\s+клавиш|don't\\s+press|do\\s+not\\s+press)",
+        "click": r"(?:не\s+(?:нажимай|кликай|переходи)|don't\s+click|do\s+not\s+click)",
+        "scroll": r"(?:не\s+(?:прокручивай|пролистывай)|don't\s+scroll|do\s+not\s+scroll)",
+        "type": r"(?:не\s+(?:вводи|печатай|заполняй)|don't\s+type|do\s+not\s+type)",
+        "key": r"(?:не\s+нажимай\s+клавиш|don't\s+press|do\s+not\s+press)",
     }
     if re.search(denied[action], text):
         return False
     patterns = {
-        "click": r"(?:нажми|кликни|перейди|открой|выбери|изучи|исследуй|посмотри|осмотри|проанализируй|click|navigate|open|select|inspect|explore|review)",
+        "click": r"(?:нажми|кликни|перейди|открой|выбери|изучи|исследуй|посмотри|осмотри|проанализируй|создай профиль|create profile|click|navigate|open|select|inspect|explore|review)",
         "scroll": r"(?:пролистай|прокрути|посмотри|изучи|исследуй|осмотри|scroll|inspect|explore|review)",
-        "type": r"(?:введи|напиши|заполни|впиши|type|enter\\s+text|fill|input)",
+        "type": r"(?:введи|напиши|заполни|впиши|создай профиль|создать профиль|create profile|type|enter\s+text|fill|input)",
         "key": r"(?:нажми|press|keypress|hotkey|перейди|открой|выбери|изучи|исследуй|посмотри|inspect|explore|navigate)",
     }
     return bool(re.search(patterns[action], text))
@@ -1719,7 +1719,7 @@ def _mouse_click(window_title: str, x: int, y: int, target_description: str,
         raise ValueError("computer_ui_click_task_intent_required")
     if type(x) is not int or type(y) is not int or not (0 <= x <= 20000 and 0 <= y <= 20000):
         raise ValueError("computer_mouse_coordinates_invalid")
-    if button not in {"left", "right"} or click_count not in {1, 2}:
+    if button not in {"left", "right"} or type(click_count) is not int or click_count not in {1, 2}:
         raise ValueError("computer_mouse_action_invalid")
     window = _find_window(window_title)
     window.set_focus()
@@ -1730,7 +1730,10 @@ def _mouse_click(window_title: str, x: int, y: int, target_description: str,
     width, height = pyautogui.size()
     if x >= width or y >= height:
         raise ValueError("computer_mouse_coordinates_out_of_screen")
-    pyautogui.click(x=x, y=y, clicks=click_count, interval=0.12, button=button)
+    try:
+        pyautogui.click(x=x, y=y, clicks=click_count, interval=0.12, button=button)
+    except Exception as exc:
+        raise RuntimeError("computer_mouse_action_failed:" + type(exc).__name__) from None
     return {
         "ok": True, "window_title": window_title,
         "target_description": target, "x": x, "y": y,
@@ -1757,8 +1760,11 @@ def _mouse_scroll(window_title: str, x: int, y: int, amount: int,
     width, height = pyautogui.size()
     if x >= width or y >= height:
         raise ValueError("computer_mouse_coordinates_out_of_screen")
-    pyautogui.moveTo(x, y, duration=0.08)
-    pyautogui.scroll(amount, x=x, y=y)
+    try:
+        pyautogui.moveTo(x, y, duration=0.08)
+        pyautogui.scroll(amount, x=x, y=y)
+    except Exception as exc:
+        raise RuntimeError("computer_mouse_scroll_failed:" + type(exc).__name__) from None
     return {"ok": True, "window_title": window_title, "target_description": target,
             "x": x, "y": y, "scroll_amount": amount}
 
@@ -1772,7 +1778,7 @@ def _keyboard_type(window_title: str, text: str, target_description: str,
     if not isinstance(text, str) or not text or len(text) > 2000:
         raise ValueError("computer_keyboard_text_invalid")
     if SECRET_VALUE.search(text) or re.search(
-        r"(?i)(?:sk-[A-Za-z0-9_-]{16,}|(?:api[_-]?key|password|passwd|secret|token)\\s*[:=])",
+        r"(?i)(?:sk-[A-Za-z0-9_-]{16,}|(?:api[_-]?key|password|passwd|secret|token)\s*[:=])",
         text,
     ):
         raise ValueError("computer_keyboard_sensitive_text_blocked")
@@ -1782,7 +1788,10 @@ def _keyboard_type(window_title: str, text: str, target_description: str,
         from pywinauto.keyboard import send_keys
     except ImportError:
         raise RuntimeError("pywinauto_dependency_missing") from None
-    send_keys(text, with_spaces=True, vk_packet=True)
+    try:
+        send_keys(text, with_spaces=True, vk_packet=True)
+    except Exception as exc:
+        raise RuntimeError("computer_keyboard_type_failed:" + type(exc).__name__) from None
     return {"ok": True, "window_title": window_title, "target_description": target,
             "characters_typed": len(text)}
 
@@ -1806,7 +1815,7 @@ def _keyboard_keypress(window_title: str, key: str, target_description: str,
     if key not in _SAFE_KEYPRESS:
         raise ValueError("computer_keyboard_key_blocked")
     text = _latest_ui_task_text(user_messages)
-    if key == "ENTER" and not re.search(r"(?:нажми\\s+enter|press\\s+enter|enter\\s+key)", text):
+    if key == "ENTER" and not re.search(r"(?:нажми\s+enter|press\s+enter|enter\s+key)", text):
         raise ValueError("computer_keyboard_enter_requires_explicit_intent")
     window = _find_window(window_title)
     window.set_focus()
@@ -1814,7 +1823,10 @@ def _keyboard_keypress(window_title: str, key: str, target_description: str,
         from pywinauto.keyboard import send_keys
     except ImportError:
         raise RuntimeError("pywinauto_dependency_missing") from None
-    send_keys(_SAFE_KEYPRESS[key])
+    try:
+        send_keys(_SAFE_KEYPRESS[key])
+    except Exception as exc:
+        raise RuntimeError("computer_keyboard_keypress_failed:" + type(exc).__name__) from None
     return {"ok": True, "window_title": window_title, "target_description": target, "key": key}
 
 
