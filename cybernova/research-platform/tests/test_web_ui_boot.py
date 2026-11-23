@@ -53,6 +53,8 @@ class WebUIBootTests(unittest.TestCase):
         self.assertIn('function resizeComposer()',app)
         self.assertIn('showReviewStatus(pending,result.review)',app)
         self.assertIn('Grandmaster · NOC / Development',app)
+        self.assertIn(".collab-entry .collab-full .md-content>h2",css)
+        self.assertIn("selected ultra-clean editorial style",css)
 
     @unittest.skipUnless(shutil.which("node"),"Node.js unavailable")
     def test_buttons_bind_and_qwen_chatgpt_switch_responds(self):

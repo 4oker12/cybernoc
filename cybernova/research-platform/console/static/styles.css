@@ -804,3 +804,20 @@ html[data-density="relaxed"] .composer{padding:9px 13px 8px}
     font-size:17px;margin-top:24px;padding:0;border:0;
   }
 }
+
+/* Match the same editorial hierarchy in expanded collaborative conversations. */
+.collab-entry .collab-full .md-content>h2{
+  margin:26px 0 10px;padding:0;border:0;
+  font-size:19px;font-weight:850;line-height:1.28;letter-spacing:-.028em;
+}
+.collab-entry .collab-full .md-content>h2:first-child{margin-top:4px}
+.collab-entry .collab-full .md-content>h3{
+  margin:21px 0 8px;font-size:16px;font-weight:800;
+}
+:root[data-theme="light"] .collab-entry .collab-full .md-content>h2,
+:root[data-theme="light"] .collab-entry .collab-full .md-content strong{
+  color:#0e151d;
+}
+@media(max-width:680px){
+  .collab-entry .collab-full .md-content>h2{font-size:17px;margin-top:24px}
+}
