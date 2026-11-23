@@ -36,7 +36,7 @@ class WebUIBootTests(unittest.TestCase):
         parsed=Scripts()
         parsed.feed(html)
         self.assertEqual([x.get("src") for x in parsed.starts],
-                         ["/static/markdown.js?v=20261123-semantic-sections-1","/static/app.js?v=20261123-global-design-2",
+                         ["/static/markdown.js?v=20261123-semantic-sections-1","/static/app.js?v=20261123-task-statuses-1",
                           "/static/model-settings.js","/static/ux.js?v=20261123-global-design-2"])
         self.assertEqual(parsed.ends,4)
         self.assertEqual(html.count("</script>"),4)
@@ -44,7 +44,7 @@ class WebUIBootTests(unittest.TestCase):
     def test_global_github_design_system_covers_the_research_console(self):
         html=(STATIC/"index.html").read_text(encoding="utf-8")
         design=(STATIC/"design-system.css").read_text(encoding="utf-8")
-        self.assertIn('/static/design-system.css?v=20261123-github-global-3',html)
+        self.assertIn('/static/design-system.css?v=20261123-github-green-headings-1',html)
         self.assertGreater(html.index('/static/design-system.css'),html.index('/static/ux.css'))
         for selector in ('.sidebar','.topbar','.chat-msg.from-user .message-body',
                          '.md-content strong','.md-section--risk','.md-code',
@@ -87,6 +87,18 @@ class WebUIBootTests(unittest.TestCase):
         self.assertIn("Ctrl+V — вставить вывод",html)
         self.assertIn(".followup-question{",css)
         self.assertIn("background:#eaf2ff",css)
+
+    def test_green_heading_hierarchy_and_clear_task_statuses(self):
+        design=(STATIC/"design-system.css").read_text(encoding="utf-8")
+        app=(STATIC/"app.js").read_text(encoding="utf-8")
+        self.assertIn("--heading:#1f883d",design)
+        self.assertIn("--heading:#3fb950",design)
+        self.assertIn("color:var(--heading)",design)
+        self.assertIn(".followup-questions{display:flex;flex-direction:row",design)
+        self.assertIn('completed: "Готово"',app)
+        self.assertIn('needs_review: "Нужна проверка"',app)
+        self.assertIn("button.title=taskName",app)
+        self.assertIn('aria-label","Открыть исследование:',app)
 
     @unittest.skipUnless(shutil.which("node"),"Node.js unavailable")
     def test_buttons_bind_and_qwen_chatgpt_switch_responds(self):

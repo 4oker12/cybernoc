@@ -255,7 +255,7 @@ function showEvents(events,count,mode,reply){
 function renderFollowups(reply, questions){
   if(!Array.isArray(questions)||!questions.length)return;
   const box=node("div","followup-box");
-  box.append(node("div","followup-label","Продолжить по теме"));
+  box.append(node("div","followup-label","Следующие шаги"));
   const options=node("div","followup-questions");
   for(const text of questions.slice(0,3)){
     if(typeof text!=="string"||text.length>160)continue;
@@ -782,6 +782,17 @@ async function applyResearchScope(){
   }
 }
 
+function taskStatusLabel(status){
+  const labels={
+    idle: "Создано",
+    queued: "В очереди",
+    running: "В работе",
+    needs_review: "Нужна проверка",
+    completed: "Готово",
+    blocked: "Остановлено"
+  };
+  return labels[String(status||"idle").toLowerCase()]||"Неизвестный статус";
+}
 async function refreshTaskList(){
   try{
     const response=await fetch("/api/comm/tasks",{cache:"no-store"});
@@ -793,9 +804,15 @@ async function refreshTaskList(){
       const button=node("button","task-item"+(task.task_id===state.taskId?" selected":""));
       button.type="button";
       button.dataset.taskId=task.task_id;
-      const text=node("span","task-title",task.title||"Исследование");
-      const status=node("span","task-state",task.status||"idle");
-      status.dataset.status=String(task.status||"idle").toLowerCase();
+      const taskName=String(task.title||"Исследование");
+      const taskStatus=String(task.status||"idle").toLowerCase();
+      const statusLabel=taskStatusLabel(taskStatus);
+      const text=node("span","task-title",taskName);
+      text.title=taskName;
+      const status=node("span","task-state",statusLabel);
+      status.dataset.status=taskStatus;
+      button.title=taskName+" · "+statusLabel;
+      button.setAttribute("aria-label","Открыть исследование: "+taskName+". Статус: "+statusLabel);
       button.append(text,status);
       button.addEventListener("click",()=>resumeTask(task.task_id));
       list.append(button);

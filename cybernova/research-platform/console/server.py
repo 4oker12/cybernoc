@@ -1281,10 +1281,10 @@ def communication_resume(payload: ResumeTaskRequest):
 
 @app.post("/api/followups")
 def followups(payload: FollowupsRequest):
-    """Suggest questions based on this session's last real Qwen reply.
+    """Suggest task-specific next steps after the main answer is visible.
 
-    Inference is separate from /api/chat, so the main answer appears first.
-    No tools, network target access, execution, or changes to permissions.
+    Uses the active task title, selected scope and researcher profile. This
+    separate inference call has no MCP tools and cannot execute suggestions.
     """
     with sessions_lock:
         state = sessions.get(payload.session_id)
@@ -1297,8 +1297,26 @@ def followups(payload: FollowupsRequest):
             return {"turn": payload.turn, "questions": state["followups"],
                     "source": "qwen", "cached": True}
         history = [dict(item) for item in state["history"][-6:]]
+        task_id = state.get("task_id")
+        scope = dict(state.get("scope") or {})
     try:
-        questions = generate_followups(history)
+        task = {}
+        if task_id:
+            try:
+                task = communication_store().get_task(task_id)
+            except CommunicationError:
+                task = {}
+        task_context = {
+            "title": task.get("title", ""),
+            "hosts": scope.get("hosts", []),
+            "capture_detail": scope.get("capture_detail", ""),
+        }
+        profile = profile_settings_store().load()
+        project_instructions = mode_instructions_for(profile, "researcher")
+        questions = generate_followups(
+            history, task_context=task_context,
+            project_instructions=project_instructions,
+        )
     except Exception:
         # Suggestions are optional: never break chat or invent fallback text.
         return {"turn": payload.turn, "questions": [], "source": "unavailable"}

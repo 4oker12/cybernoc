@@ -55,6 +55,48 @@ class FollowupTests(unittest.TestCase):
         self.assertEqual(payload["messages"][-2:], history)
         self.assertLessEqual(timeout, 120)
 
+    def test_task_and_project_context_are_included_without_tools(self):
+        calls = []
+        def stub(endpoint, payload, timeout):
+            calls.append(payload)
+            return {"message": {"content": (
+                '{"questions":["Как проверить итоговую сборку интерфейса Cybernova?"]}'
+            )}}
+        history = [{"role": "user", "content": "Улучши интерфейс Cybernova"},
+                   {"role": "assistant", "content": "Нужно проверить сборку."}]
+        questions = generate_followups(
+            history,
+            task_context={
+                "title": "Cybernova UI polish",
+                "hosts": ["127.0.0.1"],
+                "capture_detail": "evidence",
+            },
+            project_instructions="Исследователь работает в рамках проекта CyberNoc.",
+            transport=stub,
+        )
+        self.assertEqual(len(questions), 1)
+        messages = calls[0]["messages"]
+        self.assertIn("проекте CyberNoc", messages[0]["content"])
+        self.assertIn("Cybernova UI polish", messages[1]["content"])
+        self.assertIn("127.0.0.1", messages[1]["content"])
+        self.assertEqual(messages[-2:], history)
+        self.assertNotIn("tools", calls[0])
+
+    def test_long_history_is_bounded_for_followup_context_window(self):
+        captured = []
+        def stub(endpoint, payload, timeout):
+            captured.append(payload)
+            return {"message": {"content": '{"questions":[]}'}}
+        history = [
+            {"role": "user", "content": "U" * 6000},
+            {"role": "assistant", "content": "A" * 9000},
+        ]
+        self.assertEqual(generate_followups(history, transport=stub), [])
+        messages = captured[0]["messages"]
+        self.assertLessEqual(len(messages[-2]["content"]), 2200)
+        self.assertLessEqual(len(messages[-1]["content"]), 2200)
+        self.assertIn("фрагмент сокращён", messages[-1]["content"])
+
     def test_incomplete_history_does_not_call_model(self):
         called = []
         def stub(*args):
