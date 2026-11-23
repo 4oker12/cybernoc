@@ -304,7 +304,8 @@ def observe_chat(mode, backend, latest_usage):
                     partial = result.get("source") == "chatgpt_plan_responses_partial"
                     result_code = result.get("error_code")
                     handled_provider_failure = (
-                        isinstance(result_code, str) and _ADAPTER_CODE.fullmatch(result_code)
+                        not partial and isinstance(result_code, str)
+                        and _ADAPTER_CODE.fullmatch(result_code)
                     )
                     status = ("failed" if error is not None or handled_provider_failure
                               else "partial" if partial else "completed")
