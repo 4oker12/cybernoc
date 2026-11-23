@@ -56,7 +56,7 @@
     model.maxLength = 160;
     model.autocomplete = "off";
     model.spellcheck = false;
-    model.placeholder = "например, deepseek-chat";
+    model.placeholder = "например, deepseek-flash";
     addField(grid, "Идентификатор модели", model);
 
     const base = el("input");
@@ -90,7 +90,7 @@
     panel.append(keyStatus);
 
     const actions = el("div", "model-config-actions");
-    const save = el("button", "profile-save", "Применить модель");
+    const save = el("button", "profile-save", "Подключить и проверить");
     save.type = "button";
     save.id = "modelConfigSave";
     actions.append(save);
@@ -119,8 +119,11 @@
     if (value === "deepseek" && (!base.value || !/api\.deepseek\.com/i.test(base.value))) {
       base.value = "https://api.deepseek.com";
     }
-    if (value === "deepseek" && !/deepseek/i.test($("modelId").value)) {
-      $("modelId").value = "deepseek-chat";
+    if (value === "deepseek" && (
+      !/deepseek/i.test($("modelId").value) ||
+      ["deepseek-chat", "deepseek-reasoner"].includes($("modelId").value.trim())
+    )) {
+      $("modelId").value = "deepseek-flash";
     }
   }
 
@@ -173,8 +176,14 @@
       $("modelApiKey").value = "";
       $("modelApiKey").placeholder = data.settings?.api_key_configured ?
         "Ключ сохранён · пустое поле оставит его без изменений" : "Вставь API-ключ";
-      status.textContent = "Применено: " + (data.settings?.model || payload.model) +
-        " · следующие запросы используют эту модель";
+      const connection = data.connection || {};
+      status.textContent = connection.status === "connected" ?
+        "Подключено: DeepSeek · " + (connection.model || payload.model) +
+          " · API-ключ проверен, следующие запросы используют эту модель" :
+        connection.status === "not_checked" ?
+          "Настройки применены, но совместимый API не подтвердил доступность модели" :
+          "Применено: " + (data.settings?.model || payload.model) +
+            " · следующие запросы используют эту модель";
       const title = $("modelName");
       if (title && stateModeIsResearcher()) title.textContent = data.settings?.model || payload.model;
       window.dispatchEvent(new CustomEvent("cybernova:model-config-applied", {detail:data.settings || {}}));
