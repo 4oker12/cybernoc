@@ -153,13 +153,18 @@ def test_model_connection(payload: dict) -> dict:
     model = payload.get("model")
     if not isinstance(model, str) or not _VALID_MODEL.fullmatch(model.strip()):
         raise ModelSettingsError("invalid_model_id")
-    data = _data_dir()
-    _, values = _read_runtime_env(data)
-    key_path = _key_path(data, values)
     supplied_key = payload.get("api_key")
-    api_key = supplied_key.strip() if isinstance(supplied_key, str) and supplied_key.strip() else (
-        _read_key(key_path) or os.environ.get("CYBERNOVA_LLM_API_KEY", "").strip()
-    )
+    if isinstance(supplied_key, str) and supplied_key.strip():
+        api_key = supplied_key.strip()
+    else:
+        data = _data_dir()
+        _, values = _read_runtime_env(data)
+        key_path = _key_path(data, values)
+        api_key = _read_key(key_path) or os.environ.get("CYBERNOVA_LLM_API_KEY", "").strip()
+    if api_key and (
+        not 8 <= len(api_key) <= 10000 or any(ord(char) < 32 for char in api_key)
+    ):
+        raise ModelSettingsError("invalid_api_key")
     try:
         client = OpenAICompatibleClient(
             base_url=base_url.strip(), model=model.strip(), api_key=api_key,
