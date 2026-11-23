@@ -1785,6 +1785,15 @@ def _keyboard_type(window_title: str, text: str, target_description: str,
     window = _find_window(window_title)
     window.set_focus()
     try:
+        focused = window.get_focus()
+        info = focused.element_info
+    except Exception:
+        raise ValueError("computer_keyboard_focus_unverified") from None
+    if (info.control_type not in {"Edit", "ComboBox"}
+            or getattr(info, "is_password", False)
+            or _sensitive_component(info.name or "")):
+        raise ValueError("computer_keyboard_focus_not_safe_input")
+    try:
         from pywinauto.keyboard import send_keys
     except ImportError:
         raise RuntimeError("pywinauto_dependency_missing") from None
