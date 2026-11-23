@@ -970,7 +970,8 @@ function renderTools(tools,automatic=[],availableScanners=[]){
     const label=node("code","",name);
     label.title=descriptions[name]||"Подключённый MCP-инструмент";
     const missing=availability.has(name)&&!availability.get(name);
-    const indicator=node("span","tool-access"+(missing?" tool-missing":""),
+    const accessClass=missing?"tool-missing":allowed.has(name)?"tool-auto":"tool-ask";
+    const indicator=node("span","tool-access "+accessClass,
       missing?"MISSING":allowed.has(name)?"AUTO":"ASK");
     indicator.title=missing?"Сканер не установлен в текущем окружении":
       allowed.has(name)?"Модель может запустить без подтверждения":
