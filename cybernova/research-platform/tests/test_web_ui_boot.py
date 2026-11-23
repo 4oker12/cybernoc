@@ -102,7 +102,7 @@ class WebUIBootTests(unittest.TestCase):
         self.assertIn(".followup-question:focus:not(:focus-visible)",variant)
         self.assertIn('["qwen","offer"].includes(result.source)',app)
         self.assertIn("answer_without_offer",app)
-        self.assertIn("data-prompt=text",app)
+        self.assertIn("button.dataset.prompt=text",app)
         self.assertIn('"Токены · вход: "+formatTokens(last.input)',app)
 
     def test_deepseek_controls_are_real_and_contextual(self):
