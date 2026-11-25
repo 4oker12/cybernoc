@@ -93,6 +93,9 @@ class APITests(unittest.TestCase):
         except HTTPError as exc:return exc.code,exc.read()
     def test_index_public_api_authenticated(self):
         self.assertEqual(self.fetch('/')[0],200)
+        css_status,css_body=self.fetch('/design-system.css')
+        self.assertEqual(css_status,200)
+        self.assertIn(b'--blue:#0969da',css_body)
         self.assertEqual(self.fetch('/api/status')[0],401)
         with patch.object(server,'snapshot',return_value=ring.demo_snapshot()):
             code,raw=self.fetch('/api/status',token='z'*50)

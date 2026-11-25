@@ -38,8 +38,10 @@ class StubModel:
     def __init__(self):
         self.round = 0
         self.advertised = []
+        self.advertised_history = []
     def chat(self, messages, tools=None, **_):
         self.advertised = tools or []
+        self.advertised_history.append(self.advertised)
         self.round += 1
         if self.round == 1:
             return {"content": "", "tool_calls": [{
@@ -52,7 +54,7 @@ def run():
     runtime = GPTToolRuntime()
     catalog = {row["name"] for row in runtime.mcp_tools()}
     required = {
-        "terminal_status", "terminal_run", "computer_system_overview",
+        "terminal_status", "computer_system_overview",
         "computer_performance_snapshot", "computer_process_list",
         "computer_disk_overview", "computer_service_overview",
         "computer_installed_programs", "computer_startup_items",
@@ -63,13 +65,26 @@ def run():
         "browser_network", "google_search", "research_source_open",
     }
     assert required.issubset(catalog), sorted(required - catalog)
-    print(json.dumps({"test": "shared_catalog", "status": "PASS", "count": len(catalog)}))
+    assert "terminal_run" in catalog, "terminal_run must be available in automatic mode"
+    terminal_group = {row["name"] for row in runtime.mcp_tools(["terminal"])}
+    assert "terminal_run" in terminal_group, "terminal group must expose terminal_run"
+    restricted, restricted_failed = runtime.call("terminal_run", {
+        "command": "whoami", "shell": "cmd", "cwd": str(Path.home()),
+        "timeout_seconds": 15, "max_output_chars": 4000,
+    }, enabled_groups=["browser"])
+    assert restricted_failed and restricted.get("error") == "tool_group_not_enabled", restricted
+    print(json.dumps({"test": "shared_catalog", "status": "PASS", "count": len(catalog),
+                      "automatic_terminal_run": True, "group_restriction": True}))
     failures = []
     warnings = []
-    def call(name, args=None, *, important=False, detail=None):
+    def call(name, args=None, *, important=False, detail=None, enabled_groups=None,
+             conversation_key="windows-readonly-smoke"):
         args = args or {}
         try:
-            result, failed = runtime.call(name, args)
+            result, failed = runtime.call(
+                name, args, enabled_groups=enabled_groups,
+                conversation_key=conversation_key,
+            )
         except Exception as exc:
             result, failed = {"ok": False, "error": type(exc).__name__}, True
         passed = summary(name, result, failed, detail=detail(result) if detail else None)
@@ -89,14 +104,14 @@ def run():
                 "timeout_seconds": 90, "max_output_chars": 12000,
             }, important=True, detail=lambda x: {
                 "exit_code": x.get("exit_code"), "shell": x.get("shell_id"),
-            })
+            }, enabled_groups=["terminal"])
         ps = call("terminal_run", {
             "command": "Get-Process | Select-Object -First 3 ProcessName,Id",
             "shell": "powershell", "cwd": str(Path.home()),
             "timeout_seconds": 30, "max_output_chars": 8000,
         }, important=True, detail=lambda x: {
             "exit_code": x.get("exit_code"), "shell": x.get("shell_id"),
-        })
+        }, enabled_groups=["terminal"])
         if status.get("powershell_7"):
             call("terminal_run", {
                 "command": "Get-ChildItem -Force | Select-Object -First 3 Name",
@@ -104,7 +119,7 @@ def run():
                 "timeout_seconds": 30, "max_output_chars": 8000,
             }, detail=lambda x: {
                 "exit_code": x.get("exit_code"), "shell": x.get("shell_id"),
-            })
+            }, enabled_groups=["terminal"])
 
         system = call("computer_system_overview", important=True,
                       detail=lambda x: {
@@ -301,8 +316,11 @@ def run():
         model = StubModel()
         agent = Agent(model, lambda: StubMCP(), local_tool_runtime=runtime)
         res = agent.run([], "Проверь свой терминал", force_tools=False)
-        advertised = {item["function"]["name"] for item in model.advertised}
-        if not {"terminal_status", "computer_system_overview", "browser_navigate"}.issubset(advertised) or res.get("tool_calls") != 1:
+        advertised = {item["function"]["name"] for item in model.advertised_history[0]}
+        review_disables_tools = (len(model.advertised_history) >= 3 and
+                                 model.advertised_history[-1] == [])
+        if (not {"terminal_status", "computer_system_overview", "browser_navigate"}.issubset(advertised)
+                or res.get("tool_calls") != 1 or not review_disables_tools):
             failures.append("deepseek_shared_tool_dispatch")
             print('{"test":"deepseek_shared_tool_dispatch","status":"FAIL"}')
         else:

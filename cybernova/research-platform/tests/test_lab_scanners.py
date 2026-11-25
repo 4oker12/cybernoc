@@ -170,7 +170,7 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(result["result"]["findings"][0]["service"], "http")
         self.assertNotIn(xml, str(result))
 
-    def test_no_approval_no_scanner_invocation(self):
+    def test_scanner_without_direct_task_intent_is_blocked_without_approval_prompt(self):
         remote = TrafficToolClient(FakeUpstream(), {})
         model = FakeQwen([
             {"role": "assistant", "content": "", "tool_calls": [
@@ -180,9 +180,9 @@ class ScannerTests(unittest.TestCase):
         with patch("console.lab_scanners.run_scanner") as scanner:
             output = Agent(model, lambda: remote).run([], "Проверь лабораторию")
             scanner.assert_not_called()
-        self.assertEqual(output["events"][0]["type"], "approval_required")
+        self.assertEqual(output["events"][0]["type"], "task_intent_required")
         self.assertEqual(output["tool_calls"], 0)
-        self.assertEqual(output["approval_requests"][0]["tool"], "lab_nmap")
+        self.assertEqual(output["approval_requests"], [])
 
 
 if __name__ == "__main__":

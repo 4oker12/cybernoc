@@ -12,6 +12,11 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+try:
+    from .diagnostics import configure as configure_diagnostics
+except ImportError:
+    from diagnostics import configure as configure_diagnostics
+
 CANDIDATES = (
     Path(__file__).resolve().parents[1] / "tool_gateway",
     Path(__file__).resolve().parents[2] / "qwen-webui" / "mcp-gateway",
@@ -74,7 +79,7 @@ def ip_network_summary(cidr: str) -> dict:
 
 @mcp.tool()
 def local_webui_health() -> dict:
-    """Inspect only local WebUI service availability."""
+    """Check the local Cybernova Console API and its MCP readiness."""
     return check_local_webui()
 
 
@@ -85,4 +90,5 @@ def http_get(url: str) -> dict:
 
 
 if __name__ == "__main__":
+    configure_diagnostics("tool-mcp")
     mcp.run(transport="streamable-http")

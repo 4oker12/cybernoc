@@ -36,10 +36,98 @@ class WebUIBootTests(unittest.TestCase):
         parsed=Scripts()
         parsed.feed(html)
         self.assertEqual([x.get("src") for x in parsed.starts],
-                         ["/static/markdown.js","/static/app.js",
-                          "/static/model-settings.js","/static/ux.js"])
+                         ["/static/markdown.js?v=20261123-semantic-sections-1","/static/app.js?v=20261123-github-green-primary-1",
+                          "/static/model-settings.js?v=20261123-deepseek-controls-1","/static/ux.js?v=20261123-global-design-2"])
         self.assertEqual(parsed.ends,4)
         self.assertEqual(html.count("</script>"),4)
+
+    def test_global_github_design_system_covers_the_research_console(self):
+        html=(STATIC/"index.html").read_text(encoding="utf-8")
+        design=(STATIC/"design-system.css").read_text(encoding="utf-8")
+        self.assertIn('/static/design-system.css?v=20261123-github-green-primary-1',html)
+        self.assertGreater(html.index('/static/design-system.css'),html.index('/static/ux.css'))
+        for selector in ('.sidebar','.topbar','.chat-msg.from-user .message-body',
+                         '.md-content strong','.md-section--risk','.md-code',
+                         '.tool-batch','.tool-picker','.collab-entry','.inspector',
+                         '.profile-dialog',':root[data-theme="dark"]'):
+            self.assertIn(selector,design)
+        self.assertIn('--accent:#1f883d',design)
+        self.assertIn('--purple:#8250df',design)
+        self.assertIn('--success:#1a7f37',design)
+
+    def test_control_panel_uses_the_same_light_design_language(self):
+        root=ROOT.parent/"control-panel"/"web"
+        html=(root/"index.html").read_text(encoding="utf-8")
+        design=(root/"design-system.css").read_text(encoding="utf-8")
+        self.assertIn('<meta name="color-scheme" content="light">',html)
+        self.assertIn('/design-system.css?v=20261123-github-global-2',html)
+        self.assertGreater(html.index('/design-system.css'),html.index('/style.css'))
+        for selector in ('.sidebar','.nav-link.active','.metric','.panel',
+                         '.ring-node','.participant-status','.auth-modal'):
+            self.assertIn(selector,design)
+        self.assertIn('--blue:#0969da',design)
+        self.assertIn('--purple:#8250df',design)
+        self.assertIn('--green:#1a7f37',design)
+
+    def test_chat_headings_and_compact_composer_contract(self):
+        html=(STATIC/"index.html").read_text(encoding="utf-8")
+        css=(STATIC/"styles.css").read_text(encoding="utf-8")
+        app=(STATIC/"app.js").read_text(encoding="utf-8")
+        self.assertIn('<textarea id="messageInput" rows="1"',html)
+        self.assertIn('min-height:30px;height:30px;max-height:140px',css)
+        self.assertIn('.md-content>h2',css)
+        self.assertIn('font-weight:850',css)
+        self.assertIn('font-size:20px',css)
+        self.assertIn('function resizeComposer()',app)
+        self.assertIn('showReviewStatus(pending,result.review)',app)
+        self.assertIn('Grandmaster · NOC / Development',app)
+        self.assertIn(".collab-entry .collab-full .md-content>h2",css)
+        self.assertIn("selected ultra-clean editorial style",css)
+        self.assertNotIn('id="pasteOutputButton"',html)
+        self.assertIn("Ctrl+V — вставить вывод",html)
+        self.assertIn(".followup-question{",css)
+        self.assertIn("background:#eaf2ff",css)
+
+    def test_green_accent_single_composer_focus_and_compact_usage(self):
+        design=(STATIC/"design-system.css").read_text(encoding="utf-8")
+        variant=(STATIC/"variant3.css").read_text(encoding="utf-8")
+        app=(STATIC/"app.js").read_text(encoding="utf-8")
+        self.assertIn("--accent:#1f883d",design)
+        self.assertIn("--accent-strong:#166534",design)
+        self.assertIn(".composer textarea#messageInput:focus-visible",variant)
+        self.assertIn("outline:none!important;border:0!important",variant)
+        self.assertIn(".token-usage-receipt { display: none !important; }",variant)
+        self.assertIn(".composer-meta #tokenUsageStatus",variant)
+        self.assertIn(".inline-tools .tool-batch-count",variant)
+        self.assertIn(".followup-question:focus:not(:focus-visible)",variant)
+        self.assertIn('["qwen","offer"].includes(result.source)',app)
+        self.assertIn("answer_without_offer",app)
+        self.assertIn("button.dataset.prompt=text",app)
+        self.assertIn('"Токены · вход: "+formatTokens(last.input)',app)
+
+    def test_deepseek_controls_are_real_and_contextual(self):
+        html=(STATIC/"index.html").read_text(encoding="utf-8")
+        script=(STATIC/"model-settings.js").read_text(encoding="utf-8")
+        app=(STATIC/"app.js").read_text(encoding="utf-8")
+        self.assertIn('id="modelQuickSettings"',html)
+        self.assertIn('preset.id = "modelPreset"',script)
+        self.assertIn('effort.id = "modelReasoningEffort"',script)
+        self.assertIn('["deepseek-v4-pro", "DeepSeek V4 Pro',script)
+        self.assertIn('["max", "Max',script)
+        self.assertIn('reasoning_effort:',script)
+        self.assertIn('openProfileSettings("model")',app)
+
+    def test_green_heading_hierarchy_and_clear_task_statuses(self):
+        design=(STATIC/"design-system.css").read_text(encoding="utf-8")
+        app=(STATIC/"app.js").read_text(encoding="utf-8")
+        self.assertIn("--heading:#1f883d",design)
+        self.assertIn("--heading:#3fb950",design)
+        self.assertIn("color:var(--heading)",design)
+        self.assertIn(".followup-questions{display:flex;flex-direction:row",design)
+        self.assertIn('completed: "Готово"',app)
+        self.assertIn('needs_review: "Нужна проверка"',app)
+        self.assertIn("button.title=taskName",app)
+        self.assertIn('aria-label","Открыть исследование:',app)
 
     @unittest.skipUnless(shutil.which("node"),"Node.js unavailable")
     def test_buttons_bind_and_qwen_chatgpt_switch_responds(self):
@@ -112,8 +200,8 @@ const context={document,window,fetch,URLSearchParams,console,
 vm.runInNewContext(app,context);
 if(typeof callbacks.DOMContentLoaded!=='function')throw Error('Init handler missing');
 callbacks.DOMContentLoaded();
-if(typeof byId('pasteOutputButton').listeners.click!=='function')
- throw Error('Clipboard paste button not bound');
+if(byId('pasteOutputButton')!==null)
+ throw Error('Custom clipboard paste button should be removed');
 for(const id of ['sendButton','newSession','modeQwen','modeChatGPT','navChatGPT','navTools']){
  if(typeof byId(id).listeners.click!=='function')throw Error('Button not bound: '+id);
 }
@@ -155,16 +243,6 @@ detail.open=true;detail.listeners.toggle();
 if(detail.children[1].textContent!==largeMessage)
  throw Error('Expansion lost the full original answer');
 
-Promise.resolve().then(async()=>{
- await byId('pasteOutputButton').listeners.click();
- const pasted=byId('messageInput').value;
- if(!pasted.includes('Вывод из терминала:'))
-   throw Error('Clipboard output header was not inserted');
- if(!pasted.includes('PS> Get-Process\\npython 1234'))
-   throw Error('Clipboard text was not preserved');
- if(!byId('uploadStatus').textContent.includes('нажми Enter'))
-   throw Error('Paste action did not tell the user to review and press Enter');
-}).catch(error=>{console.error(error);process.exitCode=1;});
 """
         run=subprocess.run(["node","-e",script,html,app],
                            capture_output=True,text=True,timeout=20)

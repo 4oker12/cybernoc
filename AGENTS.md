@@ -166,14 +166,11 @@ this file alone activates the instructions in all agents.
   installed Windows runtime were changed merely because repository files were
   committed. Report each layer separately.
 
-## 9. Parallel agent work and branch isolation
+## 9. Second-pass answer verification (ChatGPT coordinator)
 
-- Use parallel agents only for workstreams that can be separated by files, APIs and acceptance criteria. One task, one dedicated branch, one issue.
-- Create every task branch from the verified current `main`. If `main` advances before implementation starts, fast-forward an empty task branch before work. If the branch already contains commits and histories diverge, stop and review; never force-update it.
-- Put the objective, confirmed current behavior, allowed files, excluded files, safety constraints and testable acceptance criteria in the issue.
-- Give each agent explicit file ownership. Do not let agents edit the same files concurrently. If a shared file is unavoidable, coordinate the change order and contract first.
-- Agents work only on their task branch. No direct commits to `main`, no blind merges, no `reset --hard`, no `git clean -fd`, and no force push.
-- Every agent must inspect the current implementation and tests before editing, run focused tests, inspect its diff, and open a PR with exact commit SHA, test counts/logs, risks and rollback notes.
-- The coordinator independently reviews architecture, security boundaries, cross-branch conflicts and CI before merging. A green CI run does not prove local Windows or Chrome end-to-end behavior.
-- Distinguish a prepared issue/branch from an agent actually executing. Never claim delegation has started unless a real agent session, commit or tool execution is observable.
-- Merge independent PRs into `main` in a controlled order. After each merge, recheck `main` and fast-forward other still-empty task branches before their agents begin.
+Before every substantive final response, make a second evidence-based review of the actual drafted answer. Check the user's requirements, source claims, logs, figures, dates, command syntax, causal reasoning, alternative explanations, permissions, and the difference between CI, remote repository, local runtime, and end-to-end success. Correct any discovered mistake before publishing.
+
+In the final answer, when applicable, clearly label **«Замечено при повторной проверке»** and **«Исправлено»** with concrete changes and any effect on priorities. If no discrepancies were found, say so briefly rather than inventing a correction. Explicitly label unverified claims and blockers. Never represent a model-only reread as a new instrumented test or assert that a tool ran without its result. Keep simple queries concise and use the same clean editorial structure when continuing a task.
+
+This repository guidance does not directly modify ChatGPT system or Project settings; the paste-ready Project Instructions live in `docs/CHATGPT_PROJECT_INSTRUCTIONS.md`.
+

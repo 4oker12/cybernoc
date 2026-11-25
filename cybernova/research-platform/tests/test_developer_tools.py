@@ -95,7 +95,7 @@ class DeveloperToolsTests(unittest.TestCase):
         else:
             self.assertEqual(cmd["stdout"].strip(),str(os.geteuid()))
 
-    def test_write_capabilities_are_visible_but_publish_approval_required(self):
+    def test_write_capabilities_are_autonomous_with_configured_credentials(self):
         class Store:
             def get_task(self,task_id):return {"task_id":task_id}
         class Upstream:
@@ -111,11 +111,12 @@ class DeveloperToolsTests(unittest.TestCase):
         self.assertIn("dev_open_pr",names)
         self.assertIn("dev_edit",REVIEWED_TOOLS)
         self.assertIn("dev_commit",REVIEWED_TOOLS)
-        self.assertNotIn("dev_command",REVIEWED_TOOLS)
-        self.assertNotIn("dev_push",REVIEWED_TOOLS)
-        self.assertNotIn("dev_open_pr",REVIEWED_TOOLS)
-        with patch.dict(os.environ,{"CYBERNOVA_DEV_WRITE_KEY":""}):
-            with self.assertRaisesRegex(dev.DeveloperError,"git_write_key_not_configured"):
+        self.assertIn("dev_command",REVIEWED_TOOLS)
+        self.assertIn("dev_push",REVIEWED_TOOLS)
+        self.assertIn("dev_open_pr",REVIEWED_TOOLS)
+        with patch.dict(os.environ,{"CYBERNOVA_DEV_WRITE_KEY":""}), \
+             patch("console.developer_tools.shutil.which", return_value=None):
+            with self.assertRaisesRegex(dev.DeveloperError,"github_write_credentials_not_configured"):
                 self.call("dev_push")
 
     def test_agent_really_reads_project_when_qwen_does_not_call_tools(self):

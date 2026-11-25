@@ -4,14 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
-  <meta name="theme-color" content="#212121">
+  <meta name="theme-color" content="#ffffff">
   <title>Cybernova — Исследователь и ChatGPT</title>
-  <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/ux.css">
-  <script defer src="/static/markdown.js"></script>
-  <script defer src="/static/app.js"></script>
-  <script defer src="/static/model-settings.js"></script>
-  <script defer src="/static/ux.js"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=20261123-white-canvas-2">
+  <link rel="stylesheet" href="/static/ux.css?v=20261123-global-design-1">
+  <link rel="stylesheet" href="/static/design-system.css?v=20261123-github-green-primary-1">
+  <link rel="stylesheet" href="/static/variant3.css?v=20261123-github-green-primary-1">
+  <script defer src="/static/markdown.js?v=20261123-semantic-sections-1"></script>
+  <script defer src="/static/app.js?v=20261123-github-green-primary-1"></script>
+  <script defer src="/static/model-settings.js?v=20261123-deepseek-controls-1"></script>
+  <script defer src="/static/ux.js?v=20261123-global-design-2"></script>
 </head>
 <body>
 <div class="app">
@@ -62,6 +64,7 @@
         <button type="button" id="menuToggle" class="icon-button mobile-menu" aria-label="Показать меню">☰</button>
         <button type="button" id="sidebarExpand" class="icon-button sidebar-expand" aria-label="Развернуть диалоги" title="Показать диалоги" hidden>☰</button>
         <div class="model-title"><span id="modelName">Активная модель</span></div>
+        <button type="button" class="model-quick-settings" id="modelQuickSettings" title="Модель и глубина рассуждений" hidden>Глубина: HIGH ▾</button>
         <label class="sr-only" for="gptTopModel">Модель ChatGPT для этого диалога</label>
         <select id="gptTopModel" class="gpt-top-model" hidden disabled aria-label="Модель GPT"><option value="">Подключите ChatGPT</option></select>
       </div>
@@ -120,10 +123,10 @@
     <section class="composer-area" aria-label="Ввод сообщения">
       <div class="composer">
         <label class="sr-only" for="messageInput">Сообщение для исследовательской модели</label>
-        <textarea id="messageInput" rows="2" maxlength="10000" placeholder="Спросите что-нибудь или задайте задачу…"></textarea>
+        <textarea id="messageInput" rows="1" maxlength="10000" placeholder="Спросите что-нибудь или задайте задачу…"></textarea>
         <div class="composer-bottom">
           <div class="composer-left">
-            <button type="button" id="pasteOutputButton" class="paste-output-button" aria-label="Вставить вывод из буфера обмена" title="Вставить текст из буфера в поле сообщения. Ничего не отправляется автоматически."><span aria-hidden="true">▤</span><span>Вставить вывод</span></button>
+            <a href="/api/diagnostics/export" id="chatDiagnosticsDownload" class="diagnostics-download-button" download="cybernova-diagnostics-task.jsonl" aria-label="Выгрузить журнал текущей задачи Cybernova" title="Действия, результаты и ошибки текущей задачи. Содержимое сообщений, аргументы инструментов и секреты не сохраняются."><span aria-hidden="true">↓</span><span>Журнал задачи</span></a>
             <label for="artifactFile" id="qwenUploadLabel" class="upload-button" title="Импорт HAR, JS, OpenAPI, логов, конфигураций, Python, зависимостей, TLS или PCAP. Файл обрабатывается локально.">📎 Файл</label>
             <input id="artifactFile" class="sr-only" type="file" accept=".har,.js,.py,.json,.log,.txt,.conf,.cfg,.ini,.yaml,.yml,.env,.pcap,.cap,.pem,.crt,.lock,.mod,.toml">
             <button type="button" id="toolPickerToggle" class="tool-picker-toggle"
@@ -142,19 +145,22 @@
       </div>
       <div id="toolPicker" class="tool-picker" role="dialog" aria-label="Подключение инструментов" hidden>
         <div class="tool-picker-heading">
-          <div><strong>Подключить инструменты</strong><p>Выбор ограничивает каталог функций, который увидит модель.</p></div>
-          <button type="button" id="toolPickerAuto" class="tool-picker-reset">Авто</button>
+          <div><strong>Подключить инструменты</strong><p>Авто — все группы; можно ограничить выбор или полностью отключить инструменты.</p></div>
+          <div class="tool-picker-actions">
+            <button type="button" id="toolPickerOff" class="tool-picker-reset" aria-pressed="false">Выкл</button>
+            <button type="button" id="toolPickerAuto" class="tool-picker-reset">Авто</button>
+          </div>
         </div>
         <div id="toolPickerGroups" class="tool-picker-groups">
           <span class="muted">Загружаем доступные группы…</span>
         </div>
         <div class="tool-picker-footer">
-          <span id="toolPickerSummary" role="status">Автоматический выбор всех доступных групп</span>
+          <span id="toolPickerSummary" role="status">Авто: модель видит все доступные группы</span>
           <button type="button" id="toolPickerClose" class="tool-picker-done">Готово</button>
         </div>
       </div>
       <div class="composer-meta">
-        <span id="uploadStatus">Импорт локальных артефактов · Enter — отправить</span>
+        <span id="uploadStatus">Файлы · Ctrl+V — вставить вывод · Enter — отправить</span>
         <span id="tokenUsageStatus" title="Сумма фактических токенов, сообщённых провайдером">Токены: —</span>
         <span id="sendStatus" role="status">Готов</span>
       </div>
@@ -179,6 +185,14 @@
       <p class="inspector-note">Терминал: только pwd, list, python --version, git status, git log. Без произвольных команд и Shell.</p>
     </section>
     <button type="button" id="refreshStatus" class="refresh-button">↻ Проверить подключение</button>
+    <section class="scope-settings" aria-label="Журнал выполнения Cybernova">
+      <strong>Журнал выполнения и ошибок</strong>
+      <p class="inspector-note">Записываются действия агентов и браузера, решения владельца, этапы авторизации, результаты и ошибки. Пароли, OTP, номера карт, cookies, сообщения и аргументы инструментов не сохраняются.</p>
+      <a href="/api/diagnostics/export" id="diagnosticsDownload" class="refresh-button" download="cybernova-diagnostics-task.jsonl">Скачать журнал текущей задачи (.jsonl)</a>
+      <a href="/api/diagnostics/export" id="diagnosticsRunDownload" class="refresh-button" download="cybernova-diagnostics-run.jsonl">Скачать текущий запуск (.jsonl)</a>
+      <a href="/api/diagnostics/export" id="diagnosticsDownloadAll" class="refresh-button" download="cybernova-diagnostics-full.jsonl">Полный журнал всех компонентов (.jsonl)</a>
+      <p class="inspector-note">Текущая задача и запуск выгружаются отдельно. Полный журнал включает старые записи из ротаций.</p>
+    </section>
     <div class="tool-list" id="toolList"><span class="muted">Проверяем MCP…</span></div>
       <details class="scope-settings" id="scopeSettings">
         <summary>Объект исследования <span id="scopeIndicator">не выбран</span></summary>
@@ -230,7 +244,41 @@
     <div class="run-list" id="runList"><p class="muted">Пока нет вызовов.</p></div>
   </aside>
 </div>
-  <dialog id="profileDialog" class="profile-dialog" aria-labelledby="profileTitle">
+  <dialog id="ownerInputDialog" class="owner-input-dialog" aria-labelledby="ownerInputTitle">
+  <form method="dialog" class="owner-input-shell" onsubmit="return false">
+    <div class="owner-input-heading">
+      <div><h2 id="ownerInputTitle">Требуется ввод владельца</h2><p id="ownerInputPurpose">Агент ожидает защищённые данные.</p></div>
+    </div>
+    <div id="ownerInputSingleField" class="owner-input-single-field">
+      <label id="ownerInputFieldLabel" for="ownerInputValue">Значение</label>
+      <input id="ownerInputValue" type="password" maxlength="512" autocomplete="off" spellcheck="false">
+    </div>
+    <div id="ownerInputPaymentMerchant" class="owner-payment-merchant" hidden></div>
+    <div id="ownerInputPaymentFields" class="owner-payment-fields" hidden></div>
+    <div id="ownerInputPaymentFrames" class="owner-payment-frames" hidden>
+      <p>Платёжная форма использует отдельные домены. Разреши только те, которые относятся к текущему платёжному провайдеру:</p>
+      <div id="ownerInputPaymentFrameList"></div>
+    </div>
+    <div id="ownerInputConfirmationPanel" class="owner-input-confirmation" hidden>
+      <p class="owner-input-confirmation-intro">Проверь действие перед отправкой. Без нажатия кнопки ниже ничего не произойдёт.</p>
+      <div><span>Сайт</span><strong id="ownerInputMerchantOrigin"></strong></div>
+      <div><span>Кнопка</span><strong id="ownerInputActionButton"></strong></div>
+      <div><span>Адрес формы</span><strong id="ownerInputActionOrigin"></strong></div>
+      <div><span>Описание</span><strong id="ownerInputActionSummary"></strong></div>
+    </div>
+    <label id="ownerInputVaultOption" class="owner-input-vault-option" hidden>
+      <input id="ownerInputSaveToVault" type="checkbox">
+      <span id="ownerInputVaultLabel">Сохранить пароль в зашифрованном хранилище Cybernova</span>
+    </label>
+    <p id="ownerInputNote" class="owner-input-note">Введённое значение передаётся локальному исполнителю и не добавляется в переписку.</p>
+    <p id="ownerInputError" class="owner-input-error" role="alert"></p>
+    <div class="owner-input-actions">
+      <button type="button" id="ownerInputCancel" class="header-button">Отмена задачи</button>
+      <button type="button" id="ownerInputSubmit" class="profile-save">Передать и продолжить</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="profileDialog" class="profile-dialog" aria-labelledby="profileTitle">
     <div class="profile-shell">
       <div class="profile-heading">
         <div><h2 id="profileTitle">Настройки профиля</h2><p>Общий контекст пользователя и отдельные инструкции для каждого режима.</p></div>
@@ -257,7 +305,43 @@
       </section>
       <section class="profile-panel" data-profile-panel="researcher" hidden>
         <h3>Профиль исследователя Cybernova</h3>
-        <p class="profile-help">Базовая миссия Cybernova и ограничения безопасности сохраняются. Эти поля добавляют персональные настройки, но не расширяют scope и права инструментов.</p>
+        <p class="profile-help">Базовая миссия Cybernova и ограничения безопасности сохраняются. Ползунки регулируют стиль и самостоятельность работы, но не расширяют scope и права инструментов.</p>
+        <div class="researcher-behavior">
+          <h4>Поведение исследователя</h4>
+          <p class="researcher-behavior-help">Настройки применяются к следующим сообщениям. Значение 100 означает более выраженное качество.</p>
+          <div class="researcher-behavior-grid">
+            <div class="behavior-control">
+              <label for="researcherAutonomy"><span>Самостоятельность</span><output id="researcherAutonomyValue">80</output></label>
+              <input id="researcherAutonomy" type="range" min="0" max="100" step="5" value="80">
+              <p>Выполнять безопасные шаги без постоянных уточнений.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherInitiative"><span>Инициативность</span><output id="researcherInitiativeValue">75</output></label>
+              <input id="researcherInitiative" type="range" min="0" max="100" step="5" value="75">
+              <p>Продолжать очевидные этапы и искать альтернативы.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherSkepticism"><span>Скептицизм</span><output id="researcherSkepticismValue">85</output></label>
+              <input id="researcherSkepticism" type="range" min="0" max="100" step="5" value="85">
+              <p>Проверять предположения и причинно-следственные связи.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherVigilance"><span>Бдительность</span><output id="researcherVigilanceValue">85</output></label>
+              <input id="researcherVigilance" type="range" min="0" max="100" step="5" value="85">
+              <p>Замечать аномалии, неверные объекты и нарушения scope.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherNeutrality"><span>Непредвзятость</span><output id="researcherNeutralityValue">95</output></label>
+              <input id="researcherNeutrality" type="range" min="0" max="100" step="5" value="95">
+              <p>Учитывать конкурирующие объяснения и опровергающие факты.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherBrevity"><span>Краткость</span><output id="researcherBrevityValue">80</output></label>
+              <input id="researcherBrevity" type="range" min="0" max="100" step="5" value="80">
+              <p>Отвечать компактно, не превращая диалог в постоянный отчёт.</p>
+            </div>
+          </div>
+        </div>
         <label for="researcherDescription">Описание роли / специализации</label><textarea id="researcherDescription" rows="3" maxlength="2000" placeholder="Каким исследователем должна быть модель, на чём специализироваться…"></textarea>
         <label for="researcherInstructions">Дополнительный системный промпт</label><textarea id="researcherInstructions" rows="7" maxlength="10000" placeholder="Методология, приоритеты, формат отчётов, обязательные этапы анализа…"></textarea>
       </section>

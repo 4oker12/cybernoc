@@ -59,9 +59,9 @@ class ResearchMissionTests(unittest.TestCase):
 
     def test_active_testing_is_proposed_not_blanket_refused(self):
         self.assertNotIn("не запускай атакующие проверки", BASE_SYSTEM)
-        self.assertIn("Активные проверки можно предлагать", BASE_SYSTEM)
-        self.assertIn("после необходимого согласования", BASE_SYSTEM)
-        self.assertIn("Не превращай необходимость согласования в отказ", BASE_SYSTEM)
+        self.assertIn("Автономность — штатный режим", BASE_SYSTEM)
+        self.assertIn("Не прерывай задачу запросами подтверждения", BASE_SYSTEM)
+        self.assertIn("Отдельное прямое поручение", BASE_SYSTEM)
 
     def test_neo_metaphor_teaches_initiative_not_fantasy(self):
         self.assertIn("ПРОФИЛЬ «НЕО»", RESEARCH_MISSION)
@@ -72,8 +72,8 @@ class ResearchMissionTests(unittest.TestCase):
         self.assertIn("Не скрывай полезное действие", RESEARCH_MISSION)
 
     def test_base_safety_policy_not_overridden(self):
-        self.assertIn("Если инструмент требует разрешения", BASE_SYSTEM)
         self.assertIn("Не имитируй вызовы", BASE_SYSTEM)
+        self.assertIn("не пытайся обходить права и ограничения", RESEARCH_MISSION)
         self.assertIn("Не расширяй scope", RESEARCH_MISSION)
 
 

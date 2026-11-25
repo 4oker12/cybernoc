@@ -58,12 +58,15 @@ SECRET_VALUE = re.compile(
     r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|"
     r"secret|authorization|cookie)\s*[:=]\s*[^\s,;]+)"
 )
+SENSITIVE_UI_TARGET = re.compile(
+    r"(?i)(?:api[\s_-]?key|password|passwd|secret|token|credential|cookie|login)"
+)
 EMAIL_VALUE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 HIGH_IMPACT_UI = re.compile(
     r"(?i)(delete|remove|uninstall|format|reset|restore|shutdown|restart|"
     r"disable|deactivate|turn\s+off|stop|kill|terminate|submit|send|purchase|"
-    r"pay|confirm|apply|save|scan|quarantine|clean|allow|block|enable|"
-    r"install|update|оплат|удал|сброс|восстанов|отключ|выключ|перезапуск|"
+    r"pay|confirm|apply|save|create|add|new|scan|quarantine|clean|allow|block|enable|"
+    r"install|update|созда|добав|новый|новая|оплат|удал|сброс|восстанов|отключ|выключ|перезапуск|"
     r"останов|подтверд|примен|сохран|скан|карантин|очист|разреш|установ|обнов|"
     r"\b(ok|yes|next|continue|finish|accept|agree|да|ок|далее|продолжить|готово)\b)"
 )
@@ -152,12 +155,41 @@ COMPUTER_TOOLS = [
           "Launch one allowlisted Windows diagnostic or settings application without elevation or shell execution.",
           {"app": {"type": "string", "enum": sorted(APP_COMMANDS)}}, ["app"]),
     _tool("computer_screenshot",
-          "Capture the visible local desktop only after explicit consent in the latest user turn using this exact phrase: Разрешаю сделать снимок экрана и передать его ChatGPT для анализа. The image may include personal information."),
+          "Capture the visible local desktop for an explicitly requested screenshot or read-only visual inspection of an app/interface. The image may include personal information."),
     _tool("computer_ui_windows",
           "List visible top-level desktop windows by title for local UI navigation. No window contents or input values are read."),
     _tool("computer_ui_controls",
           "Inspect visible, enabled, non-input UI control labels in one exact window. Text fields, password fields and document contents are excluded.",
           {"window_title": STRING}, ["window_title"]),
+    _tool("computer_ui_inputs",
+          "List visible, enabled text-input field labels and bounds in one exact window. Never reads field values; password and secret fields are excluded.",
+          {"window_title": STRING}, ["window_title"]),
+    _tool("computer_mouse_click",
+          "Click a visible point in an exact window for safe navigation. Requires a task that asks to inspect or navigate the interface and a harmless target description. Save, submit, delete, confirmation and secret targets are blocked.",
+          {"window_title": STRING, "x": INTEGER, "y": INTEGER,
+           "target_description": STRING,
+           "button": {"type": "string", "enum": ["left", "right"]},
+           "click_count": {"type": "integer", "enum": [1, 2]}},
+          ["window_title", "x", "y", "target_description", "button", "click_count"]),
+    _tool("computer_mouse_scroll",
+          "Scroll within an exact window for read-only inspection. Requires a task that asks to inspect or navigate the interface.",
+          {"window_title": STRING, "x": INTEGER, "y": INTEGER,
+           "amount": INTEGER, "target_description": STRING},
+          ["window_title", "x", "y", "amount", "target_description"]),
+    _tool("computer_keyboard_type",
+          "Type non-secret text into the currently focused control in an exact window. Only available when the user explicitly asks to fill or enter text; password, token and API-key content is blocked.",
+          {"window_title": STRING, "text": STRING, "target_description": STRING},
+          ["window_title", "text", "target_description"]),
+    _tool("computer_keyboard_keypress",
+          "Press a limited safe navigation key or shortcut in an exact window. Destructive shortcuts and clipboard access are not available.",
+          {"window_title": STRING,
+           "key": {"type": "string", "enum": [
+             "TAB", "SHIFT+TAB", "ESC", "ENTER", "UP", "DOWN", "LEFT", "RIGHT",
+             "PAGEUP", "PAGEDOWN", "HOME", "END", "CTRL+TAB",
+             "CTRL+SHIFT+TAB", "ALT+LEFT", "ALT+RIGHT", "CTRL+L", "CTRL+F", "CTRL+A"
+           ]},
+           "target_description": STRING},
+          ["window_title", "key", "target_description"]),
     _tool("computer_ui_click",
           "Click one exact visible navigation control in one exact window. Only buttons/tabs/tree/list/menu links are eligible. Destructive, security-changing, scan, save, submit and confirmation labels are blocked.",
           {"window_title": STRING, "control_name": STRING,
@@ -168,7 +200,7 @@ COMPUTER_TOOLS = [
     _tool("computer_defender_events",
           "Read recent Microsoft-Windows-Windows Defender operational events for scan completion and threat detections. Read-only."),
     _tool("computer_defender_scan",
-          "Start a Microsoft Defender quick or full scan. Requires an explicit user instruction in the current conversation; full scans require explicit full-scan authorization. The scan can increase CPU/disk load.",
+          "Start a Microsoft Defender quick or full scan when the current user task directly requests a scan. Full scans are selected only when the user explicitly asks for a full scan. The scan can increase CPU/disk load.",
           {"scan_type": {"type": "string", "enum": ["quick", "full"]}}, ["scan_type"]),
     _tool("computer_defender_scan_status",
           "Check the locally started Defender scan process and recent Defender operational events. Read-only."),
@@ -187,13 +219,13 @@ COMPUTER_TOOLS = [
           "Show metadata for one exact winget package ID from the configured winget source. Read-only.",
           {"package_id": STRING}, ["package_id"]),
     _tool("computer_package_install",
-          "Install one exact winget package ID in user scope only. Requires explicit approval of the exact package ID in the current or immediately preceding user turn. No elevation is requested.",
+          "Install one exact winget package ID in user scope only when the current user task requests installation. No elevation is requested; package identity is rechecked immediately before install.",
           {"package_id": STRING}, ["package_id"]),
     _tool("computer_archive_inspect",
           "Inspect ZIP or TAR archive members without extracting. Rejects unsafe paths, links and oversized archives.",
           {"path": STRING}, ["path"]),
     _tool("computer_archive_extract",
-          "Safely extract a ZIP or TAR archive into an existing approved destination. Rejects traversal, links, overwrites and oversized archives. Requires explicit approval of the exact source and destination paths.",
+          "Safely extract a ZIP or TAR archive into an existing approved destination when the current user task requests extraction. Rejects traversal, links, overwrites and oversized archives.",
           {"path": STRING, "destination": STRING}, ["path", "destination"]),
     _tool("computer_plan_file_organization",
           "Create a dry-run plan for sorting direct files from one approved folder into an existing destination by extension, file type or year-month. No files are moved.",
@@ -201,7 +233,7 @@ COMPUTER_TOOLS = [
            "group_by": {"type": "string", "enum": ["extension", "file_type", "year_month"]}},
           ["source", "destination", "group_by"]),
     _tool("computer_apply_file_organization",
-          "Move files according to a previously previewed organization plan. Never overwrites. Requires explicit approval of exact source, destination and grouping.",
+          "Move files according to a previously previewed organization plan when the current user task requests organization. Never overwrites.",
           {"source": STRING, "destination": STRING,
            "group_by": {"type": "string", "enum": ["extension", "file_type", "year_month"]}},
           ["source", "destination", "group_by"]),
@@ -1125,42 +1157,16 @@ def _latest_user_and_previous_assistant(messages):
 
 
 def _explicit_action_approved(messages, action_pattern: str, identifiers: list[str]) -> bool:
-    latest, previous = _latest_user_and_previous_assistant(messages)
-    # Fail closed on explicit negation, even if the sentence also contains an approval verb.
+    """A direct task instruction authorizes bounded routine actions; no second confirmation turn."""
+    latest, _ = _latest_user_and_previous_assistant(messages)
     if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
         return False
-    simple_yes = bool(re.fullmatch(
-        r"\s*(да|yes|подтверждаю|разрешаю|выполняй)[!. ]*\s*",
-        latest, flags=re.I,
-    ))
-    context = latest + (" " + previous if simple_yes else "")
-    if not re.search(action_pattern, context, flags=re.I):
-        return False
-    if not re.search(
-        r"(?i)(разрешаю|подтверждаю|выполняй|запускай|установи|распакуй|"
-        r"перемести|организуй|install|extract|move|organize|yes|да)",
-        latest,
-    ):
-        return False
-    normalized = context.casefold().replace("/", "\\")
-    return all(
-        isinstance(value, str) and value.strip()
-        and value.casefold().replace("/", "\\") in normalized
-        for value in identifiers
-    )
+    return bool(re.search(action_pattern, latest, flags=re.I))
 
 
 def _package_install(package_id: str, user_messages) -> dict:
     _windows_only()
     package_id = _valid_package_id(package_id)
-    if not _explicit_action_approved(
-        user_messages, r"(установ|install)", [package_id]
-    ):
-        return {
-            "ok": False, "approval_required": True,
-            "package_id": package_id,
-            "required_user_confirmation": f"Напишите: «Разрешаю установить пакет {package_id} из источника winget в область текущего пользователя».",
-        }
     # Resolve the exact package from the selected source immediately before install.
     details = _package_details(package_id)
     if not details.get("ok"):
@@ -1252,14 +1258,11 @@ def _archive_extract(path_raw: str, destination_raw: str, user_messages) -> dict
     destination = _resolve_local_path(destination_raw)
     if not path.is_file() or not destination.is_dir():
         raise ValueError("archive_source_or_destination_invalid")
-    if not _explicit_action_approved(
-        user_messages, r"(распак|извлеч|extract|unpack)",
-        [str(path), str(destination)],
-    ):
+    if not _explicit_action_approved(user_messages, r"(распак|извлеч|extract|unpack)", [str(path), str(destination)]):
         return {
-            "ok": False, "approval_required": True,
+            "ok": False, "task_intent_required": True,
             "source": str(path), "destination": str(destination),
-            "required_user_confirmation": f"Напишите: «Разрешаю распаковать {path} в {destination}».",
+            "error": "archive_extraction_not_requested",
         }
     if zipfile.is_zipfile(path):
         with zipfile.ZipFile(path) as archive:
@@ -1406,13 +1409,10 @@ def _apply_organization(source_raw: str, destination_raw: str, group_by: str,
         [source, destination, group_by],
     ):
         return {
-            "ok": False, "approval_required": True,
+            "ok": False, "task_intent_required": True,
             "source": source, "destination": destination, "group_by": group_by,
             "preview": plan["moves"][:30],
-            "required_user_confirmation": (
-                f"Напишите: «Разрешаю переместить файлы из {source} в {destination} "
-                f"с группировкой {group_by}»."
-            ),
+            "error": "file_organization_not_requested",
         }
     completed, failed, skipped = [], [], []
     for item in plan["moves"]:
@@ -1450,48 +1450,59 @@ def extract_user_computer_approvals(messages) -> set[str]:
     if latest_user_index is None:
         return set()
     latest = str(messages[latest_user_index].get("content") or "").casefold()
-    # Fail closed: a negated instruction is never authorization.
-    if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
-        return set()
     approvals = set()
-    if re.fullmatch(
-        r"\s*разрешаю\s+(?:сделать|снять)\s+(?:скриншот|снимок)\s+экрана\s+и\s+передать\s+(?:его\s+)?chatgpt\s+для\s+анализа[.! ]*\s*",
-        latest, flags=re.I,
-    ):
+    screenshot_denied = bool(re.search(
+        r"(?:\bне\s+(?:делай|делать|делайте|сделай|сделать|разрешаю|разрешать)\b|"
+        r"\b(?:запрещаю|отказываюсь)\b|\b(?:do\s+not|don't|never)\s+"
+        r"(?:take|capture|make|show)\b).{0,45}"
+        r"(?:скриншот|снимок\s+экрана|screenshot|capture\s+screen)|"
+        r"(?:скриншот|снимок\s+экрана|screenshot|capture\s+screen).{0,30}"
+        r"(?:не\s+(?:делай|делать|нужно|надо)|запрещён|запрещен|not\s+allowed)",
+        latest,
+    ))
+    screenshot_requested = bool(re.search(
+        r"(?:скриншот|снимок\s+экрана|screenshot|capture\s+screen)", latest,
+    ))
+    visual_inspection_requested = bool(re.search(
+        r"(?:изучи|исследуй|осмотри|посмотри|проанализируй|изучить|исследовать|"
+        r"осмотреть|посмотреть|inspect|explore|examine|review|analy[sz]e)"
+        r".{0,100}(?:интерфейс|окно|приложение|экран|dashboard|adspower|"
+        r"application|window|screen|app)|"
+        r"(?:интерфейс|окно|приложение|экран|dashboard|adspower|application|"
+        r"window|screen|app).{0,100}"
+        r"(?:изучи|исследуй|осмотри|посмотри|проанализируй|inspect|explore|examine|review)",
+        latest,
+    ))
+    if not screenshot_denied and (screenshot_requested or visual_inspection_requested):
         approvals.add("computer_screenshot")
+    # Other actions remain fail-closed when the user negates or cancels them.
+    if re.search(r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотказываюсь\b|\bотмена\b|\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)", latest):
+        return approvals
     previous_assistant = ""
     for index in range(latest_user_index - 1, -1, -1):
         item = messages[index]
         if isinstance(item, dict) and item.get("role") == "assistant":
             previous_assistant = str(item.get("content") or "").casefold()
             break
-    affirmative = bool(re.search(
-        r"\b(разрешаю|подтверждаю|запускай|запусти|проведи|выполни|начинай|"
-        r"run|start|perform|launch|authorize|confirm)\b", latest
+    scan_context = latest
+    if re.fullmatch(r"\s*(да|yes|подтверждаю|разрешаю)[!. ]*\s*", latest):
+        for index in range(latest_user_index - 1, -1, -1):
+            row = messages[index]
+            if isinstance(row, dict) and row.get("role") == "assistant":
+                scan_context += " " + str(row.get("content") or "").casefold()
+                break
+    scan_intent = bool(re.search(
+        r"(?:проверь|провер\w*|запусти|запустить|выполни|сканир|scan|run|start)"
+        r".{0,50}(?:defender|антивирус|вирус|защит|malware)|"
+        r"(?:defender|антивирус|вирус|malware).{0,50}(?:проверь|провер|скан|scan)",
+        scan_context,
     ))
-    if not affirmative and re.fullmatch(r"\s*(да|yes|подтверждаю|разрешаю)[!. ]*\s*", latest):
-        affirmative = bool(re.search(
-            r"(defender|антивирус|вирус|полную проверку|быструю проверку|scan)",
-            previous_assistant,
-        ))
-    if not affirmative:
+    if not scan_intent:
         return approvals
-    context = latest + " " + previous_assistant
-    if not re.search(r"(defender|антивирус|вирус|защит[аы]|malware)", context):
-        return approvals
-    affirmative_only = bool(re.fullmatch(
-        r"\s*(да|yes|подтверждаю|разрешаю)[!. ]*\s*", latest
-    ))
-    scan_context = latest + (" " + previous_assistant if affirmative_only else "")
     if re.search(r"(полную|полный|full)\s*(провер|скан|scan)", scan_context):
         approvals.add("defender_full_scan")
-        return approvals
-    if re.search(r"(быструю|быстрый|quick)\s*(провер|скан|scan)", scan_context):
+    else:
         approvals.add("defender_quick_scan")
-        return approvals
-    if re.search(r"(провер|скан|scan)", latest):
-        approvals.add("defender_quick_scan")
-        return approvals
     return approvals
 
 
@@ -1501,13 +1512,8 @@ def _start_defender_scan(scan_type: str, approved_actions: set[str]) -> dict:
         raise ValueError("defender_scan_type_invalid")
     required = "defender_full_scan" if scan_type == "full" else "defender_quick_scan"
     if required not in approved_actions:
-        phrase = (
-            "Напишите: «Разрешаю полную проверку Microsoft Defender»."
-            if scan_type == "full" else
-            "Напишите: «Разрешаю быструю проверку Microsoft Defender»."
-        )
-        return {"ok": False, "approval_required": True, "scan_type": scan_type,
-                "required_user_confirmation": phrase}
+        return {"ok": False, "task_intent_required": True, "scan_type": scan_type,
+                "error": "defender_scan_not_requested"}
     exe = _find_mpcmdrun()
     if exe is None:
         return {"ok": False, "error": "defender_mpcmdrun_not_found"}
@@ -1566,7 +1572,7 @@ def _screenshot() -> dict:
         return {"ok": False, "error": "desktop_screenshot_unavailable",
                 "details": type(exc).__name__}
     return {"ok": True, "image_data_url": "data:image/jpeg;base64," + encoded,
-            "note": "Desktop image is being sent to Account GPT for visual analysis."}
+            "note": "Desktop image captured; the active agent decides whether its model supports visual input."}
 
 
 def _desktop():
@@ -1622,7 +1628,7 @@ def _ui_controls(window_title: str) -> dict:
             kind = info.control_type or ""
             if not name or kind not in SAFE_UI_CONTROL_TYPES:
                 continue
-            if _sensitive_component(name) or HIGH_IMPACT_UI.search(name):
+            if _sensitive_component(name) or SENSITIVE_UI_TARGET.search(name) or HIGH_IMPACT_UI.search(name):
                 continue
             if not control.is_visible() or not control.is_enabled():
                 continue
@@ -1639,12 +1645,214 @@ def _ui_controls(window_title: str) -> dict:
             "controls": rows, "count": len(rows)}
 
 
+def _ui_inputs(window_title: str) -> dict:
+    window = _find_window(window_title)
+    rows = []
+    for control in window.descendants():
+        try:
+            info = control.element_info
+            name = (info.name or "").strip()
+            kind = info.control_type or ""
+            automation_id = (getattr(info, "automation_id", "") or "").strip()
+            if kind not in {"Edit", "ComboBox"}:
+                continue
+            if (getattr(info, "is_password", False) or _sensitive_component(name)
+                    or SENSITIVE_UI_TARGET.search(name)):
+                continue
+            if not control.is_visible() or not control.is_enabled():
+                continue
+            rect = control.rectangle()
+            rows.append({
+                "name": _redact(name)[:120],
+                "automation_id": _redact(automation_id)[:100],
+                "control_type": kind,
+                "rectangle": [rect.left, rect.top, rect.right, rect.bottom],
+            })
+        except Exception:
+            continue
+        if len(rows) >= 60:
+            break
+    return {"ok": True, "window_title": window_title, "inputs": rows, "count": len(rows)}
+
+
+def _latest_ui_task_text(user_messages) -> str:
+    if not isinstance(user_messages, list):
+        return ""
+    for item in reversed(user_messages):
+        if isinstance(item, dict) and item.get("role") == "user":
+            return str(item.get("content") or "").casefold()[:12000]
+    return ""
+
+
+def _ui_action_allowed(user_messages, action: str) -> bool:
+    text = _latest_ui_task_text(user_messages)
+    if not text:
+        return False
+    denied = {
+        "click": r"(?:не\s+(?:нажимай|кликай|переходи)|don't\s+click|do\s+not\s+click)",
+        "scroll": r"(?:не\s+(?:прокручивай|пролистывай)|don't\s+scroll|do\s+not\s+scroll)",
+        "type": r"(?:не\s+(?:вводи|печатай|заполняй)|don't\s+type|do\s+not\s+type)",
+        "key": r"(?:не\s+нажимай\s+клавиш|don't\s+press|do\s+not\s+press)",
+    }
+    if re.search(denied[action], text):
+        return False
+    patterns = {
+        "click": r"(?:нажми|кликни|перейди|открой|выбери|изучи|исследуй|посмотри|осмотри|проанализируй|создай профиль|create profile|click|navigate|open|select|inspect|explore|review)",
+        "scroll": r"(?:пролистай|прокрути|посмотри|изучи|исследуй|осмотри|scroll|inspect|explore|review)",
+        "type": r"(?:введи|напиши|заполни|впиши|создай профиль|создать профиль|create profile|type|enter\s+text|fill|input)",
+        "key": r"(?:нажми|press|keypress|hotkey|перейди|открой|выбери|изучи|исследуй|посмотри|создай профиль|create profile|inspect|explore|navigate)",
+    }
+    return bool(re.search(patterns[action], text))
+
+
+def _validate_ui_target(target_description: str) -> str:
+    if (not isinstance(target_description, str) or not target_description.strip()
+            or len(target_description) > 120):
+        raise ValueError("computer_ui_target_description_invalid")
+    target = target_description.strip()
+    if (HIGH_IMPACT_UI.search(target) or _sensitive_component(target)
+            or SENSITIVE_UI_TARGET.search(target) or SECRET_VALUE.search(target)):
+        raise ValueError("computer_ui_high_impact_target_blocked")
+    return target
+
+
+def _mouse_click(window_title: str, x: int, y: int, target_description: str,
+                 button: str, click_count: int, user_messages=None) -> dict:
+    _windows_only()
+    target = _validate_ui_target(target_description)
+    if not _ui_action_allowed(user_messages, "click"):
+        raise ValueError("computer_ui_click_task_intent_required")
+    if type(x) is not int or type(y) is not int or not (0 <= x <= 20000 and 0 <= y <= 20000):
+        raise ValueError("computer_mouse_coordinates_invalid")
+    if button not in {"left", "right"} or type(click_count) is not int or click_count not in {1, 2}:
+        raise ValueError("computer_mouse_action_invalid")
+    window = _find_window(window_title)
+    window.set_focus()
+    try:
+        import pyautogui
+    except ImportError:
+        raise RuntimeError("pyautogui_dependency_missing") from None
+    width, height = pyautogui.size()
+    if x >= width or y >= height:
+        raise ValueError("computer_mouse_coordinates_out_of_screen")
+    try:
+        pyautogui.click(x=x, y=y, clicks=click_count, interval=0.12, button=button)
+    except Exception as exc:
+        raise RuntimeError("computer_mouse_action_failed:" + type(exc).__name__) from None
+    return {
+        "ok": True, "window_title": window_title,
+        "target_description": target, "x": x, "y": y,
+        "button": button, "click_count": click_count,
+    }
+
+
+def _mouse_scroll(window_title: str, x: int, y: int, amount: int,
+                  target_description: str, user_messages=None) -> dict:
+    _windows_only()
+    target = _validate_ui_target(target_description)
+    if not _ui_action_allowed(user_messages, "scroll"):
+        raise ValueError("computer_ui_scroll_task_intent_required")
+    if type(x) is not int or type(y) is not int or not (0 <= x <= 20000 and 0 <= y <= 20000):
+        raise ValueError("computer_mouse_coordinates_invalid")
+    if type(amount) is not int or amount == 0 or abs(amount) > 10:
+        raise ValueError("computer_mouse_scroll_amount_invalid")
+    window = _find_window(window_title)
+    window.set_focus()
+    try:
+        import pyautogui
+    except ImportError:
+        raise RuntimeError("pyautogui_dependency_missing") from None
+    width, height = pyautogui.size()
+    if x >= width or y >= height:
+        raise ValueError("computer_mouse_coordinates_out_of_screen")
+    try:
+        pyautogui.moveTo(x, y, duration=0.08)
+        pyautogui.scroll(amount, x=x, y=y)
+    except Exception as exc:
+        raise RuntimeError("computer_mouse_scroll_failed:" + type(exc).__name__) from None
+    return {"ok": True, "window_title": window_title, "target_description": target,
+            "x": x, "y": y, "scroll_amount": amount}
+
+
+def _keyboard_type(window_title: str, text: str, target_description: str,
+                   user_messages=None) -> dict:
+    _windows_only()
+    target = _validate_ui_target(target_description)
+    if not _ui_action_allowed(user_messages, "type"):
+        raise ValueError("computer_keyboard_type_task_intent_required")
+    if not isinstance(text, str) or not text or len(text) > 2000:
+        raise ValueError("computer_keyboard_text_invalid")
+    if SECRET_VALUE.search(text) or re.search(
+        r"(?i)(?:sk-[A-Za-z0-9_-]{16,}|(?:api[_-]?key|password|passwd|secret|token)\s*[:=])",
+        text,
+    ):
+        raise ValueError("computer_keyboard_sensitive_text_blocked")
+    window = _find_window(window_title)
+    window.set_focus()
+    try:
+        focused = window.get_focus()
+        info = focused.element_info
+    except Exception:
+        raise ValueError("computer_keyboard_focus_unverified") from None
+    if (info.control_type not in {"Edit", "ComboBox"}
+            or getattr(info, "is_password", False)
+            or _sensitive_component(info.name or "")):
+        raise ValueError("computer_keyboard_focus_not_safe_input")
+    try:
+        focused.set_edit_text(text)
+    except Exception:
+        if re.search(r"[{}+^%~]", text):
+            raise ValueError("computer_keyboard_text_requires_plain_uia_input") from None
+        try:
+            from pywinauto.keyboard import send_keys
+            send_keys(text, with_spaces=True, vk_packet=True)
+        except Exception as exc:
+            raise RuntimeError("computer_keyboard_type_failed:" + type(exc).__name__) from None
+    return {"ok": True, "window_title": window_title, "target_description": target,
+            "characters_typed": len(text)}
+
+
+_SAFE_KEYPRESS = {
+    "TAB": "{TAB}", "SHIFT+TAB": "+{TAB}", "ESC": "{ESC}", "ENTER": "{ENTER}",
+    "UP": "{UP}", "DOWN": "{DOWN}", "LEFT": "{LEFT}", "RIGHT": "{RIGHT}",
+    "PAGEUP": "{PGUP}", "PAGEDOWN": "{PGDN}", "HOME": "{HOME}", "END": "{END}",
+    "CTRL+TAB": "^{TAB}", "CTRL+SHIFT+TAB": "^+{TAB}",
+    "ALT+LEFT": "%{LEFT}", "ALT+RIGHT": "%{RIGHT}",
+    "CTRL+L": "^l", "CTRL+F": "^f", "CTRL+A": "^a",
+}
+
+
+def _keyboard_keypress(window_title: str, key: str, target_description: str,
+                       user_messages=None) -> dict:
+    _windows_only()
+    target = _validate_ui_target(target_description)
+    if not _ui_action_allowed(user_messages, "key"):
+        raise ValueError("computer_keyboard_key_task_intent_required")
+    if key not in _SAFE_KEYPRESS:
+        raise ValueError("computer_keyboard_key_blocked")
+    text = _latest_ui_task_text(user_messages)
+    if key == "ENTER" and not re.search(r"(?:нажми\s+enter|press\s+enter|enter\s+key)", text):
+        raise ValueError("computer_keyboard_enter_requires_explicit_intent")
+    window = _find_window(window_title)
+    window.set_focus()
+    try:
+        from pywinauto.keyboard import send_keys
+    except ImportError:
+        raise RuntimeError("pywinauto_dependency_missing") from None
+    try:
+        send_keys(_SAFE_KEYPRESS[key])
+    except Exception as exc:
+        raise RuntimeError("computer_keyboard_keypress_failed:" + type(exc).__name__) from None
+    return {"ok": True, "window_title": window_title, "target_description": target, "key": key}
+
+
 def _ui_click(window_title: str, control_name: str, control_type: str) -> dict:
     if control_type not in SAFE_UI_CONTROL_TYPES:
         raise ValueError("computer_ui_control_type_blocked")
     if not isinstance(control_name, str) or not control_name.strip() or len(control_name) > 140:
         raise ValueError("computer_ui_control_name_invalid")
-    if HIGH_IMPACT_UI.search(control_name) or _sensitive_component(control_name):
+    if (HIGH_IMPACT_UI.search(control_name) or _sensitive_component(control_name)
+            or SENSITIVE_UI_TARGET.search(control_name)):
         raise ValueError("computer_ui_high_impact_action_blocked")
     window = _find_window(window_title)
     matches = []
@@ -1721,8 +1929,8 @@ def computer_control_call(name: str, args: dict, *, user_messages=None) -> tuple
         if name == "computer_screenshot":
             approved = extract_user_computer_approvals(user_messages or [])
             if "computer_screenshot" not in approved:
-                return {"ok": False, "approval_required": True,
-                        "required_user_confirmation": "Напишите: «Разрешаю сделать снимок экрана и передать его ChatGPT для анализа»."}, True
+                return {"ok": False, "task_intent_required": True,
+                        "error": "screenshot_not_requested"}, True
             result = _screenshot()
             return result, not bool(result.get("ok"))
         if name == "computer_ui_windows":
@@ -1731,6 +1939,36 @@ def computer_control_call(name: str, args: dict, *, user_messages=None) -> tuple
             if set(args) != {"window_title"}:
                 raise ValueError("computer_ui_controls_arguments_invalid")
             return _ui_controls(args["window_title"]), False
+        if name == "computer_ui_inputs":
+            if set(args) != {"window_title"}:
+                raise ValueError("computer_ui_inputs_arguments_invalid")
+            return _ui_inputs(args["window_title"]), False
+        if name == "computer_mouse_click":
+            if set(args) != {"window_title", "x", "y", "target_description", "button", "click_count"}:
+                raise ValueError("computer_mouse_click_arguments_invalid")
+            return _mouse_click(
+                args["window_title"], args["x"], args["y"], args["target_description"],
+                args["button"], args["click_count"], user_messages,
+            ), False
+        if name == "computer_mouse_scroll":
+            if set(args) != {"window_title", "x", "y", "amount", "target_description"}:
+                raise ValueError("computer_mouse_scroll_arguments_invalid")
+            return _mouse_scroll(
+                args["window_title"], args["x"], args["y"], args["amount"],
+                args["target_description"], user_messages,
+            ), False
+        if name == "computer_keyboard_type":
+            if set(args) != {"window_title", "text", "target_description"}:
+                raise ValueError("computer_keyboard_type_arguments_invalid")
+            return _keyboard_type(
+                args["window_title"], args["text"], args["target_description"], user_messages,
+            ), False
+        if name == "computer_keyboard_keypress":
+            if set(args) != {"window_title", "key", "target_description"}:
+                raise ValueError("computer_keyboard_keypress_arguments_invalid")
+            return _keyboard_keypress(
+                args["window_title"], args["key"], args["target_description"], user_messages,
+            ), False
         if name == "computer_ui_click":
             if set(args) != {"window_title", "control_name", "control_type"}:
                 raise ValueError("computer_ui_click_arguments_invalid")

@@ -10,8 +10,21 @@ Do not publish the loopback HTTP endpoint without an authenticated connector.
 from __future__ import annotations
 
 import os
+import time
+from functools import wraps
 
 from mcp.server.fastmcp import FastMCP
+
+try:
+    from .diagnostics import (
+        configure as configure_diagnostics, diagnostic_context,
+        event as diagnostic_event,
+    )
+except ImportError:
+    from diagnostics import (
+        configure as configure_diagnostics, diagnostic_context,
+        event as diagnostic_event,
+    )
 
 try:
     from .communication import CommunicationStore
@@ -22,6 +35,40 @@ except ImportError:
 
 store = CommunicationStore()
 evidence = EvidenceJournal(store)
+
+
+def _observe_tool(func):
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        task_id = kwargs.get("task_id")
+        started = time.monotonic()
+        with diagnostic_context(task_id=task_id, agent="chatgpt", mode="communication"):
+            fields = {"tool": func.__name__, "source": "communication_mcp"}
+            diagnostic_event("communication_mcp_tool_start", kind="action", **fields)
+            try:
+                result = func(*args, **kwargs)
+            except Exception as exc:
+                diagnostic_event(
+                    "communication_mcp_tool_failed", kind="error", **fields,
+                    status="failed", error_type=type(exc).__name__,
+                    duration_ms=round((time.monotonic() - started) * 1000),
+                )
+                raise
+            resolved_task = task_id or (result.get("task_id") if isinstance(result, dict) else None)
+            if resolved_task and not task_id:
+                with diagnostic_context(task_id=resolved_task):
+                    diagnostic_event(
+                        "communication_mcp_tool_completed", kind="action", **fields,
+                        status="ok", duration_ms=round((time.monotonic() - started) * 1000),
+                    )
+            else:
+                diagnostic_event(
+                    "communication_mcp_tool_completed", kind="action", **fields,
+                    status="failed" if isinstance(result, dict) and result.get("ok") is False else "ok",
+                    duration_ms=round((time.monotonic() - started) * 1000),
+                )
+            return result
+    return wrapped
 mcp = FastMCP(
     "Cybernova Communication",
     host="127.0.0.1",
@@ -38,6 +85,7 @@ mcp = FastMCP(
 
 
 @mcp.tool()
+@_observe_tool
 def cybernova_create_task(title: str, instruction: str) -> dict:
     """Create a durable Cybernova research task and queue Qwen's first instruction."""
     task = store.create_task(title, origin="chatgpt")
@@ -48,6 +96,7 @@ def cybernova_create_task(title: str, instruction: str) -> dict:
 
 
 @mcp.tool()
+@_observe_tool
 def cybernova_list_tasks(status: str = "", limit: int = 20) -> dict:
     """List active or historical shared Cybernova research tasks."""
     tasks = store.list_tasks(status=status or None, limit=limit)
@@ -55,12 +104,14 @@ def cybernova_list_tasks(status: str = "", limit: int = 20) -> dict:
 
 
 @mcp.tool()
+@_observe_tool
 def cybernova_task_status(task_id: str) -> dict:
     """Read durable status of a single Cybernova task."""
     return store.get_task(task_id)
 
 
 @mcp.tool()
+@_observe_tool
 def cybernova_read_dialog(task_id: str, after_seq: int = 0,
                           limit: int = 30) -> dict:
     """Read task conversation with cursor; includes ChatGPT and Qwen messages."""
@@ -68,18 +119,21 @@ def cybernova_read_dialog(task_id: str, after_seq: int = 0,
 
 
 @mcp.tool()
+@_observe_tool
 def cybernova_pending_reviews(after_seq: int = 0, limit: int = 30) -> dict:
     """Read pending requests from Qwen asking ChatGPT for independent analysis."""
     return store.events(after=after_seq, limit=limit, review_only=True)
 
 
 @mcp.tool()
+@_observe_tool
 def cybernova_new_events(after_seq: int = 0, limit: int = 30) -> dict:
     """Read events added since a cursor; supports scheduled polling, not push."""
     return store.events(after=after_seq, limit=limit)
 
 
 @mcp.tool()
+@_observe_tool
 def cybernova_send_feedback(task_id: str, message: str,
                              event_key: str = "") -> dict:
     """Send ChatGPT's feedback and queue exactly one Qwen continuation."""
@@ -90,6 +144,7 @@ def cybernova_send_feedback(task_id: str, message: str,
 
 
 @mcp.tool()
+@_observe_tool
 def cybernova_evidence_index(task_id: str) -> dict:
     """Return evidence reference IDs from messages, without raw files or secrets."""
     dialog = store.read_dialog(task_id, limit=100)
@@ -104,6 +159,7 @@ def cybernova_evidence_index(task_id: str) -> dict:
 
 
 @mcp.tool()
+@_observe_tool
 def cybernova_get_evidence(task_id: str, evidence_id: str) -> dict:
     """Read one Qwen-reported, unverified, source-attributed evidence entry.
 
@@ -114,6 +170,7 @@ def cybernova_get_evidence(task_id: str, evidence_id: str) -> dict:
 
 
 @mcp.tool()
+@_observe_tool
 def cybernova_tool_receipts(task_id: str, limit: int = 50) -> dict:
     """Read controller-generated tool execution metadata and SHA256 digests.
 
@@ -127,4 +184,5 @@ if __name__ == "__main__":
     transport = os.environ.get("CYBERNOVA_COMM_TRANSPORT", "streamable-http")
     if transport not in {"streamable-http", "stdio"}:
         raise SystemExit("CYBERNOVA_COMM_TRANSPORT must be streamable-http or stdio")
+    configure_diagnostics("communication-mcp")
     mcp.run(transport=transport)

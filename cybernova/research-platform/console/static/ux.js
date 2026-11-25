@@ -10,6 +10,10 @@
 
   function compactToolGroups(root) {
     root.querySelectorAll(".inline-tools:not([data-compact])").forEach(container => {
+      if (container.firstElementChild?.classList?.contains("tool-batch")) {
+        container.dataset.compact = "true";
+        return;
+      }
       const items = Array.from(container.children).filter(item => item.tagName === "DETAILS");
       if (!items.length) return;
       const errors = items.filter(item => /ошибка/i.test(item.querySelector("summary")?.textContent || "")).length;
@@ -19,7 +23,7 @@
       const summary = create("summary", "tool-batch-summary");
       const title = create("span", "tool-batch-title", "Инструменты");
       const count = create("span", "tool-batch-count", String(items.length));
-      const state = create("span", "tool-batch-state",
+      const state = create("span", "tool-batch-state " + (errors ? "is-error" : "is-success"),
         errors ? errors + " с ошибкой" : "выполнено");
       const preview = create("span", "tool-batch-preview",
         names.slice(0, 3).join(" · ") + (names.length > 3 ? " · +" + (names.length - 3) : ""));

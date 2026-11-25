@@ -135,6 +135,63 @@ class AccountGPTToolLoopTests(unittest.TestCase):
         self.assertTrue(any(item.get("type") == "function_call_output" for item in second_input))
         self.assertFalse(opener.requests[0]["store"])
 
+    def test_tools_disabled_omits_catalog_and_tool_instructions(self):
+        opener = FakeOpener()
+        runtime = FakeRuntime()
+        with (patch.object(siwc_inference, "models", return_value=[
+                  {"slug": "gpt-6.2-sol", "display_name": "GPT"},
+              ]),
+              patch.object(siwc_inference.connection, "access", return_value="test-token"),
+              patch.object(siwc_inference.request, "build_opener", return_value=opener)):
+            result = siwc_inference.chat(
+                "gpt-6.2-sol",
+                [{"role": "user", "content": "Ответь без инструментов."}],
+                tool_runtime=runtime, tools_enabled=False,
+            )
+
+        self.assertEqual(result["answer"], "Проверка завершена.")
+        self.assertEqual(result["tool_calls"], 0)
+        self.assertEqual(result["usage"]["requests"], 1)
+        self.assertEqual(runtime.calls, [])
+        payload = opener.requests[0]
+        self.assertFalse(any(item.get("type") == "additional_tools" for item in payload["input"]))
+        self.assertNotIn("tool_choice", payload)
+        self.assertNotIn("ОБЩИЙ ИНСТРУМЕНТАЛЬНЫЙ СТАНДАРТ", payload["instructions"])
+        self.assertNotIn("computer_system_overview", payload["instructions"])
+        self.assertNotIn("PowerShell 7", payload["instructions"])
+
+    def test_tools_disabled_never_executes_unexpected_function_call(self):
+        class UnexpectedCallOpener:
+            def __init__(self):
+                self.requests = []
+
+            def open(self, req, **_):
+                self.requests.append(json.loads(req.data))
+                return FakeStream(sse({
+                    "output": [{
+                        "type": "function_call", "call_id": "unexpected",
+                        "name": "terminal_status", "arguments": "{}",
+                    }],
+                    "usage": {"input_tokens": 50, "output_tokens": 5},
+                }))
+
+        opener = UnexpectedCallOpener()
+        runtime = FakeRuntime()
+        with (patch.object(siwc_inference, "models", return_value=[
+                  {"slug": "gpt-6.2-sol", "display_name": "GPT"},
+              ]),
+              patch.object(siwc_inference.connection, "access", return_value="test-token"),
+              patch.object(siwc_inference.request, "build_opener", return_value=opener)):
+            with self.assertRaises(siwc_inference.SIWCError) as caught:
+                siwc_inference.chat(
+                    "gpt-6.2-sol",
+                    [{"role": "user", "content": "Ответь без инструментов."}],
+                    tool_runtime=runtime, tools_enabled=False,
+                )
+
+        self.assertEqual(str(caught.exception), "gpt_tools_disabled")
+        self.assertEqual(runtime.calls, [])
+
     def test_selected_browser_bundle_is_the_only_catalog_exposed_to_chatgpt(self):
         opener = FakeOpener(tool_name="browser_tabs")
         runtime = FakeRuntime(tool_name="browser_tabs")

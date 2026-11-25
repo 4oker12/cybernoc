@@ -166,6 +166,17 @@ def _capture(url: str, allowed_hosts: set[str], *, runner=None, capture_detail="
         from .browser_tools import _url_parts
     except ImportError:
         from browser_tools import _url_parts
+    try:
+        requested_host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        raise ValueError("invalid_public_https_url") from None
+    authorized_hosts = {
+        str(item).lower().rstrip(".") for item in (allowed_hosts or set())
+    }
+    # This is an active DevTools Network capture, not passive web reading:
+    # preserve the explicit per-host scope before resolving or launching Chromium.
+    if requested_host not in authorized_hosts:
+        raise ValueError("browser_host_not_allowed")
     parsed, host = _url_parts(url, allowed_hosts)
     # Fail closed on a potentially unsafe DNS answer. Don't silently bypass
     # IP pinning when only IPv6 addresses or invalid records are available.

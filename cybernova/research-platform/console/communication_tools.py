@@ -6,14 +6,20 @@ cannot impersonate ChatGPT or choose another task ID.
 """
 from __future__ import annotations
 
+import time
+
 try:
     from .communication import CommunicationStore, CommunicationError
     from .evidence import EvidenceJournal
     from .developer_tools import DEV_TOOLS, DEV_NAMES, dev_call, DeveloperError
+    from .github_tools import GITHUB_TOOLS, GITHUB_NAMES, github_call
+    from .diagnostics import event as diagnostic_event
 except ImportError:
     from communication import CommunicationStore, CommunicationError
     from evidence import EvidenceJournal
     from developer_tools import DEV_TOOLS, DEV_NAMES, dev_call, DeveloperError
+    from github_tools import GITHUB_TOOLS, GITHUB_NAMES, github_call
+    from diagnostics import event as diagnostic_event
 
 
 COMMUNICATION_TOOLS = [
@@ -79,9 +85,29 @@ class CommunicationToolClient:
         self.evidence = EvidenceJournal(store)
 
     def initialize(self) -> list[dict]:
-        return self.upstream.initialize() + COMMUNICATION_TOOLS + DEV_TOOLS
+        return self.upstream.initialize() + COMMUNICATION_TOOLS + DEV_TOOLS + GITHUB_TOOLS
 
     def call(self, name: str, arguments: dict) -> tuple[dict, bool]:
+        started = time.monotonic()
+        fields = {"tool": name, "source": "task_runtime", "task_id": self.task_id}
+        diagnostic_event("task_tool_call_start", kind="action", **fields)
+        try:
+            result = self._call_local(name, arguments)
+        except Exception as exc:
+            diagnostic_event("task_tool_call_failed", kind="error", **fields,
+                             status="failed", error_type=type(exc).__name__,
+                             duration_ms=round((time.monotonic() - started) * 1000))
+            raise
+        failed = bool(result[1]) if isinstance(result, tuple) and len(result) > 1 else False
+        diagnostic_event("task_tool_call_completed",
+                         kind="error" if failed else "action", **fields,
+                         status="failed" if failed else "ok",
+                         duration_ms=round((time.monotonic() - started) * 1000))
+        return result
+
+    def _call_local(self, name: str, arguments: dict) -> tuple[dict, bool]:
+        if name in GITHUB_NAMES:
+            return github_call(name, arguments)
         if name in DEV_NAMES:
             try:
                 return dev_call(name, arguments, self.task_id), False

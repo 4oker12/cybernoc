@@ -1,5 +1,6 @@
 """Regression coverage for independent GPT conversations and readable UI."""
 from __future__ import annotations
+import gc
 import json
 from pathlib import Path
 import shutil
@@ -14,12 +15,14 @@ sys.path.insert(0,str(ROOT))
 from console import server, siwc_chat_store, communication
 from console.tunnel_access import allowed_path
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 
 class GPTConversationTests(unittest.TestCase):
     def setUp(self):
         tmp=tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
+        self.addCleanup(gc.collect)
         self.path=Path(tmp.name)/"comms.sqlite3"
         self.qwen=communication.CommunicationStore(self.path)
         self.store=siwc_chat_store.GPTChatStore(self.path)
@@ -37,6 +40,18 @@ class GPTConversationTests(unittest.TestCase):
         self.assertEqual(len(self.qwen.read_dialog(task["task_id"])["messages"]),0)
         reopened=siwc_chat_store.GPTChatStore(self.path)
         self.assertEqual(len(reopened.get_thread(tid)["messages"]),4)
+
+    def test_gpt_tool_receipts_are_visible_but_not_replayed_in_model_context(self):
+        thread_id = self.store.save_exchange(None, "gpt-test", "Look it up", "Short answer")
+        self.store.save_tool_events(thread_id, [{
+            "name": "browser_snapshot", "arguments": {},
+            "result": {"text": "OLD_RAW_TOOL_OUTPUT"},
+        }])
+        self.assertIn("OLD_RAW_TOOL_OUTPUT", json.dumps(self.store.get_thread(thread_id)))
+        self.assertEqual(self.store.context(thread_id), [
+            {"role": "user", "content": "Look it up"},
+            {"role": "assistant", "content": "Short answer"},
+        ])
 
     def test_gpt_api_uses_only_its_own_context_without_mcp(self):
         conversations=[]
@@ -95,15 +110,40 @@ class GPTConversationTests(unittest.TestCase):
         self.assertTrue(allowed_path("/static/ux.js","GET"))
         self.assertTrue(allowed_path("/static/model-settings.js","GET"))
         self.assertTrue(allowed_path("/static/markdown.js","GET"))
+        self.assertTrue(allowed_path("/static/design-system.css","GET"))
         self.assertFalse(allowed_path("/api/siwc/tokens","GET"))
 
+    def test_all_referenced_console_static_assets_have_serving_routes(self):
+        client=TestClient(server.app,base_url="http://127.0.0.1:18794")
+        assets={
+            "/static/design-system.css":"text/css",
+            "/static/ux.css":"text/css",
+            "/static/ux.js":"javascript",
+            "/static/model-settings.js":"javascript",
+        }
+        for path,mime in assets.items():
+            with self.subTest(path=path):
+                response=client.get(path)
+                self.assertEqual(response.status_code,200,response.text[:200])
+                self.assertIn(mime,response.headers["content-type"])
+
     def test_markup_is_loaded_once_and_has_no_html_execution(self):
-        html=(ROOT/"console/static/index.html").read_text()
-        js=(ROOT/"console/static/markdown.js").read_text()
-        app=(ROOT/"console/static/app.js").read_text()
-        self.assertEqual(html.count('src="/static/markdown.js"'),1)
+        html=(ROOT/"console/static/index.html").read_text(encoding="utf-8")
+        js=(ROOT/"console/static/markdown.js").read_text(encoding="utf-8")
+        app=(ROOT/"console/static/app.js").read_text(encoding="utf-8")
+        ux=(ROOT/"console/static/ux.js").read_text(encoding="utf-8")
+        self.assertEqual(html.count('src="/static/markdown.js?v=20261123-semantic-sections-1"'),1)
         self.assertNotIn("innerHTML",js.split("(function () {",1)[1])
         self.assertIn("CybernovaMarkdown.render",app)
+        self.assertIn("function buildToolBatch",app)
+        agent=(ROOT/"console/agent.py").read_text(encoding="utf-8")
+        self.assertIn("def _extract_dsml_calls",agent)
+        self.assertIn("def finalize_answer",agent)
+        self.assertIn("MAX_INPUT_TOKENS = 500000",agent)
+        self.assertIn("_compact_context(context)",agent)
+        self.assertIn("tool-batch",app)
+        self.assertIn("normalizeAssistantText",js)
+        self.assertIn('firstElementChild?.classList?.contains("tool-batch")',ux)
         self.assertIn('id="modeChatGPT"',html)
         self.assertIn('id="gptThreadList"',html)
         self.assertIn('id="toolPickerToggle"',html)
@@ -114,7 +154,7 @@ class GPTConversationTests(unittest.TestCase):
         self.assertIn("recordUsage(result.usage",app)
         self.assertIn('id="toolPickerToggle"',html)
         self.assertIn('id="tokenUsageStatus"',html)
-        self.assertIn("async function watchUsageProgress(runId)",app)
+        self.assertIn('async function watchUsageProgress(runId,mode="qwen")',app)
         self.assertIn("/api/usage-progress?run_id=",app)
         self.assertIn("run_id:runId",app)
         self.assertIn("ВКЛАДКИ · НАВИГАЦИЯ · NETWORK",app)
@@ -145,15 +185,21 @@ class BrowserMarkdownTests(unittest.TestCase):
           "<img src=x onerror=alert(1)>",
           "[bad](javascript:alert(1))"
         ].join("\n").replace(/@@@/g,String.fromCharCode(96).repeat(3));
+        const rawProtocol='< | | DSML | | calls>< | | DSML | | invoke name="dev_read">< | | DSML | | parameter name="path">agent.py';
+        const cleaned=window.CybernovaMarkdown.normalizeAssistantText(rawProtocol);
+        assert(!cleaned.includes("invoke name="));
+        assert(cleaned.toLowerCase().includes("служебный протокол"));
+        assert(window.CybernovaMarkdown.normalizeAssistantText("DSML — формат протокола").includes("DSML"));
         const rendered=window.CybernovaMarkdown.render(input);
         const nodes=[];
         const visit=(n)=>{nodes.push(n);for(const c of n.children||[])visit(c)};
         visit(rendered);
-        assert(nodes.some(n=>n.className==="md-note md-note-recommendation"));
+        assert(nodes.some(n=>n.tagName==="H2" && (n.children||[]).some(x=>(x.textContent||"").includes("Рекомендация"))));
+        assert(!nodes.some(n=>n.className==="md-note md-note-recommendation"));
         assert(nodes.some(n=>n.tagName==="TABLE"));
         assert(nodes.some(n=>n.tagName==="UL"));
         assert(nodes.some(n=>n.tagName==="PRE"));
-        assert(nodes.some(n=>n.tagName==="STRONG"||n.tagName==="H3"));
+        assert(nodes.some(n=>n.tagName==="STRONG"||n.tagName==="H2"));
         assert(!nodes.some(n=>n.tagName==="IMG"||n.tagName==="SCRIPT"));
         const content=nodes.map(n=>n.textContent||"").join(" ");
         assert(content.includes("<img src=x onerror=alert(1)>"));

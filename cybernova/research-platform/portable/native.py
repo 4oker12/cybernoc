@@ -108,11 +108,16 @@ def _load(data: Path) -> dict:
             "CYBERNOVA_BACKUP_KEY_FILE","CYBERNOVA_ACCESS_SECRET_FILE",
             "CYBERNOVA_HTTP_SCOPE_FILE","CYBERNOVA_ACCESS_HOST",
             "CYBERNOVA_MCP_URL","CYBERNOVA_COMM_WORKER",
+            "CYBERNOVA_DEEPSEEK_THINKING","CYBERNOVA_DEEPSEEK_REASONING_EFFORT",
         } or any(ord(c)<32 for c in value):
             raise NativeError("unsafe_environment_file")
         values[name]=value
     if values.get("CYBERNOVA_LLM_PROVIDER") not in {"ollama","openai_compatible"}:
         raise NativeError("invalid_provider")
+    if values.get("CYBERNOVA_DEEPSEEK_THINKING","enabled") not in {"enabled","disabled"}:
+        raise NativeError("invalid_deepseek_thinking_mode")
+    if values.get("CYBERNOVA_DEEPSEEK_REASONING_EFFORT","high") not in {"low","high","max"}:
+        raise NativeError("invalid_deepseek_reasoning_effort")
     return values
 
 

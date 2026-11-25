@@ -57,7 +57,10 @@ class UXEnhancementTests(unittest.TestCase):
         previous = server.agent.ollama
         client = TestClient(server.app, base_url="http://127.0.0.1:18794")
         try:
-            with patch.object(server, "apply_model_settings", return_value=(replacement, settings)):
+            with patch.object(server, "apply_model_settings", return_value=(replacement, settings)), \
+                 patch.object(server, "test_model_connection", return_value={
+                     "status": "connected", "provider": "DeepSeek", "model": "deepseek-chat",
+                 }):
                 response = client.post("/api/model-config", json={
                     "provider": "openai_compatible",
                     "model": "deepseek-chat",
@@ -97,14 +100,45 @@ class UXEnhancementTests(unittest.TestCase):
         for forbidden in ("fetch(", "XMLHttpRequest", "WebSocket", "chrome.storage"):
             self.assertNotIn(forbidden, script)
 
-    def test_terminal_output_clipboard_control_is_available_in_both_chat_modes(self):
+    def test_terminal_output_uses_native_paste_without_extra_composer_button(self):
         html = (ROOT / "console/static/index.html").read_text(encoding="utf-8")
         app = (ROOT / "console/static/app.js").read_text(encoding="utf-8")
-        self.assertIn('id="pasteOutputButton"', html)
-        self.assertIn('navigator.clipboard.readText()', app)
-        self.assertIn('Вывод из терминала:', app)
-        self.assertIn('проверь и нажми Enter', app)
-        self.assertIn('ничего не отправляется автоматически', html.lower())
+        self.assertNotIn('id="pasteOutputButton"', html)
+        self.assertNotIn('navigator.clipboard.readText()', app)
+        self.assertIn('Ctrl+V — вставить вывод', html)
+        self.assertNotIn('pasteTerminalOutput', app)
+
+    def test_readable_dark_light_contrast_and_scoped_typography(self):
+        css = (ROOT / "console/static/styles.css").read_text(encoding="utf-8")
+        self.assertIn("Cybernova contrast and type readability pass", css)
+        self.assertIn(':root[data-theme="dark"] .message-body .md-content', css)
+        self.assertIn(':root[data-theme="light"] .message-body .md-content', css)
+        self.assertIn(".followup-question{", css)
+        self.assertIn("background:#eaf2ff", css)
+        self.assertIn("border-left:3px solid #7399d8", css)
+        self.assertIn(':root[data-theme="dark"] .followup-question', css)
+        self.assertIn(':root[data-theme="light"] .followup-question', css)
+        self.assertIn(".sidebar .task-title{font-size:13.5px", css)
+        self.assertIn(".tool-group-description{font-size:11px", css)
+
+    def test_chat_composer_exposes_diagnostics_download_and_sidebar_lists_scroll(self):
+        html = (ROOT / "console/static/index.html").read_text(encoding="utf-8")
+        css = (ROOT / "console/static/styles.css").read_text(encoding="utf-8")
+        composer = html.split('<section class="composer-area"', 1)[1].split(
+            '<div id="toolPicker"', 1
+        )[0]
+        self.assertIn('id="chatDiagnosticsDownload"', composer)
+        self.assertIn('href="/api/diagnostics/export"', composer)
+        self.assertIn('download="cybernova-diagnostics-task.jsonl"', composer)
+        self.assertIn('id="diagnosticsDownloadAll"', html)
+        self.assertIn('download="cybernova-diagnostics-full.jsonl"', html)
+        self.assertTrue(allowed_path("/api/diagnostics/export", "GET"))
+        self.assertIn(".sidebar #gptSidebar", css)
+        self.assertIn(".sidebar .sidebar-more[open]>.task-list", css)
+        self.assertIn(".sidebar .task-title", css)
+        self.assertNotIn(".composer .paste-output-button", css)
+        self.assertIn("Ctrl+V — вставить вывод", html)
+        self.assertIn(".composer .diagnostics-download-button", css)
 
     def test_selection_ask_and_nonblocking_composer_are_present(self):
         ux = (ROOT / "console/static/ux.js").read_text(encoding="utf-8")
@@ -112,7 +146,7 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn("selection-ask", ux)
         self.assertIn("Разбери выделенный фрагмент", ux)
         self.assertNotIn('$("messageInput").disabled=on;', app)
-        self.assertIn('if((state.running && mode==="collab")', app)
+        self.assertIn('if((mode==="collab"&&(state.qwenRunning||state.gptRunning||state.collabRunning))', app)
 
     @unittest.skipUnless(shutil.which("node"), "Node runtime unavailable")
     def test_new_frontend_scripts_have_valid_syntax(self):

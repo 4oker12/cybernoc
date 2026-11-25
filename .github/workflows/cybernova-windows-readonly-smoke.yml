@@ -4,7 +4,7 @@ on:
     branches:
       - feature/account-gpt-local-tools
       - feature/full-shell-computer-discovery
-      - chatgpt/browser-intelligence
+      - fix/chat-diagnostics-and-context
     paths:
       - cybernova/research-platform/**
       - AGENTS.md

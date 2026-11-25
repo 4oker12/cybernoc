@@ -13,21 +13,26 @@ import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
-from urllib.parse import urlsplit
+import re
+from urllib.parse import parse_qs, urlsplit
 
 try:
     from .upload_limits import MAX_IMPORT_HTTP_BODY_BYTES, MAX_PROXY_RESPONSE_BYTES
+    from .diagnostics import configure as configure_diagnostics, export_jsonl, failure as log_failure
 except ImportError:
     from upload_limits import MAX_IMPORT_HTTP_BODY_BYTES, MAX_PROXY_RESPONSE_BYTES
+    from diagnostics import configure as configure_diagnostics, export_jsonl, failure as log_failure
 
 DEFAULT_PORT = 18795
 DEFAULT_SECRET_FILE = "/workspace/cybernova-comm-private/web_access.txt"
-ALLOWED_STATIC = frozenset({"/", "/static/styles.css", "/static/app.js", "/static/markdown.js",
-    "/static/ux.css", "/static/ux.js", "/static/model-settings.js"})
+ALLOWED_STATIC = frozenset({"/", "/static/styles.css", "/static/design-system.css",
+    "/static/app.js", "/static/markdown.js", "/static/ux.css", "/static/ux.js",
+    "/static/model-settings.js"})
 ALLOWED_GET = frozenset({"/api/status", "/api/comm/tasks", "/api/comm/events",
     "/api/comm/review-packet", "/api/comm/evidence", "/api/siwc/status",
     "/api/siwc/models", "/api/siwc/chats", "/api/siwc/chat", "/api/research/scope", "/api/profile-settings", "/api/model-config",
-    "/api/collab/runs", "/api/collab/run", "/auth/callback"})
+    "/api/collab/runs", "/api/collab/run", "/auth/callback",
+    "/api/diagnostics/export"})
 ALLOWED_POST = frozenset({
     "/api/chat", "/api/import", "/api/approve", "/api/followups",
     "/api/reset", "/api/research/scope", "/api/comm/resume", "/api/comm/reviewer-feedback",
@@ -41,6 +46,23 @@ HOP_HEADERS = frozenset({
     "origin", "content-length", "accept-encoding",
 })
 MAX_NORMAL_REQUEST_BODY = 7_000_000
+
+
+def _diagnostic_filters(path: str) -> dict:
+    query = parse_qs(urlsplit(path).query, keep_blank_values=False)
+    patterns = {
+        "run_id": re.compile(r"[0-9a-f]{32}"),
+        "session_ref": re.compile(r"[0-9a-f]{16}"),
+        "task_ref": re.compile(r"[0-9a-f]{16}"),
+    }
+    if set(query) - set(patterns):
+        raise ValueError("unknown_diagnostics_filter")
+    filters = {}
+    for key, values in query.items():
+        if len(values) != 1 or not patterns[key].fullmatch(values[0]):
+            raise ValueError("invalid_diagnostics_filter")
+        filters[key] = values[0]
+    return filters
 
 
 def read_credentials(path: str | Path) -> tuple[str, str]:
@@ -72,14 +94,55 @@ def allowed_path(path: str, method: str) -> bool:
     return False
 
 
+def _normalized_origin(value: str) -> tuple[str, str, int] | None:
+    try:
+        parsed = urlsplit(value)
+        scheme = parsed.scheme.lower()
+        if (scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.path or parsed.query or parsed.fragment):
+            return None
+        hostname = parsed.hostname.lower().rstrip(".")
+        port = parsed.port or (443 if scheme == "https" else 80)
+        return scheme, hostname, port
+    except (TypeError, ValueError):
+        return None
+
+
 def origin_allowed(origin: str | None, host: str | None) -> bool:
     if not origin:
         return True
-    if not host or any(c in host for c in "\r\n/@"):
+    if not isinstance(host, str) or not host or any(c in host for c in "\r\n/@\\"):
         return False
-    if host in {"127.0.0.1:18795", "localhost:18795"}:
-        return origin in {"http://" + host, "https://" + host}
-    return host.endswith(".trycloudflare.com") and origin == "https://" + host
+    try:
+        host_parts = urlsplit("//" + host)
+        if (not host_parts.hostname or host_parts.username is not None
+                or host_parts.password is not None or host_parts.path
+                or host_parts.query or host_parts.fragment):
+            return False
+        hostname = host_parts.hostname.lower().rstrip(".")
+        host_port = host_parts.port
+    except ValueError:
+        return False
+
+    normalized = _normalized_origin(origin)
+    if normalized is None:
+        return False
+    scheme, origin_host, origin_port = normalized
+    if origin_host != hostname:
+        return False
+    expected_port = host_port or (443 if scheme == "https" else 80)
+    if expected_port != origin_port:
+        return False
+
+    if hostname in {"127.0.0.1", "localhost"}:
+        return host_port == 18795 and origin_port == 18795
+    return (
+        hostname.endswith(".trycloudflare.com")
+        and scheme == "https"
+        and origin_port == 443
+        and host_port in {None, 443}
+    )
 
 
 class GatewayHandler(BaseHTTPRequestHandler):
@@ -92,9 +155,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code: int, content: bytes = b"", *,
-              challenge: bool = False, content_type: str = "text/plain"):
+              challenge: bool = False, content_type: str = "text/plain",
+              download_name: str | None = None):
         self.send_response(code)
         self.send_header("Content-Type", content_type)
+        if download_name:
+            self.send_header("Content-Disposition", 'attachment; filename="' + download_name + '"')
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -115,7 +181,26 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if not allowed_path(self.path, self.command):
             return self._send(404, b"Not found\n")
         if not origin_allowed(self.headers.get("Origin"), self.headers.get("Host")):
-            return self._send(403, b"Invalid origin\n")
+            return self._send(403, b"Invalid origin\\n")
+        if self.command == "GET" and route == "/api/diagnostics/export":
+            try:
+                filters = _diagnostic_filters(self.path)
+                journal = export_jsonl(**filters)
+            except ValueError:
+                return self._send(400, b"Invalid diagnostics filter\\n")
+            except Exception as exc:
+                log_failure("access-gateway", "diagnostics_export", exc)
+                return self._send(503, b"Diagnostic journal unavailable\\n")
+            download_name = (
+                "cybernova-diagnostics-full.jsonl" if not filters else
+                "cybernova-diagnostics-task.jsonl" if "task_ref" in filters else
+                "cybernova-diagnostics-session.jsonl" if "session_ref" in filters else
+                "cybernova-diagnostics-run.jsonl"
+            )
+            return self._send(
+                200, journal, content_type="application/x-ndjson; charset=utf-8",
+                download_name=download_name,
+            )
         length_str = self.headers.get("Content-Length")
         if self.command == "POST":
             if length_str is None or not length_str.isascii() or not length_str.isdigit():
@@ -194,6 +279,7 @@ def serve(port: int = DEFAULT_PORT, secret_file: str = DEFAULT_SECRET_FILE):
 
 
 if __name__ == "__main__":
+    configure_diagnostics("access-gateway")
     serve(
         int(os.environ.get("CYBERNOVA_ACCESS_PORT", str(DEFAULT_PORT))),
         os.environ.get("CYBERNOVA_ACCESS_SECRET_FILE", DEFAULT_SECRET_FILE),

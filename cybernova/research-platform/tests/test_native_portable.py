@@ -45,6 +45,13 @@ class NativeInstallerTests(unittest.TestCase):
         self.assertEqual(native._load(self.data)["CYBERNOVA_LLM_PROVIDER"],
                          "openai_compatible")
 
+    def test_native_loader_rejects_invalid_reasoning_settings(self):
+        native.init(self.data,"ollama","test:latest")
+        env_path=self.data/"runtime.env"
+        env_path.write_text(env_path.read_text()+"CYBERNOVA_DEEPSEEK_REASONING_EFFORT=ultra\n")
+        with self.assertRaises(native.NativeError):
+            native._load(self.data)
+
     def test_install_browser_uses_native_venv_and_only_installs_chromium(self):
         native.init(self.data,"ollama","test:latest")
         python=self.data/"venv"/"Scripts"/"python.exe"

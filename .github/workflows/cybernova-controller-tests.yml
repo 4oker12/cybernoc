@@ -6,6 +6,10 @@ on:
     paths:
       - 'cybernova/control/**'
       - '.github/workflows/cybernova-controller-tests.yml'
+  pull_request:
+    paths:
+      - 'cybernova/control/**'
+      - '.github/workflows/cybernova-controller-tests.yml'
   workflow_dispatch:
 
 permissions:

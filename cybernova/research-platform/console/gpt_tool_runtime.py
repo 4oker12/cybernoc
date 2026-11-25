@@ -1,53 +1,91 @@
-"""Local tool runtime dedicated to Cybernova's Account GPT mode.
+"""Local tool runtime implementation shared by Cybernova model adapters.
 
-The GPT agent gets its own tool loop and browser session. This module does not
-register tools with or modify the DeepSeek research agent.
+Account GPT and DeepSeek receive separate GPTToolRuntime instances, locks and
+persistent browser profiles while retaining the same reviewed tool catalog.
 """
 from __future__ import annotations
 
 import ipaddress
 import importlib.util
+import hashlib
+import logging
 import os
 from pathlib import Path
 import platform
 import re
+import secrets
+import string
 import shutil
 import subprocess
 import sys
 import time
+import uuid
+from collections import OrderedDict
 from threading import RLock
 
 try:
+    from .tool_policy import task_intent_matches
+    from .account_missions import (
+        AccountMissionError, AccountMissionStore, account_mission_store,
+        MISSION_STATUSES, STEP_STATUSES,
+    )
+    from .account_vault import AccountVaultError, account_vault
     from .browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from .developer_tools import SOURCE
     from .research_web import RESEARCH_WEB_TOOLS, research_web_call
     from .computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
+    from .github_tools import GITHUB_TOOLS, GITHUB_NAMES, github_call
+    from .github_write_tools import GITHUB_WRITE_TOOLS, GITHUB_WRITE_NAMES, github_write_call
+    from .owner_input import owner_input_broker
 except ImportError:
+    from tool_policy import task_intent_matches
+    from account_missions import (
+        AccountMissionError, AccountMissionStore, account_mission_store,
+        MISSION_STATUSES, STEP_STATUSES,
+    )
+    from account_vault import AccountVaultError, account_vault
     from browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from developer_tools import SOURCE
     from research_web import RESEARCH_WEB_TOOLS, research_web_call
     from computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
+    from github_tools import GITHUB_TOOLS, GITHUB_NAMES, github_call
+    from github_write_tools import GITHUB_WRITE_TOOLS, GITHUB_WRITE_NAMES, github_write_call
+    from owner_input import owner_input_broker
 
+
+try:
+    from .diagnostics import event as diagnostic_event, failure as diagnostic_failure
+except ImportError:
+    from diagnostics import event as diagnostic_event, failure as diagnostic_failure
 
 MAX_TOOL_OUTPUT_CHARS = 50000
 MAX_TERMINAL_COMMAND_CHARS = 20000
 MAX_TERMINAL_TIMEOUT_SECONDS = 300
+logger = logging.getLogger(__name__)
 
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 _DOMAIN = re.compile(r"(?i)(?<![a-z0-9.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?![a-z0-9.-])")
 _SECRET = re.compile(
     r"(?i)(Bearer\s+[A-Za-z0-9._~-]{8,}|"
-    r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|"
+    r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|"
     r"authorization|cookie)\s*[:=]\s*[^\s,;]+)"
 )
 _EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 
+MAX_BROWSER_SESSIONS = 4
+BROWSER_SESSION_IDLE_SECONDS = 900
+EXPLICIT_ONLY_TOOLS = frozenset()  # Full local tool pool is exposed in automatic mode.
+
 _TOOL_NAMES = frozenset(
     item["name"] for item in BROWSER_CONTROL_TOOLS
-    if item["name"] != "browser_submit"
 ) | frozenset(item["name"] for item in RESEARCH_WEB_TOOLS) | {
-    "terminal_run", "terminal_status",
-} | COMPUTER_TOOL_NAMES
+    "terminal_run", "terminal_status", "owner_request_input", "browser_fill_owner_input",
+    "account_mission_create", "account_mission_checkpoint", "account_mission_get",
+    "account_mission_list", "account_mission_resume",
+    "browser_generate_and_fill_password", "browser_fill_saved_credential",
+    "browser_request_and_fill_payment_card",
+    "account_vault_list", "account_vault_mark_verified",
+} | COMPUTER_TOOL_NAMES | GITHUB_NAMES | GITHUB_WRITE_NAMES
 
 # Composer tool bundles. Empty selection means automatic access to the full
 # catalog; an explicit selection exposes only the chosen groups to the model.
@@ -62,7 +100,7 @@ TOOL_GROUPS = (
     },
     {
         "id": "terminal", "label": "Терминал Windows", "icon": "terminal",
-        "description": "Полноценные CMD, Windows PowerShell 5.1 и PowerShell 7: многострочные команды, скрипты, конвейеры, перенаправления, файловые операции и диагностика. Выполнение с правами текущего процесса Cybernova, без скрытого повышения привилегий.",
+        "description": "CMD, Windows PowerShell 5.1 и PowerShell 7 для локальной работы. Доступны автоматически; выполнение идёт с правами процесса Cybernova, без скрытого повышения привилегий.",
     },
     {
         "id": "web", "label": "Интернет / Research", "icon": "search",
@@ -83,6 +121,10 @@ TOOL_GROUPS = (
     {
         "id": "developer", "label": "Разработка", "icon": "code",
         "description": "Работа с workspace, Git, файлами проекта, тестами и изменениями кода.",
+    },
+    {
+        "id": "github", "label": "GitHub", "icon": "git-branch",
+        "description": "Полный доступ к выбранным репозиториям: файлы, ветки, коммиты, Issues, Pull Requests, Releases, Actions, настройки и collaborators через GitHub API. Обычная разработка выполняется автономно; удаление и администрирование — только по прямому поручению.",
     },
     {
         "id": "mcp", "label": "MCP / прочее", "icon": "plug",
@@ -107,7 +149,7 @@ def normalize_tool_groups(groups=None) -> list[str]:
 
 
 def tool_group_for_name(name: str) -> str:
-    if name.startswith("browser_"):
+    if name.startswith(("browser_", "account_mission_", "account_vault_")) or name == "owner_request_input":
         return "browser"
     if name.startswith("computer_"):
         return "computer"
@@ -124,6 +166,8 @@ def tool_group_for_name(name: str) -> str:
         return "security"
     if name.startswith("traffic_"):
         return "traffic"
+    if name.startswith("github_"):
+        return "github"
     if name.startswith("dev_"):
         return "developer"
     return "mcp"
@@ -147,6 +191,38 @@ def tool_group_summary(tool_names) -> list[dict]:
         {**group, "count": counts[group["id"]], "available": counts[group["id"]] > 0}
         for group in TOOL_GROUPS
     ]
+
+
+def _safe_fill_owner_input(session, label, value, input_type, expected_origin=""):
+    try:
+        return session.fill_owner_input(label, value, input_type, expected_origin)
+    except Exception as exc:
+        # Playwright exception text can echo a form value. Never propagate it.
+        raise ValueError("protected_browser_fill_failed:" + type(exc).__name__) from None
+
+
+def _safe_fill_payment_card(session, card, expected_origin, field_hosts, approved_hosts):
+    try:
+        return session.fill_owner_payment_card(
+            card, expected_origin, field_hosts, approved_hosts,
+        )
+    except Exception as exc:
+        # Payment data must never be copied into an exception, event or model result.
+        raise ValueError("protected_payment_fill_failed:" + type(exc).__name__) from None
+
+
+def _wipe_payment_card(card):
+    if isinstance(card, dict):
+        for key in list(card):
+            card[key] = ""
+        card.clear()
+
+
+def _clear_payment_form_for_owner(session):
+    try:
+        return session.clear_payment_form()
+    except Exception:
+        return {"ok": False, "cleared_fields": []}
 
 
 def extract_user_targets(messages: list[dict]) -> set[str]:
@@ -194,7 +270,7 @@ def _convert_mcp_tool(item: dict) -> dict:
 
 
 def build_tool_catalog() -> list[dict]:
-    """Tools visible only to Account GPT; no DeepSeek tool registry mutation."""
+    """Shared reviewed local tool catalog for Account GPT and DeepSeek."""
     terminal_schema = {
         "type": "object",
         "properties": {
@@ -242,13 +318,125 @@ def build_tool_catalog() -> list[dict]:
             status_schema,
         ),
     ]
-    rows.extend(
-        _convert_mcp_tool(item)
-        for item in BROWSER_CONTROL_TOOLS
-        if item["name"] != "browser_submit"
-    )
+    rows.extend(_convert_mcp_tool(item) for item in BROWSER_CONTROL_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in RESEARCH_WEB_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in COMPUTER_TOOLS)
+    rows.extend(_convert_mcp_tool(item) for item in GITHUB_TOOLS)
+    rows.extend(_convert_mcp_tool(item) for item in GITHUB_WRITE_TOOLS)
+    mission_statuses = sorted(MISSION_STATUSES)
+    step_statuses = sorted(STEP_STATUSES)
+    rows.extend([
+        _function_tool(
+            "account_mission_create",
+            "Create a durable account-setup mission. Stores only non-secret goal and success criteria in the local SQLite data store. Use for multi-step registrations or service setup; never put passwords, OTPs, cookies, API keys, payment data or verification URLs with tokens in mission text.",
+            {"type": "object", "properties": {
+                "service": {"type": "string", "maxLength": 120},
+                "goal": {"type": "string", "maxLength": 2000},
+                "success_criteria": {"type": "string", "maxLength": 1200},
+            }, "required": ["service", "goal", "success_criteria"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_mission_checkpoint",
+            "Persist one idempotent account-setup checkpoint. Record only a short sanitized summary and next action, never secrets or raw page contents. Mark an external action started before it happens and completed only after verifying the provider's state. Use waiting_owner for SMS/OTP or a required owner input. page_url must be the clean HTTPS page URL; query strings and tokens are stripped.",
+            {"type": "object", "properties": {
+                "mission_id": {"type": "string", "maxLength": 100},
+                "step_key": {"type": "string", "maxLength": 80},
+                "step_name": {"type": "string", "maxLength": 160},
+                "step_status": {"type": "string", "enum": step_statuses},
+                "summary": {"type": "string", "maxLength": 1200},
+                "next_action": {"type": "string", "maxLength": 600},
+                "page_url": {"type": "string", "maxLength": 2048},
+                "mission_status": {"type": "string", "enum": [""] + mission_statuses},
+            }, "required": ["mission_id", "step_key", "step_name", "step_status",
+                           "summary", "next_action", "page_url", "mission_status"],
+               "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_mission_get",
+            "Read one account mission and its ordered checkpoints. Use this after a restart or when returning to a previous account task. If resume_requires_reconciliation is true, inspect the provider's current state before repeating the last action.",
+            {"type": "object", "properties": {
+                "mission_id": {"type": "string", "maxLength": 100},
+            }, "required": ["mission_id"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_mission_list",
+            "List recent account missions. Use at the start of a new account-setup request to find an existing matching mission rather than creating a duplicate. Empty status means all statuses.",
+            {"type": "object", "properties": {
+                "status": {"type": "string", "enum": [""] + mission_statuses},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            }, "required": ["status", "limit"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_mission_resume",
+            "Explicitly resume a blocked or waiting account mission. This changes only the mission status; it does NOT replay any browser action. Read the returned checkpoints and reconcile the live provider state first.",
+            {"type": "object", "properties": {
+                "mission_id": {"type": "string", "maxLength": 100},
+            }, "required": ["mission_id"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "owner_request_input",
+            "Pause the current task and request one sensitive value through Cybernova's local protected dialog. Allowed types: otp, password, contact. The value is never returned to the model or written to logs/files. For a password, set offer_vault_save=true to show the owner an optional local encrypted-vault checkbox. The request is bound to the current HTTPS origin and conversation. This generic tool is not for payment cards; use browser_request_and_fill_payment_card for an observed HTTPS card form.",
+            {"type": "object", "properties": {
+                "purpose": {"type": "string", "maxLength": 240},
+                "input_type": {"type": "string", "enum": ["otp", "password", "contact"]},
+                "field_label": {"type": "string", "maxLength": 120},
+                "offer_vault_save": {"type": "boolean"},
+                "service": {"type": "string", "maxLength": 120},
+                "username": {"type": "string", "maxLength": 254},
+                "account_label": {"type": "string", "maxLength": 120},
+            }, "required": ["purpose", "input_type", "field_label", "offer_vault_save",
+                           "service", "username", "account_label"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "browser_fill_owner_input",
+            "Fill one owner-supplied password, one-time code, or contact value. The secret is fetched internally, origin-checked and never returned to the model. The request can be consumed once.",
+            {"type": "object", "properties": {
+                "request_id": {"type": "string", "maxLength": 80},
+                "field_label": {"type": "string", "maxLength": 120},
+            }, "required": ["request_id", "field_label"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "browser_request_and_fill_payment_card",
+            "When a user-requested account registration or payment reaches a card form, inspect the visible payment fields and request card details in Cybernova's protected in-chat dialog. The owner sees the merchant and any cross-origin payment-frame hosts and explicitly approves those hosts. Card number, expiry, CVV and cardholder data stay in memory only, are filled directly into the current HTTPS form, are never returned to the model, and are never saved. Do not use for a purchase or subscription.",
+            {"type": "object", "properties": {
+                "purpose": {"type": "string", "maxLength": 240},
+            }, "required": ["purpose"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "browser_generate_and_fill_password",
+            "Generate a strong random password locally, save it encrypted in the account vault, and fill the currently visible password field. The password is NEVER returned to the model or tool result. Use only during a user-requested account creation. The record starts pending until account creation and sign-in are verified.",
+            {"type": "object", "properties": {
+                "service": {"type": "string", "maxLength": 120},
+                "username": {"type": "string", "maxLength": 254},
+                "account_label": {"type": "string", "maxLength": 120},
+                "field_label": {"type": "string", "maxLength": 120},
+            }, "required": ["service", "username", "account_label", "field_label"],
+               "additionalProperties": False},
+        ),
+        _function_tool(
+            "browser_fill_saved_credential",
+            "Retrieve one password internally from the encrypted account vault and fill a visible password field only when the current HTTPS origin exactly matches the stored service origin. The password is never returned to the model.",
+            {"type": "object", "properties": {
+                "record_id": {"type": "string", "maxLength": 100},
+                "field_label": {"type": "string", "maxLength": 120},
+            }, "required": ["record_id", "field_label"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_vault_list",
+            "List account-vault metadata only: service, username, origin, status and record ID. Passwords and encryption material are never returned.",
+            {"type": "object", "properties": {
+                "service": {"type": "string", "maxLength": 120},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            }, "required": ["service", "limit"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_vault_mark_verified",
+            "Mark a pending credential record active only after the account was created, sign-in was verified, and the service identity matches. Does not expose the password.",
+            {"type": "object", "properties": {
+                "record_id": {"type": "string", "maxLength": 100},
+            }, "required": ["record_id"], "additionalProperties": False},
+        ),
+    ])
     return rows
 
 
@@ -408,20 +596,154 @@ def _run_terminal(command: str, shell: str = "cmd", cwd: str = "",
     }
 
 
-class GPTToolRuntime:
-    """One isolated Chromium session and full local shell for Account GPT."""
-    def __init__(self):
+class BrowserSessionPool:
+    """Bounded per-conversation Chromium sessions with idle LRU eviction.
+
+    Conversation identifiers are hashed before they become directory names.
+    Eviction closes browser processes but deliberately retains profile data.
+    """
+
+    def __init__(self, profile_root: str | Path, *,
+                 session_factory=BrowserSession,
+                 max_sessions: int = MAX_BROWSER_SESSIONS,
+                 idle_seconds: int = BROWSER_SESSION_IDLE_SECONDS,
+                 clock=None):
+        if type(max_sessions) is not int or not 1 <= max_sessions <= 32:
+            raise ValueError("browser_session_limit_invalid")
+        if type(idle_seconds) is not int or not 60 <= idle_seconds <= 86400:
+            raise ValueError("browser_session_idle_timeout_invalid")
+        self.profile_root = Path(profile_root).expanduser()
+        self.session_factory = session_factory
+        self.max_sessions = max_sessions
+        self.idle_seconds = idle_seconds
+        self._clock = clock or time.monotonic
         self._lock = RLock()
-        self._browser: BrowserSession | None = None
+        self._sessions: OrderedDict[str, dict] = OrderedDict()
+
+    @staticmethod
+    def _key(conversation_key: str | None) -> str:
+        if not isinstance(conversation_key, str) or not conversation_key.strip() \
+                or len(conversation_key) > 256 or "\x00" in conversation_key:
+            raise ValueError("browser_conversation_required")
+        return hashlib.sha256(conversation_key.encode("utf-8")).hexdigest()[:24]
+
+    @staticmethod
+    def _close_entries(entries: list[dict]) -> None:
+        for entry in entries:
+            try:
+                entry["session"].close()
+            except Exception:
+                pass
+
+    def acquire(self, conversation_key: str | None) -> tuple[str, dict]:
+        key = self._key(conversation_key)
+        now = self._clock()
+        retired: list[dict] = []
+        selected = None
+        with self._lock:
+            for old_key, old_entry in list(self._sessions.items()):
+                if old_entry["active"] == 0 and now - old_entry["last_used"] >= self.idle_seconds:
+                    retired.append(self._sessions.pop(old_key))
+            selected = self._sessions.get(key)
+            if selected is not None:
+                selected["active"] += 1
+                selected["last_used"] = now
+                self._sessions.move_to_end(key)
+        self._close_entries(retired)
+
+        if selected is not None:
+            return key, selected
+
+        retired = []
+        with self._lock:
+            # Another caller may have created this conversation while stale
+            # sessions were being closed.
+            selected = self._sessions.get(key)
+            if selected is not None:
+                selected["active"] += 1
+                selected["last_used"] = self._clock()
+                self._sessions.move_to_end(key)
+            else:
+                if len(self._sessions) >= self.max_sessions:
+                    idle_key = next(
+                        (candidate for candidate, entry in self._sessions.items()
+                         if entry["active"] == 0),
+                        None,
+                    )
+                    if idle_key is not None:
+                        retired.append(self._sessions.pop(idle_key))
+                if len(self._sessions) >= self.max_sessions:
+                    selected = None
+                else:
+                    profile_dir = self.profile_root / "conversations" / key
+                    session = self.session_factory(profile_dir=profile_dir)
+                    selected = {
+                        "session": session, "profile_dir": profile_dir,
+                        "active": 1, "last_used": self._clock(),
+                        "call_lock": RLock(),
+                    }
+                    self._sessions[key] = selected
+        self._close_entries(retired)
+        if selected is None:
+            raise ValueError("browser_session_capacity_reached")
+        return key, selected
+
+    def release(self, key: str, entry: dict) -> None:
+        with self._lock:
+            current = self._sessions.get(key)
+            if current is not entry:
+                return
+            current["active"] = max(0, current["active"] - 1)
+            current["last_used"] = self._clock()
+            self._sessions.move_to_end(key)
+
+    def close(self) -> None:
+        with self._lock:
+            entries = list(self._sessions.values())
+            self._sessions.clear()
+        self._close_entries(entries)
+
+    @property
+    def session_count(self) -> int:
+        with self._lock:
+            return len(self._sessions)
+
+
+class GPTToolRuntime:
+    """Shared local tool catalog with isolated Chromium per model conversation."""
+
+    def __init__(self, browser_profile_dir: str | Path | None = None, *,
+                 browser_session_factory=BrowserSession,
+                 max_browser_sessions: int = MAX_BROWSER_SESSIONS,
+                 browser_idle_seconds: int = BROWSER_SESSION_IDLE_SECONDS):
+        self._lock = RLock()
+        self.browser_profile_dir = (
+            Path(browser_profile_dir).expanduser()
+            if browser_profile_dir is not None else _browser_profile_path("gpt")
+        )
+        self._browser_pool = BrowserSessionPool(
+            self.browser_profile_dir,
+            session_factory=browser_session_factory,
+            max_sessions=max_browser_sessions,
+            idle_seconds=browser_idle_seconds,
+        )
         self.tools = build_tool_catalog()
         self.tool_map = {item["name"]: item for item in self.tools}
 
+    @property
+    def explicit_only_tools(self) -> tuple[str, ...]:
+        return tuple(sorted(EXPLICIT_ONLY_TOOLS))
+
     def tools_for_groups(self, groups=None) -> list[dict]:
-        """Return the full catalog or only explicitly selected tool bundles."""
-        return filter_tool_rows(self.tools, groups)
+        """Auto mode omits tools that require an explicit group selection."""
+        selected = set(normalize_tool_groups(groups))
+        rows = filter_tool_rows(self.tools, groups)
+        if "terminal" not in selected and EXPLICIT_ONLY_TOOLS:
+            rows = [item for item in rows if item["name"] not in EXPLICIT_ONLY_TOOLS]
+        return rows
 
     def mcp_tools(self, groups=None) -> list[dict]:
-        """Expose the same selected local tool catalog to MCP/Ollama-style agents."""
+        """Expose only the tools allowed by the user's current group selection."""
         return [
             {
                 "name": item["name"],
@@ -432,16 +754,323 @@ class GPTToolRuntime:
         ]
 
     def call(self, name: str, args: dict, *, authorized_targets=None,
-             user_messages=None, enabled_groups=None) -> tuple[dict, bool]:
+             user_messages=None, enabled_groups=None,
+             conversation_key: str | None = None) -> tuple[dict, bool]:
+        """Record tool lifecycle without storing arguments or response content."""
+        start = time.monotonic()
+        diagnostic_event("tool_call_start", tool=name)
+        try:
+            result, failed = self._call_impl(
+                name, args, authorized_targets=authorized_targets,
+                user_messages=user_messages, enabled_groups=enabled_groups,
+                conversation_key=conversation_key)
+        except BaseException as exc:
+            diagnostic_event("tool_call_failed", tool=name,
+                             duration_ms=round((time.monotonic() - start) * 1000),
+                             error_type=type(exc).__name__)
+            raise
+        fields = {"tool": name, "status": "failed" if failed else "ok",
+                  "duration_ms": round((time.monotonic() - start) * 1000)}
+        if isinstance(result, dict):
+            if type(result.get("http_status")) is int:
+                fields["http_status"] = result["http_status"]
+            if failed:
+                fields["error_type"] = str(result.get("error", "tool_failed")).split(":", 1)[0]
+        diagnostic_event("tool_call_completed", **fields)
+        return result, failed
+
+    def _call_impl(self, name: str, args: dict, *, authorized_targets=None,
+                   user_messages=None, enabled_groups=None,
+                   conversation_key: str | None = None) -> tuple[dict, bool]:
         selected = set(normalize_tool_groups(enabled_groups))
         if selected and tool_group_for_name(name) not in selected:
             return {"ok": False, "error": "tool_group_not_enabled"}, True
+        if name in EXPLICIT_ONLY_TOOLS and "terminal" not in selected:
+            return {"ok": False, "error": "terminal_run_requires_explicit_group_selection"}, True
         if name not in _TOOL_NAMES or name not in self.tool_map:
             return {"ok": False, "error": "gpt_tool_not_registered"}, True
         if not isinstance(args, dict):
             return {"ok": False, "error": "tool_arguments_must_be_object"}, True
-        with self._lock:
-            try:
+        try:
+            if name in GITHUB_NAMES:
+                return github_call(name, args)
+            if name in GITHUB_WRITE_NAMES:
+                return github_write_call(name, args, user_messages=user_messages)
+            if name.startswith("account_mission_"):
+                missions = account_mission_store()
+                if name == "account_mission_create":
+                    result = missions.create(
+                        args.get("service"), args.get("goal"), args.get("success_criteria", "")
+                    )
+                    return {"ok": True, "mission": result}, False
+                if name == "account_mission_checkpoint":
+                    result = missions.checkpoint(
+                        args.get("mission_id"), args.get("step_key"), args.get("step_name"),
+                        args.get("step_status"), args.get("summary"),
+                        args.get("next_action", ""), args.get("page_url", ""),
+                        args.get("mission_status") or None,
+                    )
+                    return {"ok": True, "mission": result}, False
+                if name == "account_mission_get":
+                    return {"ok": True, "mission": missions.get(args.get("mission_id"))}, False
+                if name == "account_mission_list":
+                    return {"ok": True, "missions": missions.list(
+                        args.get("status") or None, args.get("limit", 20)
+                    )}, False
+                if name == "account_mission_resume":
+                    return {"ok": True, "mission": missions.resume(args.get("mission_id"))}, False
+            if name == "owner_request_input":
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "owner_input_session_unavailable"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        entry["session"].set_authorized_hosts(authorized_targets or set())
+                        origin = entry["session"].current_origin()
+                finally:
+                    self._browser_pool.release(key, entry)
+                result = owner_input_broker.request_and_wait(
+                    conversation_key, args.get("purpose"), args.get("input_type"),
+                    args.get("field_label"), timeout=300, expected_origin=origin,
+                    offer_vault_save=args.get("offer_vault_save", False),
+                    service=args.get("service", ""), username=args.get("username", ""),
+                    account_label=args.get("account_label", ""),
+                )
+                return result, not bool(result.get("ok"))
+            if name == "browser_request_and_fill_payment_card":
+                user_text = " ".join(
+                    str(message.get("content") or "")
+                    for message in (user_messages or [])
+                    if isinstance(message, dict) and message.get("role") == "user"
+                )
+                if not re.search(
+                    r"(?i)(?:create.{0,50}account|register|sign[ -]?up|"
+                    r"создай.{0,50}аккаунт|зарегистр|регай|заведи.{0,50}аккаунт|"
+                    r"оплат|платеж|payment|checkout|purchase|billing|\bcard\b|"
+                    r"добавить карту|привязать карту|карточк)",
+                    user_text,
+                ):
+                    return {"ok": False, "error": "explicit_account_or_payment_intent_required"}, True
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "browser_conversation_required"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        session = entry["session"]
+                        session.set_authorized_hosts(authorized_targets or set())
+                        form_info = session.inspect_payment_form()
+                finally:
+                    self._browser_pool.release(key, entry)
+                request = owner_input_broker.request_and_wait(
+                    conversation_key, args.get("purpose"), "payment_card",
+                    "Данные банковской карты", timeout=300,
+                    expected_origin=form_info["origin"],
+                    payment_fields=form_info["fields"],
+                    payment_field_hosts=form_info["field_hosts"],
+                )
+                if not request.get("ok"):
+                    return request, True
+                card = None
+                try:
+                    card, origin, field_hosts, approved_hosts = owner_input_broker.consume_payment_card(
+                        conversation_key, request["request_id"]
+                    )
+                    key, entry = self._browser_pool.acquire(conversation_key)
+                    try:
+                        with entry["call_lock"]:
+                            session = entry["session"]
+                            session.set_authorized_hosts(authorized_targets or set())
+                            result = _safe_fill_payment_card(
+                                session, card, origin, field_hosts, approved_hosts,
+                            )
+                            result["owner_input_consumed"] = True
+                            return result, not bool(result.get("ok"))
+                    finally:
+                        self._browser_pool.release(key, entry)
+                finally:
+                    _wipe_payment_card(card)
+            if name == "browser_submit_payment":
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "browser_conversation_required"}, True
+                button_name = args.get("name")
+                purpose = args.get("purpose")
+                if not isinstance(purpose, str) or not purpose.strip() or len(purpose) > 240:
+                    return {"ok": False, "error": "payment_confirmation_summary_required"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        session = entry["session"]
+                        session.set_authorized_hosts(authorized_targets or set())
+                        target = session.inspect_submit_target(button_name)
+                finally:
+                    self._browser_pool.release(key, entry)
+                if not target.get("payment_target"):
+                    return {"ok": False, "error": "payment_submit_target_not_recognized"}, True
+                request = owner_input_broker.request_and_wait(
+                    conversation_key, purpose, "payment_confirmation",
+                    button_name, timeout=300,
+                    expected_origin=target["merchant_origin"],
+                    action_origin=target["action_origin"],
+                    action_button=button_name,
+                )
+                if not request.get("ok"):
+                    key, entry = self._browser_pool.acquire(conversation_key)
+                    try:
+                        with entry["call_lock"]:
+                            session = entry["session"]
+                            session.set_authorized_hosts(authorized_targets or set())
+                            _clear_payment_form_for_owner(session)
+                    finally:
+                        self._browser_pool.release(key, entry)
+                    return request, True
+                decision, origin, action_origin, approved_button = (
+                    owner_input_broker.consume_payment_confirmation(
+                        conversation_key, request["request_id"]
+                    )
+                )
+                if not decision:
+                    key, entry = self._browser_pool.acquire(conversation_key)
+                    try:
+                        with entry["call_lock"]:
+                            session = entry["session"]
+                            session.set_authorized_hosts(authorized_targets or set())
+                            _clear_payment_form_for_owner(session)
+                    finally:
+                        self._browser_pool.release(key, entry)
+                    return {"ok": False, "status": "owner_declined_payment_action"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        session = entry["session"]
+                        session.set_authorized_hosts(authorized_targets or set())
+                        result = session.submit_payment_after_owner_approval(
+                            approved_button, origin, action_origin,
+                        )
+                        return result, not bool(result.get("ok"))
+                finally:
+                    self._browser_pool.release(key, entry)
+            if name == "browser_fill_owner_input":
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "owner_input_session_unavailable"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        entry["session"].set_authorized_hosts(authorized_targets or set())
+                        input_type, value, expected_origin = owner_input_broker.consume(
+                            conversation_key, args.get("request_id")
+                        )
+                        result = _safe_fill_owner_input(
+                            entry["session"], args.get("field_label"), value,
+                            input_type, expected_origin,
+                        )
+                        result["owner_input_consumed"] = True
+                        return result, not bool(result.get("ok"))
+                finally:
+                    self._browser_pool.release(key, entry)
+            if name == "browser_generate_and_fill_password":
+                user_text = " ".join(
+                    str(message.get("content") or "")
+                    for message in (user_messages or [])
+                    if isinstance(message, dict) and message.get("role") == "user"
+                )
+                if not re.search(
+                    r"(?i)(?:\bcreate\b.{0,50}\baccount\b|\bregister\b|"
+                    r"\bsign[\s-]?up\b|создай.{0,50}аккаунт|зарегистр|регай|"
+                    r"заведи.{0,50}аккаунт)",
+                    user_text,
+                ):
+                    return {"ok": False, "error": "account_creation_intent_required"}, True
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "browser_conversation_required"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        session = entry["session"]
+                        session.set_authorized_hosts(authorized_targets or set())
+                        origin = session.current_origin()
+                        symbols = "!@#$%^&*_-+="
+                        chars = [
+                            secrets.choice(string.ascii_uppercase),
+                            secrets.choice(string.ascii_lowercase),
+                            secrets.choice(string.digits),
+                            secrets.choice(symbols),
+                        ] + [secrets.choice(string.ascii_letters + string.digits + symbols)
+                             for _ in range(24)]
+                        secrets.SystemRandom().shuffle(chars)
+                        password = "".join(chars)
+                        record = account_vault().store_password(
+                            args.get("service"), args.get("username"), password,
+                            origin, args.get("account_label", ""),
+                        )
+                        result = _safe_fill_owner_input(
+                            session, args.get("field_label"), password, "password", origin
+                        )
+                        result["credential_record"] = record
+                        result["password_generated_locally"] = True
+                        return result, not bool(result.get("ok"))
+                finally:
+                    self._browser_pool.release(key, entry)
+            if name == "browser_fill_saved_credential":
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "browser_conversation_required"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        session = entry["session"]
+                        session.set_authorized_hosts(authorized_targets or set())
+                        origin = session.current_origin()
+                        record, password = account_vault()._secret_for_browser_fill(
+                            args.get("record_id"), origin
+                        )
+                        result = _safe_fill_owner_input(
+                            session, args.get("field_label"), password,
+                            "password", record["origin"],
+                        )
+                        result["credential_record"] = record
+                        result["saved_credential_filled"] = True
+                        return result, not bool(result.get("ok"))
+                finally:
+                    self._browser_pool.release(key, entry)
+            if name == "account_vault_list":
+                return {"ok": True, "entries": account_vault().list_entries(
+                    args.get("limit", 30), args.get("service", "")
+                )}, False
+            if name == "account_vault_mark_verified":
+                return {"ok": True, "entry": account_vault().mark_verified(
+                    args.get("record_id")
+                )}, False
+            # Browser operations use their own per-conversation lock and worker
+            # thread. They never hold the runtime-wide lock while Playwright runs.
+            if name.startswith("browser_"):
+                if name == "browser_submit":
+                    latest_user = ""
+                    for message in reversed(user_messages or []):
+                        if isinstance(message, dict) and message.get("role") == "user":
+                            content = message.get("content")
+                            if isinstance(content, str):
+                                latest_user = content
+                            elif isinstance(content, list):
+                                latest_user = " ".join(
+                                    str(part.get("text") or "") for part in content
+                                    if isinstance(part, dict) and part.get("type") == "text"
+                                )
+                            break
+                    description = str(self.tool_map[name].get("description") or "")
+                    if not task_intent_matches(name, description, latest_user):
+                        return {
+                            "ok": False, "status": "task_intent_required",
+                            "error": "browser_submit_requires_explicit_user_intent",
+                            "message": "Отправка формы не выполнялась: последнее сообщение пользователя должно прямо просить отправить, сохранить, применить или передать эту форму.",
+                        }, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        entry["session"].set_authorized_hosts(authorized_targets or set())
+                        return browser_control_call(name, args, entry["session"])
+                finally:
+                    self._browser_pool.release(key, entry)
+
+            with self._lock:
                 if name == "terminal_status":
                     if args:
                         raise ValueError("terminal_status_takes_no_arguments")
@@ -487,22 +1116,36 @@ class GPTToolRuntime:
                     return computer_control_call(name, args, user_messages=user_messages)
                 if name in {"google_search", "research_source_open"}:
                     return research_web_call(name, args)
-                if name.startswith("browser_"):
-                    if name == "browser_submit":
-                        raise ValueError("browser_submit_requires_separate_approval")
-                    if self._browser is None:
-                        self._browser = BrowserSession()
-                    self._browser.set_authorized_hosts(authorized_targets or set())
-                    return browser_control_call(name, args, self._browser)
                 raise ValueError("gpt_tool_not_implemented")
-            except (OSError, ValueError, TypeError) as exc:
-                return {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}, True
+        except Exception as exc:
+            error_id = uuid.uuid4().hex[:12]
+            detail = _SECRET.sub("[REDACTED]", _EMAIL.sub("[REDACTED EMAIL]", str(exc)))
+            # Raw tracebacks can embed user input and site content. Keep only
+            # traceback frame metadata in the private journal.
+            logger.error("tool_failure id=%s tool=%s type=%s",
+                         error_id, name, type(exc).__name__)
+            diagnostic_failure("console", "tool_" + name, exc, error_id=error_id)
+            return {
+                "ok": False,
+                "error": type(exc).__name__ + ":" + detail[:400],
+                "error_id": error_id,
+            }, True
 
     def close(self):
-        with self._lock:
-            if self._browser is not None:
-                self._browser.close()
-                self._browser = None
+        self._browser_pool.close()
+
+def _browser_profile_path(agent_name: str) -> Path:
+    configured = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")
+    if configured:
+        base = Path(configured).expanduser()
+        return base if agent_name == "gpt" else base.parent / "deepseek-chromium-profile"
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / "CyberNova" / "data" / f"{agent_name}-chromium-profile"
+    return Path.home() / ".local" / "share" / "cybernova" / f"{agent_name}-chromium-profile"
 
 
-runtime = GPTToolRuntime()
+# Separate runtime locks, BrowserSession instances and persistent profiles.
+# Both models retain the same inspected tool catalog and safety policies.
+runtime = GPTToolRuntime(browser_profile_dir=_browser_profile_path("gpt"))
+deepseek_runtime = GPTToolRuntime(browser_profile_dir=_browser_profile_path("deepseek"))

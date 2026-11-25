@@ -51,6 +51,29 @@ class CommunicationEvidenceTests(unittest.TestCase):
         self.assertTrue(all(len(x["result_sha256"]) == 64 for x in rows))
         self.assertNotIn(sensitive, str(rows))
 
+    def test_diagnostic_events_do_not_consume_tool_receipt_limit(self):
+        events = [
+            {"type": "tool_result", "name": "gateway_status",
+             "arguments": {}, "result": {"ok": True}, "is_error": False}
+            for _ in range(64)
+        ]
+        events.extend(
+            {"type": "agent_error", "message": "diagnostic only"}
+            for _ in range(24)
+        )
+        receipts = self.journal.record_tool_events(self.tid, events)
+        self.assertEqual(len(receipts), 64)
+        self.assertEqual(len(self.journal.list_tool_receipts(self.tid, limit=100)), 64)
+
+    def test_more_than_64_actual_receipts_are_rejected(self):
+        events = [
+            {"type": "tool_result", "name": "gateway_status",
+             "arguments": {}, "result": {"ok": True}, "is_error": False}
+            for _ in range(65)
+        ]
+        with self.assertRaises(CommunicationError):
+            self.journal.record_tool_events(self.tid, events)
+
     def test_model_claim_does_not_masquerade_as_scan(self):
         claim = self.journal.record_qwen_claim(
             self.tid, "Я якобы запустила Nmap", "Со слов модели")

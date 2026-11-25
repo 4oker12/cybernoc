@@ -1,5 +1,6 @@
 """Offline tests for local Windows computer-use tools."""
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import unittest
 from unittest.mock import patch
@@ -11,8 +12,9 @@ from console.computer_control import (
     APP_COMMANDS, COMPUTER_TOOLS, COMPUTER_TOOL_NAMES,
     HIGH_IMPACT_UI, SAFE_UI_CONTROL_TYPES,
     _archive_member_path, _explicit_action_approved,
-    _sensitive_component, _ui_click, extract_user_computer_approvals,
-    computer_control_call, _service_overview,
+    _sensitive_component, _ui_action_allowed, _validate_ui_target, _ui_click,
+    _mouse_click, _keyboard_type,
+    extract_user_computer_approvals, computer_control_call, _service_overview,
 )
 
 
@@ -63,7 +65,9 @@ class ComputerControlTests(unittest.TestCase):
             "computer_list_directory", "computer_search_files",
             "computer_search_everywhere", "computer_read_text_file", "computer_open_folder",
             "computer_open_app", "computer_screenshot",
-            "computer_ui_windows", "computer_ui_controls", "computer_ui_click",
+            "computer_ui_windows", "computer_ui_controls", "computer_ui_inputs",
+            "computer_ui_click", "computer_mouse_click", "computer_mouse_scroll",
+            "computer_keyboard_type", "computer_keyboard_keypress",
             "computer_defender_status", "computer_defender_events",
             "computer_defender_scan", "computer_defender_scan_status",
             "computer_installed_programs", "computer_power_overview",
@@ -73,6 +77,85 @@ class ComputerControlTests(unittest.TestCase):
             "computer_plan_file_organization", "computer_apply_file_organization",
         }.issubset(names))
         self.assertEqual(COMPUTER_TOOL_NAMES, names)
+
+    def test_mouse_keyboard_actions_require_matching_user_intent(self):
+        inspection = [{"role": "user", "content": (
+            "Изучи интерфейс AdsPower, ничего не создавай и не изменяй настройки."
+        )}]
+        self.assertTrue(_ui_action_allowed(inspection, "click"))
+        self.assertTrue(_ui_action_allowed(inspection, "scroll"))
+        self.assertTrue(_ui_action_allowed(inspection, "key"))
+        self.assertFalse(_ui_action_allowed(inspection, "type"))
+        self.assertFalse(_ui_action_allowed(
+            [{"role": "user", "content": "Не нажимай на вкладки."}], "click",
+        ))
+        self.assertTrue(_ui_action_allowed(
+            [{"role": "user", "content": "Введи название профиля в поле Profile name."}],
+            "type",
+        ))
+
+    def test_mouse_and_keyboard_targets_reject_sensitive_or_high_impact_controls(self):
+        self.assertEqual(_validate_ui_target("Dashboard tab"), "Dashboard tab")
+        for target in (
+            "Save button", "Delete account", "Password field", "API key input",
+            "Create profile", "Add account", "New profile",
+        ):
+            with self.subTest(target=target):
+                with self.assertRaises(ValueError):
+                    _validate_ui_target(target)
+
+    def test_mouse_click_and_keyboard_typing_use_guarded_desktop_actions(self):
+        inspection = [{"role": "user", "content": "Изучи интерфейс AdsPower, ничего не создавай."}]
+        class FakeWindow:
+            def __init__(self, focused):
+                self.focused = focused
+            def set_focus(self):
+                return None
+            def get_focus(self):
+                return self.focused
+        class FakeControl:
+            def __init__(self, *, password=False):
+                self.element_info = SimpleNamespace(
+                    control_type="Edit", is_password=password, name="Profile name",
+                )
+                self.value = None
+            def set_edit_text(self, value):
+                self.value = value
+        window = FakeWindow(FakeControl())
+        fake_mouse = SimpleNamespace(
+            size=lambda: (1920, 1080),
+            click=lambda **kwargs: kwargs,
+        )
+        with (
+            patch("console.computer_control._windows_only"),
+            patch("console.computer_control._find_window", return_value=window),
+            patch.dict(sys.modules, {"pyautogui": fake_mouse}),
+        ):
+            clicked = _mouse_click(
+                "AdsPower", 320, 240, "Dashboard tab", "left", 1, inspection,
+            )
+        self.assertTrue(clicked["ok"])
+        with (
+            patch("console.computer_control._windows_only"),
+            patch("console.computer_control._find_window", return_value=window),
+        ):
+            typed = _keyboard_type(
+                "AdsPower", "Test Profile", "Profile name",
+                [{"role": "user", "content": "Создай профиль и введи его название."}],
+            )
+        self.assertTrue(typed["ok"])
+        self.assertEqual(window.focused.value, "Test Profile")
+
+        password_window = FakeWindow(FakeControl(password=True))
+        with (
+            patch("console.computer_control._windows_only"),
+            patch("console.computer_control._find_window", return_value=password_window),
+        ):
+            with self.assertRaises(ValueError):
+                _keyboard_type(
+                    "AdsPower", "not-a-real-password", "Profile name",
+                    [{"role": "user", "content": "Введи текст в поле."}],
+                )
 
     def test_computer_schemas_are_strict(self):
         for tool in COMPUTER_TOOLS:
@@ -102,6 +185,7 @@ class ComputerControlTests(unittest.TestCase):
         for label in (
             "Delete", "Uninstall", "Quick scan", "Full scan", "Apply",
             "Disable protection", "Quarantine", "Save", "Restart",
+            "Create profile", "Add account", "New profile",
             "OK", "Yes", "Next", "Continue",
         ):
             with self.subTest(label=label):
@@ -119,12 +203,12 @@ class ComputerControlTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _ui_click("Settings", "Search", "Edit")
 
-    def test_quick_scan_requires_explicit_latest_user_authorization(self):
+    def test_quick_scan_uses_direct_task_intent_without_second_confirmation(self):
         self.assertEqual(
             extract_user_computer_approvals([
                 {"role": "user", "content": "Можешь проверить ноут на вирусы?"},
             ]),
-            set(),
+            {"defender_quick_scan"},
         )
         self.assertEqual(
             extract_user_computer_approvals([
@@ -151,9 +235,9 @@ class ComputerControlTests(unittest.TestCase):
             set(),
         )
 
-    def test_package_install_requires_exact_package_approval(self):
+    def test_package_install_uses_task_intent_without_exact_phrase(self):
         package_id = "VideoLAN.VLC"
-        self.assertFalse(_explicit_action_approved(
+        self.assertTrue(_explicit_action_approved(
             [{"role": "user", "content": "Установи VLC"}],
             r"(установ|install)", [package_id],
         ))
@@ -161,7 +245,7 @@ class ComputerControlTests(unittest.TestCase):
             [{"role": "user", "content": "Разрешаю установить пакет VideoLAN.VLC из winget."}],
             r"(установ|install)", [package_id],
         ))
-        self.assertTrue(_explicit_action_approved(
+        self.assertFalse(_explicit_action_approved(
             [
                 {"role": "assistant", "content": "Разрешаешь установить пакет VideoLAN.VLC из winget?"},
                 {"role": "user", "content": "Да."},
@@ -184,15 +268,15 @@ class ComputerControlTests(unittest.TestCase):
             r"(установ|install)", [package_id],
         ))
 
-    def test_archive_and_file_move_approvals_bind_exact_paths(self):
+    def test_archive_and_file_move_use_direct_task_intent(self):
         source = r"C:\Users\Andrei\Downloads\sample.zip"
         destination = r"C:\Users\Andrei\Documents\Extracted"
         self.assertTrue(_explicit_action_approved(
             [{"role": "user", "content": f"Разрешаю распаковать {source} в {destination}."}],
             r"(распак|extract)", [source, destination],
         ))
-        self.assertFalse(_explicit_action_approved(
-            [{"role": "user", "content": f"Разрешаю распаковать {source} в {destination}."}],
+        self.assertTrue(_explicit_action_approved(
+            [{"role": "user", "content": f"Распакуй {source} в выбранную папку."}],
             r"(распак|extract)", [source, r"C:\Users\Andrei\Desktop\Other"],
         ))
         self.assertFalse(_explicit_action_approved(
@@ -217,7 +301,7 @@ class ComputerControlTests(unittest.TestCase):
             root / "folder" / "report.txt",
         )
 
-    def test_full_scan_requires_explicit_full_scan_authorization(self):
+    def test_full_scan_and_screenshot_use_direct_task_intent(self):
         self.assertEqual(
             extract_user_computer_approvals([
                 {"role": "user", "content": "Разрешаю полную проверку Microsoft Defender."},
@@ -234,7 +318,7 @@ class ComputerControlTests(unittest.TestCase):
             extract_user_computer_approvals([
                 {"role": "user", "content": "Сделай снимок экрана."},
             ]),
-            set(),
+            {"computer_screenshot"},
         )
         self.assertEqual(
             extract_user_computer_approvals([
@@ -242,14 +326,33 @@ class ComputerControlTests(unittest.TestCase):
             ]),
             set(),
         )
-        with patch("console.computer_control._screenshot") as screenshot:
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Изучи интерфейс AdsPower, ничего не создавай и не изменяй настройки."},
+            ]),
+            {"computer_screenshot"},
+        )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Сделай снимок экрана, но не изменяй настройки."},
+            ]),
+            {"computer_screenshot"},
+        )
+        self.assertEqual(
+            extract_user_computer_approvals([
+                {"role": "user", "content": "Не делай снимок экрана, просто прочитай UI Automation."},
+            ]),
+            set(),
+        )
+        with patch("console.computer_control._screenshot",
+                   return_value={"ok": True, "image_data_url": "data:image/jpeg;base64,AA=="}) as screenshot:
             result, failed = computer_control_call(
                 "computer_screenshot", {},
                 user_messages=[{"role": "user", "content": "Сделай снимок экрана."}],
             )
-        self.assertTrue(failed)
-        self.assertTrue(result["approval_required"])
-        screenshot.assert_not_called()
+        self.assertFalse(failed)
+        self.assertTrue(result["ok"])
+        screenshot.assert_called_once()
         self.assertEqual(
             extract_user_computer_approvals([
                 {"role": "assistant", "content": "Разрешить полную проверку Microsoft Defender?"},

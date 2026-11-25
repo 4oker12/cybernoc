@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 from pathlib import Path
+from urllib import parse
 
 try:
     from .agent import OLLAMA_URL, OllamaClient
@@ -24,6 +25,7 @@ _ALLOWED_ENV = frozenset({
     "CYBERNOVA_BACKUP_KEY_FILE", "CYBERNOVA_ACCESS_SECRET_FILE",
     "CYBERNOVA_HTTP_SCOPE_FILE", "CYBERNOVA_ACCESS_HOST",
     "CYBERNOVA_MCP_URL", "CYBERNOVA_COMM_WORKER",
+    "CYBERNOVA_DEEPSEEK_THINKING", "CYBERNOVA_DEEPSEEK_REASONING_EFFORT",
 })
 
 
@@ -66,6 +68,10 @@ def _read_runtime_env(data: Path) -> tuple[Path, dict[str, str]]:
         values[name] = value
     if values.get("CYBERNOVA_LLM_PROVIDER") not in {"ollama", "openai_compatible"}:
         raise ModelSettingsError("runtime_provider_invalid")
+    if values.get("CYBERNOVA_DEEPSEEK_THINKING", "enabled") not in {"enabled", "disabled"}:
+        raise ModelSettingsError("invalid_deepseek_thinking_mode")
+    if values.get("CYBERNOVA_DEEPSEEK_REASONING_EFFORT", "high") not in {"low", "high", "max"}:
+        raise ModelSettingsError("invalid_deepseek_reasoning_effort")
     return path, values
 
 
@@ -122,16 +128,74 @@ def get_model_settings() -> dict:
     provider = os.environ.get("CYBERNOVA_LLM_PROVIDER", values.get("CYBERNOVA_LLM_PROVIDER", "ollama"))
     model = os.environ.get("CYBERNOVA_MODEL", values.get("CYBERNOVA_MODEL", ""))
     base_url = os.environ.get("CYBERNOVA_LLM_BASE_URL", values.get("CYBERNOVA_LLM_BASE_URL", ""))
+    thinking = os.environ.get("CYBERNOVA_DEEPSEEK_THINKING",
+                              values.get("CYBERNOVA_DEEPSEEK_THINKING", "enabled"))
+    effort = os.environ.get("CYBERNOVA_DEEPSEEK_REASONING_EFFORT",
+                            values.get("CYBERNOVA_DEEPSEEK_REASONING_EFFORT", "high"))
+    if thinking not in {"enabled", "disabled"} or effort not in {"low", "high", "max"}:
+        raise ModelSettingsError("invalid_deepseek_reasoning_configuration")
+    reasoning_effort = "none" if thinking == "disabled" else effort
     key_path = _key_path(data, values)
     configured = bool(os.environ.get("CYBERNOVA_LLM_API_KEY", "").strip() or _read_key(key_path))
     return {
         "provider": provider,
         "model": model,
         "base_url": base_url,
+        "reasoning_effort": reasoning_effort,
         "api_key_configured": configured,
         "api_key_hint": "Ключ сохранён локально" if configured else "Ключ не задан",
         "restart_required": False,
     }
+
+
+def test_model_connection(payload: dict) -> dict:
+    """Verify DeepSeek credentials and model availability without a billable completion."""
+    if not isinstance(payload, dict):
+        raise ModelSettingsError("invalid_model_settings")
+    if payload.get("provider") != "openai_compatible":
+        return {"status": "not_required"}
+    base_url = payload.get("base_url", "")
+    if not isinstance(base_url, str):
+        raise ModelSettingsError("invalid_model_base_url")
+    try:
+        parsed = parse.urlsplit(base_url)
+    except ValueError:
+        raise ModelSettingsError("invalid_model_base_url") from None
+    if parsed.hostname != "api.deepseek.com":
+        return {"status": "not_checked", "provider": "openai_compatible"}
+    model = payload.get("model")
+    if not isinstance(model, str) or not _VALID_MODEL.fullmatch(model.strip()):
+        raise ModelSettingsError("invalid_model_id")
+    supplied_key = payload.get("api_key")
+    if isinstance(supplied_key, str) and supplied_key.strip():
+        api_key = supplied_key.strip()
+    else:
+        data = _data_dir()
+        _, values = _read_runtime_env(data)
+        key_path = _key_path(data, values)
+        api_key = _read_key(key_path) or os.environ.get("CYBERNOVA_LLM_API_KEY", "").strip()
+    if api_key and (
+        not 8 <= len(api_key) <= 10000 or any(ord(char) < 32 for char in api_key)
+    ):
+        raise ModelSettingsError("invalid_api_key")
+    try:
+        client = OpenAICompatibleClient(
+            base_url=base_url.strip(), model=model.strip(), api_key=api_key,
+        )
+        model_ids = client.list_models()
+    except ModelConfigError as exc:
+        code = str(exc)
+        if code.endswith("_401") or code.endswith("_403"):
+            raise ModelSettingsError("deepseek_authentication_failed") from None
+        if code.endswith("_429"):
+            raise ModelSettingsError("deepseek_rate_limited") from None
+        if code in {"remote_api_key_required", "llm_base_url_required", "invalid_llm_url",
+                    "remote_model_requires_https"}:
+            raise ModelSettingsError(code) from None
+        raise ModelSettingsError("deepseek_connection_failed") from None
+    if model.strip() not in model_ids:
+        raise ModelSettingsError("deepseek_model_not_available")
+    return {"status": "connected", "provider": "DeepSeek", "model": model.strip()}
 
 
 def apply_model_settings(payload: dict):
@@ -142,6 +206,9 @@ def apply_model_settings(payload: dict):
     base_url = payload.get("base_url", "")
     api_key = payload.get("api_key")
     clear_api_key = payload.get("clear_api_key", False)
+    requested_effort = payload.get("reasoning_effort")
+    if requested_effort is not None and requested_effort not in {"none", "low", "high", "max"}:
+        raise ModelSettingsError("invalid_deepseek_reasoning_effort")
     if provider not in {"ollama", "openai_compatible"}:
         raise ModelSettingsError("invalid_model_provider")
     if not isinstance(model, str) or not _VALID_MODEL.fullmatch(model.strip()):
@@ -162,6 +229,19 @@ def apply_model_settings(payload: dict):
 
     data = _data_dir()
     env_path, values = _read_runtime_env(data)
+    old_thinking = os.environ.get("CYBERNOVA_DEEPSEEK_THINKING",
+                                  values.get("CYBERNOVA_DEEPSEEK_THINKING", "enabled"))
+    old_effort = os.environ.get("CYBERNOVA_DEEPSEEK_REASONING_EFFORT",
+                                values.get("CYBERNOVA_DEEPSEEK_REASONING_EFFORT", "high"))
+    thinking = "disabled" if requested_effort == "none" else "enabled" if requested_effort else old_thinking
+    effort = requested_effort if requested_effort in {"low", "high", "max"} else old_effort
+    if thinking not in {"enabled", "disabled"} or effort not in {"low", "high", "max"}:
+        raise ModelSettingsError("invalid_deepseek_reasoning_configuration")
+    if requested_effort is not None and not (
+        provider == "openai_compatible" and model.startswith("deepseek-")
+        and parse.urlsplit(base_url).hostname == "api.deepseek.com"
+    ):
+        raise ModelSettingsError("reasoning_only_for_deepseek_api")
     key_path = data / "model_api_key"
     old_key = _read_key(key_path)
     if clear_api_key:
@@ -197,6 +277,8 @@ def apply_model_settings(payload: dict):
         "CYBERNOVA_MODEL": model,
         "CYBERNOVA_LLM_BASE_URL": base_url,
         "CYBERNOVA_LLM_API_KEY_FILE": str(key_path) if provider == "openai_compatible" else "",
+        "CYBERNOVA_DEEPSEEK_THINKING": thinking,
+        "CYBERNOVA_DEEPSEEK_REASONING_EFFORT": effort,
     })
     encoded = "".join(name + "=" + value + "\n" for name, value in values.items())
     if len(encoded.encode("utf-8")) > 65536:
@@ -230,6 +312,8 @@ def apply_model_settings(payload: dict):
 
     os.environ["CYBERNOVA_LLM_PROVIDER"] = provider
     os.environ["CYBERNOVA_MODEL"] = model
+    os.environ["CYBERNOVA_DEEPSEEK_THINKING"] = thinking
+    os.environ["CYBERNOVA_DEEPSEEK_REASONING_EFFORT"] = effort
     os.environ["CYBERNOVA_LLM_BASE_URL"] = base_url
     os.environ["CYBERNOVA_LLM_API_KEY_FILE"] = (
         str(key_path) if provider == "openai_compatible" else ""
