@@ -25,8 +25,10 @@ from urllib.parse import urljoin, urlsplit
 
 try:
     from .diagnostics import event as diagnostic_event
+    from .browser_backend import launch_with_backend
 except ImportError:
     from diagnostics import event as diagnostic_event
+    from browser_backend import launch_with_backend
 
 MAX_URL = 2048
 MAX_TEXT = 6500
@@ -124,7 +126,7 @@ BROWSER_CONTROL_TOOLS = [
           {"direction": {"type": "string", "enum": ["up", "down"]},
            "pixels": {"type": "integer", "description": "100 to 1200 pixels"}}, ["direction", "pixels"]),
     _tool("browser_screenshot", "Capture the visible viewport of the current Chromium tab as an image for a vision-capable model. Text-only models should use browser_snapshot and browser_network instead."),
-    _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers."),
+    _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers. Patchright disables Console API capture; set CYBERNOVA_BROWSER_BACKEND=playwright before starting a new session when full console messages are required."),
     _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
           "Submit one visible form/button only when the latest user message explicitly asks for the relevant action. User-requested account sign-up/registration is permitted. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Payment, purchase, deletion and account-removal actions remain blocked.",
@@ -573,7 +575,7 @@ def _disable_profile_session_restore(profile_dir: Path) -> bool:
 class BrowserSession:
     """One isolated persistent browser context, serialized on its own worker thread.
 
-    Playwright sync objects never cross threads. Cookies/local storage persist
+    Browser-driver sync objects never cross threads. Cookies/local storage persist
     in this dedicated profile on disk and are never returned to the model.
     The user's personal Chrome profile is never opened or inspected.
     """
@@ -588,6 +590,7 @@ class BrowserSession:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cybernova-chromium")
         self._closed = False
         self._pw = None
+        self._backend = None
         self._browser = None
         self._context = None
         self._page = None
@@ -1897,6 +1900,7 @@ class BrowserSession:
         except Exception:
             pass
         self._page = self._context = self._browser = self._pw = None
+        self._backend = None
         self._attached_pages.clear()
         diagnostic_event("browser_shutdown", status="ok")
 
