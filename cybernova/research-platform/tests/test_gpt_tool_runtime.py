@@ -37,6 +37,8 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertTrue({
             "account_mission_create", "account_mission_checkpoint",
             "account_mission_get", "account_mission_list", "account_mission_resume",
+            "browser_generate_and_fill_password", "browser_fill_saved_credential",
+            "account_vault_list", "account_vault_mark_verified",
         }.issubset(names))
         self.assertTrue({
             "computer_system_overview", "computer_performance_snapshot",
@@ -80,6 +82,9 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("browser_switch_tab", names)
         self.assertIn("account_mission_create", names)
         self.assertIn("account_mission_checkpoint", names)
+        self.assertIn("browser_generate_and_fill_password", names)
+        self.assertIn("browser_fill_saved_credential", names)
+        self.assertIn("account_vault_list", names)
         self.assertNotIn("computer_system_overview", names)
         self.assertNotIn("terminal_run", names)
         self.assertEqual(
@@ -144,6 +149,88 @@ class GPTToolRuntimeTests(unittest.TestCase):
                 self.assertEqual(resumed["mission"]["status"], "running")
                 self.assertEqual(resumed["mission"]["steps"][0]["status"], "waiting_owner")
                 self.assertEqual(tool_group_for_name("account_mission_get"), "browser")
+
+    def test_generated_and_saved_passwords_never_return_to_the_model(self):
+        from threading import RLock
+
+        class FakeSession:
+            def __init__(self):
+                self.filled = []
+            def set_authorized_hosts(self, hosts):
+                pass
+            def current_origin(self):
+                return "https://signin.aws.amazon.com"
+            def fill_owner_input(self, label, value, kind, expected_origin=""):
+                self.filled.append((label, value, kind, expected_origin))
+                return {"ok": True, "visible_text": "Password saved"}
+
+        class FakeVault:
+            def __init__(self):
+                self.password = None
+            def store_password(self, service, username, password, origin, label):
+                self.password = password
+                return {"record_id": "av_" + "z" * 20, "service": service,
+                        "username": username, "origin": origin, "status": "pending"}
+            def _secret_for_browser_fill(self, record_id, origin):
+                return ({"record_id": record_id, "service": "AWS",
+                         "username": "owner@example.net", "origin": origin,
+                         "status": "active"}, "ExistingSavedPassword!456")
+            def list_entries(self, limit, service):
+                return [{"record_id": "av_" + "z" * 20, "service": "AWS"}]
+            def mark_verified(self, record_id):
+                return {"record_id": record_id, "status": "active"}
+
+        runtime = GPTToolRuntime()
+        session = FakeSession()
+        vault = FakeVault()
+        entry = {"session": session, "call_lock": RLock()}
+        with patch.object(runtime._browser_pool, "acquire", return_value=("fake", entry)), \
+             patch.object(runtime._browser_pool, "release"), \
+             patch("console.gpt_tool_runtime.account_vault", return_value=vault):
+            generated, failed = runtime.call(
+                "browser_generate_and_fill_password",
+                {"service": "AWS", "username": "owner@example.net",
+                 "account_label": "personal", "field_label": "Password"},
+                conversation_key="deepseek:" + "a" * 32, enabled_groups=["browser"],
+            )
+            self.assertFalse(failed)
+            self.assertTrue(generated["password_generated_locally"])
+            self.assertEqual(generated["credential_record"]["status"], "pending")
+            self.assertNotIn(vault.password, str(generated))
+            self.assertEqual(session.filled[-1][1], vault.password)
+
+            saved, failed = runtime.call(
+                "browser_fill_saved_credential",
+                {"record_id": "av_" + "z" * 20, "field_label": "Password"},
+                conversation_key="deepseek:" + "a" * 32, enabled_groups=["browser"],
+            )
+            self.assertFalse(failed)
+            self.assertTrue(saved["saved_credential_filled"])
+            self.assertNotIn("ExistingSavedPassword!456", str(saved))
+            self.assertEqual(session.filled[-1][1], "ExistingSavedPassword!456")
+            self.assertEqual(session.filled[-1][3], "https://signin.aws.amazon.com")
+
+    def test_account_vault_metadata_tools_do_not_expose_passwords(self):
+        class FakeVault:
+            def list_entries(self, limit, service):
+                return [{"record_id": "av_" + "q" * 20, "service": service}]
+            def mark_verified(self, record_id):
+                return {"record_id": record_id, "status": "active"}
+
+        runtime = GPTToolRuntime()
+        with patch("console.gpt_tool_runtime.account_vault", return_value=FakeVault()):
+            listed, failed = runtime.call(
+                "account_vault_list", {"service": "AWS", "limit": 10},
+                enabled_groups=["browser"],
+            )
+            self.assertFalse(failed)
+            self.assertEqual(listed["entries"][0]["service"], "AWS")
+            verified, failed = runtime.call(
+                "account_vault_mark_verified", {"record_id": "av_" + "q" * 20},
+                enabled_groups=["browser"],
+            )
+            self.assertFalse(failed)
+            self.assertEqual(verified["entry"]["status"], "active")
 
     def test_all_account_gpt_function_schemas_are_strict_and_closed(self):
         for tool in build_tool_catalog():
