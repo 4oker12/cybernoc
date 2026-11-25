@@ -337,23 +337,48 @@ class BrowserSession:
         except FutureTimeout:
             raise ValueError("browser_action_timeout") from None
 
-    def fill_owner_input(self, label: str, value: str, input_type: str) -> dict:
+    def current_origin(self) -> str:
         if self._closed:
             raise ValueError("browser_session_closed")
         try:
             return self._executor.submit(
-                copy_context().run, self._fill_owner_input, label, value, input_type
+                copy_context().run, self._current_origin
+            ).result(timeout=15)
+        except FutureTimeout:
+            raise ValueError("browser_action_timeout") from None
+
+    def _current_origin(self) -> str:
+        self._ensure()
+        parsed = urlsplit(self._page.url)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("browser_current_page_not_https")
+        host = parsed.hostname.lower()
+        return "https://" + host
+
+    def fill_owner_input(
+        self, label: str, value: str, input_type: str, expected_origin: str = "",
+    ) -> dict:
+        if self._closed:
+            raise ValueError("browser_session_closed")
+        try:
+            return self._executor.submit(
+                copy_context().run, self._fill_owner_input,
+                label, value, input_type, expected_origin,
             ).result(timeout=45)
         except FutureTimeout:
             raise ValueError("browser_action_timeout") from None
 
-    def _fill_owner_input(self, label: str, value: str, input_type: str) -> dict:
+    def _fill_owner_input(
+        self, label: str, value: str, input_type: str, expected_origin: str = "",
+    ) -> dict:
         if (not isinstance(label, str) or not label.strip() or len(label) > 120
                 or not isinstance(value, str) or not value or len(value) > 512):
             raise ValueError("owner_browser_fill_arguments_invalid")
         if input_type not in {"otp", "password", "contact"}:
             raise ValueError("owner_browser_fill_type_invalid")
         self._ensure()
+        if expected_origin and self._current_origin() != expected_origin:
+            raise ValueError("owner_browser_origin_mismatch")
         locator = self._page.get_by_label(label.strip(), exact=True)
         if locator.count() == 0:
             locator = self._page.get_by_placeholder(label.strip(), exact=True)
