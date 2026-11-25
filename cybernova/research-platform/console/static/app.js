@@ -650,6 +650,9 @@ async function pollOwnerInput(){
     $("ownerInputFieldLabel").textContent=item.field_label||"Значение";
     $("ownerInputError").textContent="";
     const type=item.input_type;
+    $("ownerInputCancel").textContent=
+      type==="payment_confirmation"?"Отклонить действие":
+      type==="payment_card"?"Отмена":"Отмена задачи";
     if(type==="payment_card"){
       $("ownerInputSingleField").hidden=true;
       $("ownerInputVaultOption").hidden=true;
