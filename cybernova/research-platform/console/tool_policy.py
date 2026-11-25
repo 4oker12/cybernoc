@@ -222,10 +222,12 @@ def task_intent_matches(name: str, description: str, user_text: str) -> bool:
     denials = (
         (r"(?:register|sign.?up|create.{0,20}account)",
          r"(?i)(?:\b(?:cancel|stop|abort)\s+(?:the\s+)?(?:registration|sign.?up|account creation)\b|"
+         r"\b(?:отмени|прекрати|останови)\s+(?:эту\s+)?регистрац\w*|"
          r"\bне\s+(?:регистрируй|зарегистрируй|создавай|создай)\b)"),
         (r"(?:send|submit|publish|comment|email)",
-         r"(?i)(?:\bне\s+(?:отправляй|отправлять|отправить)\s+(?:эту\s+)?(?:форму|заявку|сообщение|письмо)\b|"
-         r"\b(?:do\s+not|don't|never)\s+(?:submit|send)\s+(?:the\s+)?(?:form|request|message|email)\b)"),
+         r"(?i)(?:\bничего\s+не\s+(?:отправляй|отправлять|отправить)\b|"
+         r"\bне\s+(?:отправляй|отправлять|отправить)\s+(?:эту\s+)?(?:форму|заявку|сообщение|письмо)\b|"
+         r"\b(?:do\s+not|don't|never)\s+(?:submit|send)\s+(?:the\s+)?(?:form|request|message|email|anything)\b)"),
         (r"(?:delete|remove|destroy|drop|purge|format)",
          r"(?i)(?:\bне\s+(?:удаляй|удалять|уничтожай|форматируй)\b|\b(?:do\s+not|don't|never)\s+(?:delete|remove|destroy|drop|purge|format)\b)"),
         (r"(?:uninstall|install|package)",
@@ -250,6 +252,11 @@ def task_intent_matches(name: str, description: str, user_text: str) -> bool:
         (r"(?:archive.?extract|extract|unpack)", r"(?:распак|извлеч|extract|unpack)"),
         (r"(?:file.?move|organize)", r"(?:перемест|move|организ|сортир)"),
         (r"(?:shutdown|restart|kill|terminate)", r"(?:выключ|заверш|останов|перезапуск|restart|shutdown|kill|terminate)"),
+        (r"(?:payment|pay|purchase|checkout|billing)",
+         r"(?:\bpay\b|\bmake\s+(?:a\s+)?payment\b|\bpurchase\b|\bbuy\b|"
+         r"\bcheckout\b|\bsubscribe\b|\bverify.{0,20}payment method\b|"
+         r"\bpayment verification\b|оплат\w*|провер\w*.{0,20}платежн|"
+         r"подтверд\w*.{0,20}платежн)"),
     )
     for definition_pattern, intent_pattern in groups:
         if re.search(definition_pattern, definition) and re.search(intent_pattern, text, re.IGNORECASE):

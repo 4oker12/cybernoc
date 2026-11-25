@@ -219,10 +219,6 @@ def _user_messages_text(messages) -> str:
     return "\n".join(parts)[-48000:]
 
 
-_ACCOUNT_CREATION_INTENT = re.compile(
-    r"(?i)(?:\bcreate\b.{0,50}\baccount\b|\bregister\b|\bsign[\s-]?up\b|"
-    r"создай.{0,50}аккаунт|зарегистр|регай|заведи.{0,50}аккаунт)"
-)
 _PAYMENT_ACTION_INTENT = re.compile(
     r"(?i)(?:\bpay(?:\s+now)?\b|\bmake\s+(?:a\s+)?payment\b|\bpurchase\b|"
     r"\bbuy(?:\s+now)?\b|\bcheckout\b|\bsubscribe\b|\bplace\s+order\b|"
@@ -954,30 +950,68 @@ class GPTToolRuntime:
                         or target.get("registration_context")
                     )
                 )
-                if not (verification_in_registration or explicit_payment_action):
-                    return {
-                        "ok": False, "status": "task_intent_required",
-                        "error": "payment_action_not_authorized_by_active_task",
-                        "message": (
-                            "Платёжная форма не отправлена: исходное поручение должно "
-                            "охватывать проверку платёжного метода или само платёжное действие."
-                        ),
-                    }, True
+                if verification_in_registration or explicit_payment_action:
+                    key, entry = self._browser_pool.acquire(conversation_key)
+                    try:
+                        with entry["call_lock"]:
+                            session = entry["session"]
+                            session.set_authorized_hosts(authorized_targets or set())
+                            result = session.submit_payment_after_owner_approval(
+                                button_name, target["merchant_origin"], target["action_origin"],
+                            )
+                            if isinstance(result, dict):
+                                result["task_authorized"] = True
+                                result["authorization_scope"] = (
+                                    "account_registration_payment_verification"
+                                    if verification_in_registration else "explicit_payment_action"
+                                )
+                            return result, not bool(result.get("ok"))
+                    finally:
+                        self._browser_pool.release(key, entry)
 
+                # No task-level authorization covers this payment action. Keep the
+                # protected one-time confirmation as the fallback; it is not repeated
+                # when the active task already authorized this exact workflow.
+                request = owner_input_broker.request_and_wait(
+                    conversation_key, purpose, "payment_confirmation",
+                    button_name, timeout=300,
+                    expected_origin=target["merchant_origin"],
+                    action_origin=target["action_origin"],
+                    action_button=button_name,
+                )
+                if not request.get("ok"):
+                    key, entry = self._browser_pool.acquire(conversation_key)
+                    try:
+                        with entry["call_lock"]:
+                            session = entry["session"]
+                            session.set_authorized_hosts(authorized_targets or set())
+                            _clear_payment_form_for_owner(session)
+                    finally:
+                        self._browser_pool.release(key, entry)
+                    return request, True
+                decision, origin, action_origin, approved_button = (
+                    owner_input_broker.consume_payment_confirmation(
+                        conversation_key, request["request_id"]
+                    )
+                )
+                if not decision:
+                    key, entry = self._browser_pool.acquire(conversation_key)
+                    try:
+                        with entry["call_lock"]:
+                            session = entry["session"]
+                            session.set_authorized_hosts(authorized_targets or set())
+                            _clear_payment_form_for_owner(session)
+                    finally:
+                        self._browser_pool.release(key, entry)
+                    return {"ok": False, "status": "owner_declined_payment_action"}, True
                 key, entry = self._browser_pool.acquire(conversation_key)
                 try:
                     with entry["call_lock"]:
                         session = entry["session"]
                         session.set_authorized_hosts(authorized_targets or set())
                         result = session.submit_payment_after_owner_approval(
-                            button_name, target["merchant_origin"], target["action_origin"],
+                            approved_button, origin, action_origin,
                         )
-                        if isinstance(result, dict):
-                            result["task_authorized"] = True
-                            result["authorization_scope"] = (
-                                "account_registration_payment_verification"
-                                if verification_in_registration else "explicit_payment_action"
-                            )
                         return result, not bool(result.get("ok"))
                 finally:
                     self._browser_pool.release(key, entry)

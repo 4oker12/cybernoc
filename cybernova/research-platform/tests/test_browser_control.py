@@ -192,6 +192,14 @@ class BrowserControlTests(unittest.TestCase):
         self.assertFalse(task_intent_matches(
             "browser_submit", description, "Изучи форму регистрации, ничего не отправляй."
         ))
+        self.assertTrue(task_intent_matches(
+            "browser_submit", description,
+            "Зарегистрируй аккаунт, не спрашивай подтверждение перед каждым шагом."
+        ))
+        self.assertTrue(task_intent_matches(
+            "browser_submit_payment", "Submit a payment form",
+            "Оплати счет на 10 долларов."
+        ))
 
     def test_browser_submit_uses_active_task_authorization_across_follow_up_turns(self):
         from console.gpt_tool_runtime import GPTToolRuntime
