@@ -655,11 +655,24 @@ class BrowserSession:
         )
         submit_target = form_action or self._page.url
         validate_public_url(submit_target, self._authorized_hosts)
+        candidates = self._payment_candidates()
+        has_card_form = (
+            len(candidates.get("card_number", [])) == 1
+            and len(candidates.get("cvv", [])) == 1
+            and (
+                len(candidates.get("expiry", [])) == 1
+                or (len(candidates.get("expiry_month", [])) == 1
+                    and len(candidates.get("expiry_year", [])) == 1)
+            )
+        )
         return {
             "ok": True, "button": button_name.strip(),
             "merchant_origin": self._current_origin(),
             "action_origin": _origin(submit_target),
-            "payment_target": bool(PAYMENT_SUBMIT_TARGET.search(button_name + " " + submit_target)),
+            "payment_target": bool(
+                PAYMENT_SUBMIT_TARGET.search(button_name + " " + submit_target)
+                or has_card_form
+            ),
         }
 
     def submit_payment_after_owner_approval(
