@@ -51,8 +51,7 @@ IRREVERSIBLE_SUBMIT_TARGET = re.compile(
     r"unsubscribe|\bcancel\b|\brevoke\b|\bdisable\b|\bdeactivate\b|"
     r"\blog\s*out\b|\bsign\s*out\b|\breset\b|\bdisconnect\b|"
     r"\bterminate\b|\berase\b|\bdestroy\b|"
-    r"оплат|купить|оформить\s+заказ|брон|резерв|регист|зарегистр|"
-    r"создать\s+аккаунт|новый\s+аккаунт|удал|отмен|отпис|"
+    r"оплат|купить|оформить\s+заказ|брон|резерв|удал|отмен|отпис|"
     r"сброс|отключ|разорвать|деактив|стереть)"
 )
 
