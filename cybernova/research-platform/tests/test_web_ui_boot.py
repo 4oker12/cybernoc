@@ -196,6 +196,7 @@ const fetch=async path=>({
  }
 });
 const context={document,window,fetch,URLSearchParams,console,
+  setTimeout:()=>0,clearTimeout:()=>{},
   navigator:{clipboard:{readText:async()=>'PS> Get-Process\\npython 1234'}}};
 vm.runInNewContext(app,context);
 if(typeof callbacks.DOMContentLoaded!=='function')throw Error('Init handler missing');

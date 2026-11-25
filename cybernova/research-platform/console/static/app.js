@@ -992,6 +992,7 @@ function setMode(mode){
   $("sendStatus").textContent=!qwen&&!state.gptConnected?
     "Подключи ChatGPT через «Аккаунт GPT»":"Готов";
   $("sidebar").classList.remove("open");
+  if(qwen){void refreshTaskList();void pollTask();}
   if(gpt)void refreshGPTThreads();
   if(collab)void refreshCollabRuns();
   if(!collab)updateTokenUsageStatus(mode);
@@ -1149,10 +1150,13 @@ function taskStatusLabel(status){
   };
   return labels[String(status||"idle").toLowerCase()]||"Неизвестный статус";
 }
+let taskListInFlight=false,taskPollInFlight=false,collabListInFlight=false;
 async function refreshTaskList(){
+  if(taskListInFlight)return true;
+  taskListInFlight=true;
   try{
-    const response=await fetch("/api/comm/tasks",{cache:"no-store"});
-    if(!response.ok)return;
+    const response=await fetch("/api/comm/tasks",{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    if(!response.ok)throw Error("HTTP "+response.status);
     const body=await response.json();
     const list=$("taskList");
     list.replaceChildren();
@@ -1174,7 +1178,12 @@ async function refreshTaskList(){
       list.append(button);
     }
     if(!list.childNodes.length)list.append(node("p","muted","Пока нет исследований."));
-  }catch(_){}
+    return true;
+  }catch(error){
+    if(state.mode==="qwen"&&!state.qwenRunning)
+      $("sendStatus").textContent="Не удалось обновить задачи: "+String(error.message||error);
+    return false;
+  }finally{taskListInFlight=false;}
 }
 function showTaskStatus(status){
   $("commState").textContent=status==="needs_review"?
@@ -1231,12 +1240,13 @@ async function resumeTask(taskId){
   }
 }
 async function pollTask(){
-  if(!state.sessionId||!state.taskId||state.qwenRunning)return;
+  if(!state.sessionId||!state.taskId||state.qwenRunning||taskPollInFlight)return true;
+  taskPollInFlight=true;
   const sid=state.sessionId,task=state.taskId;
   try{
     const response=await fetch("/api/comm/events?session_id="+encodeURIComponent(sid)+
-      "&after_seq="+state.lastSeq,{cache:"no-store"});
-    if(!response.ok)return;
+      "&after_seq="+state.lastSeq,{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    if(!response.ok)throw Error("HTTP "+response.status);
     const data=await response.json();
     if(state.sessionId!==sid||state.taskId!==task||state.qwenRunning)return;
     for(const message of data.messages||[]){
@@ -1245,7 +1255,11 @@ async function pollTask(){
     }
     showTaskStatus(data.task?.status);
     if((data.messages||[]).length)void refreshTaskList();
-  }catch(_){}
+    return true;
+  }catch(error){
+    if(state.mode==="qwen")$("commState").textContent="Ошибка обновления задачи: "+String(error.message||error);
+    return false;
+  }finally{taskPollInFlight=false;}
 }
 
 async function copyReviewPacket(){
@@ -1837,9 +1851,11 @@ function renderCollabRun(run){
   toBottom();
 }
 async function refreshCollabRuns(){
+  if(collabListInFlight)return true;
+  collabListInFlight=true;
   try{
-    const response=await fetch("/api/collab/runs",{cache:"no-store"});
-    if(!response.ok)return;
+    const response=await fetch("/api/collab/runs",{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    if(!response.ok)throw Error("HTTP "+response.status);
     const data=await response.json();
     const list=$("collabRunList");
     list.replaceChildren();
@@ -1853,7 +1869,34 @@ async function refreshCollabRuns(){
       list.append(button);
     }
     if(!list.childNodes.length)list.append(node("p","muted","Пока нет совместных диалогов."));
-  }catch(_){}
+    return true;
+  }catch(error){
+    if(state.mode==="collab")$("collabStatus").textContent="Ошибка обновления диалогов: "+String(error.message||error);
+    return false;
+  }finally{collabListInFlight=false;}
+}
+let backgroundTimer=null,backgroundPolling=false,backgroundFailures=0;
+async function pollBackground(){
+  if(backgroundPolling)return;
+  backgroundPolling=true;
+  let ok=true;
+  try{
+    if(document.visibilityState!=="hidden"){
+      if(state.mode==="qwen"){
+        if(state.taskId)ok=(await pollTask())!==false&&ok;
+        ok=(await refreshTaskList())!==false&&ok;
+      }else if(state.mode==="collab"){
+        ok=(await refreshCollabRuns())!==false&&ok;
+      }
+    }
+  }finally{
+    backgroundPolling=false;
+    backgroundFailures=ok?0:Math.min(4,backgroundFailures+1);
+    const base=document.visibilityState==="hidden"?60000:
+      state.mode==="qwen"&&state.taskId?10000:30000;
+    backgroundTimer=setTimeout(()=>{void pollBackground();},
+      Math.min(60000,base*Math.pow(2,backgroundFailures)));
+  }
 }
 async function openCollabRun(taskId){
   if(state.collabLooping)return;
@@ -2082,11 +2125,13 @@ function init(){
   });
   status();
   void refreshTaskList();
-  void refreshGPTThreads();
-  void refreshCollabRuns();
-  window.setInterval(()=>{void pollTask();},5000);
-  window.setInterval(()=>{void refreshTaskList();},15000);
-  window.setInterval(()=>{if(state.mode==="collab")void refreshCollabRuns();},15000);
+  backgroundTimer=setTimeout(()=>{void pollBackground();},15000);
+  document.addEventListener("visibilitychange",()=>{
+    if(document.visibilityState!=="hidden"&&!backgroundPolling){
+      clearTimeout(backgroundTimer);
+      backgroundTimer=setTimeout(()=>{void pollBackground();},0);
+    }
+  });
 }
 window.addEventListener("cybernova:model-config-applied",event=>{
   state.qwenModel=displayModelName(event.detail?.model||state.qwenModel);
