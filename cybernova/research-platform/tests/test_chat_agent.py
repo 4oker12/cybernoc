@@ -671,8 +671,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(out["tool_calls"], 0)
         self.assertEqual(out["selected_by"], "none")
         self.assertEqual(mcp.calls, [])
-        self.assertEqual(len(lm.prompts), 2)  # Simple conversation skips evidence review.
-        self.assertIsNone(lm.prompts[-1][1])
+        self.assertEqual(len(lm.prompts), 1)
         self.assertIn("http_get", [t["function"]["name"] for t in lm.prompts[0][1]])
         self.assertEqual(out["answer"], "Объясню без инструментов.")
 
@@ -791,6 +790,37 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(out["answer"], "Итог: сеть 192.0.2.0/24.")
         self.assertNotIn("DSML", out["answer"])
         self.assertEqual(len(lm.prompts), 4)  # Includes second-pass audit.
+
+    def test_routine_read_skips_extra_review_but_preserves_evidence(self):
+        runtime = FakeLocalToolRuntime()
+        runtime.tools[0]["name"] = "terminal_status"
+        runtime.tool_map = {"terminal_status": runtime.tools[0]}
+        model = FakeOllama([calls(("terminal_status", {})),
+                           {"role": "assistant", "content": "Windows"}])
+        answer = Agent(model, lambda: FakeMCP(), local_tool_runtime=runtime).run(
+            [], "Check the terminal status",
+        )
+        self.assertEqual(len(model.prompts), 2)
+        self.assertEqual(answer["review"]["scope"], "routine_read")
+        self.assertEqual(answer["events"][0]["result"]["os"], "Windows")
+
+    def test_compact_context_deduplicates_equal_browser_snapshots(self):
+        page = {"ok": True, "url": "https://example.com", "title": "Example",
+                "visible_text": "body", "form_fields": [{"label": "Name"}]}
+        messages = [{"role": "user", "content": "Read the page"}]
+        for index, result in enumerate((page, {**page, "http_status": 200},
+                                        {**page, "form_fields": [{"label": "Email"}]})):
+            messages.extend([
+                {"role": "assistant", "tool_calls": [{"id": f"call_{index}",
+                  "function": {"name": "browser_snapshot", "arguments": "{}"}}]},
+                {"role": "tool", "tool_name": "browser_snapshot", "content": json.dumps(result)},
+            ])
+        results = [json.loads(item["content"]) for item in _compact_context(messages)
+                   if item["role"] == "tool"]
+        self.assertEqual(results[0], page)
+        self.assertEqual(results[1]["http_status"], 200)
+        self.assertNotIn("visible_text", results[1])
+        self.assertEqual(results[2]["form_fields"], [{"label": "Email"}])
 
     def test_compact_context_keeps_recent_tool_pairs_and_bounds_payloads(self):
         messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "task"}]

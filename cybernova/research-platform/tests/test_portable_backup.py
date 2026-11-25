@@ -1,5 +1,6 @@
 """Portable encrypted-backup acceptance tests (no live Vast/database)."""
 from __future__ import annotations
+from contextlib import closing
 
 import json
 from pathlib import Path
@@ -21,7 +22,7 @@ class BackupTests(unittest.TestCase):
         self.key=self.root/"private_key"
         create_key(self.key)
         self.source=self.root/"sample.sqlite3"
-        with sqlite3.connect(self.source) as db:
+        with closing(sqlite3.connect(self.source)) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("CREATE TABLE tasks(name TEXT PRIMARY KEY)")
             db.execute("INSERT INTO tasks VALUES(?)", ("research-123",))
@@ -37,7 +38,7 @@ class BackupTests(unittest.TestCase):
         destination=self.root/"restored.sqlite3"
         response=restore(self.archive,destination,key_path=self.key)
         self.assertEqual(response["restored_to"],str(destination))
-        with sqlite3.connect(destination) as db:
+        with closing(sqlite3.connect(destination)) as db, db:
             rows=db.execute("SELECT name FROM tasks").fetchall()
         self.assertEqual(rows,[("research-123",)])
 

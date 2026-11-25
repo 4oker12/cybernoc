@@ -1,4 +1,5 @@
 """No-network tests for bounded, persisted two-agent collaboration."""
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -121,7 +122,7 @@ class CollaborationTests(unittest.TestCase):
         from sqlite3 import connect
         legacy=Path(self.root)/"legacy.sqlite3"
         previous_comm=CommunicationStore(legacy)
-        with connect(legacy) as db:
+        with closing(connect(legacy)) as db, db:
             db.execute("""
                 CREATE TABLE collaboration_runs (
                     task_id TEXT PRIMARY KEY, model TEXT NOT NULL,
