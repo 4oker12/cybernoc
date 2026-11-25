@@ -1,5 +1,0 @@
-# Optional NVIDIA GPU access for the Ollama profile.
-# Requires NVIDIA Container Toolkit on the Docker host.
-services:
-  ollama:
-    gpus: all

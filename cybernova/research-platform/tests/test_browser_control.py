@@ -319,6 +319,8 @@ class BrowserControlTests(unittest.TestCase):
         with (
             patch.object(runtime._browser_pool, "acquire", return_value=("test", entry)),
             patch.object(runtime._browser_pool, "release"),
+            patch("console.gpt_tool_runtime.owner_input_broker.request_and_wait",
+                  return_value={"ok": False, "status": "owner_input_cancelled"}) as approval,
         ):
             result, failed = runtime._call_impl(
                 "browser_submit_payment",
@@ -327,7 +329,8 @@ class BrowserControlTests(unittest.TestCase):
                 conversation_key="aws-registration-test",
             )
         self.assertTrue(failed)
-        self.assertEqual(result["error"], "payment_action_not_authorized_by_active_task")
+        self.assertEqual(result["status"], "owner_input_cancelled")
+        approval.assert_called_once()
 
     def test_explicit_payment_task_authorizes_its_payment_submit_without_second_prompt(self):
         from console.gpt_tool_runtime import GPTToolRuntime

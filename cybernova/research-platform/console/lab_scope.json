@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "enabled": false,
-  "targets": {},
-  "projects": {},
-  "nuclei_templates": "rules/nuclei-reviewed",
-  "semgrep_rules": "rules/semgrep-reviewed",
-  "ffuf_wordlist": "wordlists/lab-small.txt"
-}
