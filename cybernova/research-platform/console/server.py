@@ -349,6 +349,7 @@ class OwnerInputSubmitRequest(BaseModel):
     session_id: str = Field(min_length=16, max_length=120)
     request_id: str = Field(min_length=16, max_length=80)
     value: str = Field(min_length=1, max_length=512)
+    save_to_vault: bool = False
 
 
 class OwnerInputCancelRequest(BaseModel):
@@ -1030,7 +1031,8 @@ def owner_input_submit(payload: OwnerInputSubmitRequest):
             raise HTTPException(status_code=404, detail="session_not_found")
     try:
         return owner_input_broker.submit(
-            "deepseek:" + payload.session_id, payload.request_id, payload.value
+            "deepseek:" + payload.session_id, payload.request_id, payload.value,
+            save_to_vault=payload.save_to_vault,
         )
     except OwnerInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
