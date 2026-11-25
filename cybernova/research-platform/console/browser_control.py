@@ -1100,19 +1100,11 @@ class BrowserSession:
     def _ensure(self):
         if self._page is not None and not self._page.is_closed():
             return
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            raise ValueError("playwright_python_not_installed") from None
-        if self._pw is None:
-            self._pw = sync_playwright().start()
         if self._context is not None:
             try:
                 _ = self._context.pages
             except Exception:
-                self._context = None
-                self._browser = None
-                self._page = None
+                self._shutdown()
         restore_session = os.environ.get(
             "CYBERNOVA_GPT_BROWSER_RESTORE_SESSION", "0"
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -1125,18 +1117,8 @@ class BrowserSession:
             ephemeral = os.environ.get("CYBERNOVA_GPT_BROWSER_EPHEMERAL", "").strip().lower() in {
                 "1", "true", "yes", "on",
             }
-            diagnostic_event("browser_launch_start", headless=self._headless,
-                             session_kind="ephemeral" if ephemeral else "persistent")
-            if ephemeral:
-                self._browser = self._pw.chromium.launch(
-                    headless=self._headless, args=launch_args,
-                )
-                self._context = self._browser.new_context(
-                    accept_downloads=False, service_workers="block",
-                    ignore_https_errors=False, java_script_enabled=True,
-                    viewport={"width": 1440, "height": 1000},
-                )
-            else:
+            profile_dir = None
+            if not ephemeral:
                 configured_profile = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")
                 if self._profile_dir is not None:
                     profile_dir = self._profile_dir
@@ -1154,7 +1136,31 @@ class BrowserSession:
                         profile_dir.chmod(0o700)
                     except OSError:
                         pass
-                self._context = self._pw.chromium.launch_persistent_context(
+
+            diagnostic_event(
+                "browser_launch_start",
+                headless=self._headless,
+                session_kind="ephemeral" if ephemeral else "persistent",
+                preferred_backend=os.environ.get("CYBERNOVA_BROWSER_BACKEND", "patchright"),
+            )
+
+            def _launch_context(playwright):
+                browser = None
+                if ephemeral:
+                    browser = playwright.chromium.launch(
+                        headless=self._headless, args=launch_args,
+                    )
+                    try:
+                        context = browser.new_context(
+                            accept_downloads=False, service_workers="block",
+                            ignore_https_errors=False, java_script_enabled=True,
+                            viewport={"width": 1440, "height": 1000},
+                        )
+                    except Exception:
+                        browser.close()
+                        raise
+                    return browser, context
+                context = playwright.chromium.launch_persistent_context(
                     user_data_dir=str(profile_dir),
                     headless=self._headless,
                     args=launch_args,
@@ -1162,7 +1168,24 @@ class BrowserSession:
                     ignore_https_errors=False, java_script_enabled=True,
                     viewport={"width": 1440, "height": 1000},
                 )
-                self._browser = None
+                return None, context
+
+            try:
+                self._pw, self._backend, launched, fallback_reason = launch_with_backend(
+                    _launch_context
+                )
+            except Exception as exc:
+                raise ValueError(
+                    "browser_backend_launch_failed:" + type(exc).__name__
+                ) from None
+            self._browser, self._context = launched
+            if fallback_reason:
+                diagnostic_event(
+                    "browser_backend_fallback",
+                    primary="patchright",
+                    selected=self._backend,
+                    reason=fallback_reason,
+                )
             self._context.route("**/*", self._route)
             # WebSockets bypass the ordinary HTTP route handler; block them
             # explicitly so a page cannot open an uninspected socket.
@@ -1171,9 +1194,13 @@ class BrowserSession:
                     code=1008, reason="Cybernova browser policy",
                 ),
             )
-            diagnostic_event("browser_launch_ready", headless=self._headless,
-                             session_kind="ephemeral" if ephemeral else "persistent",
-                             status="ok")
+            diagnostic_event(
+                "browser_launch_ready",
+                headless=self._headless,
+                session_kind="ephemeral" if ephemeral else "persistent",
+                backend=self._backend,
+                status="ok",
+            )
         pages = list(self._context.pages)
         if not restore_session:
             # A dedicated persistent profile keeps authentication state, but
@@ -1606,8 +1633,31 @@ class BrowserSession:
         if name == "browser_console":
             if args:
                 raise ValueError("browser_arguments_invalid")
-            return {"ok": True, "messages": self._console_events[-40:],
-                    "untrusted_page_content": True}
+            if self._backend == "patchright":
+                page_errors = [
+                    item for item in self._console_events
+                    if item.get("type") == "pageerror"
+                ][-40:]
+                return {
+                    "ok": True,
+                    "messages": page_errors,
+                    "console_api_available": False,
+                    "browser_backend": self._backend,
+                    "note": (
+                        "Patchright disables Chromium Console API capture. "
+                        "Set CYBERNOVA_BROWSER_BACKEND=playwright before starting "
+                        "a new browser session to collect console messages. "
+                        "Page errors remain available."
+                    ),
+                    "untrusted_page_content": True,
+                }
+            return {
+                "ok": True,
+                "messages": self._console_events[-40:],
+                "console_api_available": True,
+                "browser_backend": self._backend,
+                "untrusted_page_content": True,
+            }
         if name == "browser_network":
             if args:
                 raise ValueError("browser_arguments_invalid")
