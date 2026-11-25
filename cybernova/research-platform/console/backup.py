@@ -6,6 +6,7 @@ encryption, SHA-256 transfer manifest, SQLite integrity_check on recovery.
 Key must be copied OFF THE MACHINE: a local-only key is NOT disaster recovery.
 """
 from __future__ import annotations
+from contextlib import closing
 
 import argparse
 from datetime import datetime, timezone
@@ -81,7 +82,7 @@ def load_key(path: Path | None = None) -> bytes:
 
 def _integrity(path: Path) -> None:
     uri = "file:" + str(path.resolve()) + "?mode=ro"
-    with sqlite3.connect(uri, uri=True, timeout=10) as db:
+    with closing(sqlite3.connect(uri, uri=True, timeout=10)) as db, db:
         result = db.execute("PRAGMA integrity_check").fetchone()
     if not result or result[0] != "ok":
         raise BackupError("sqlite_integrity_failed")
@@ -111,8 +112,8 @@ def backup(source: Path, destination: Path, *, key_path: Path | None = None) -> 
     with tempfile.TemporaryDirectory(prefix="cybernova-snapshot-") as temp:
         snapshot = Path(temp) / "snapshot.sqlite3"
         # SQLite backup incorporates the source WAL without copy races.
-        with sqlite3.connect(str(source), timeout=20) as src:
-            with sqlite3.connect(str(snapshot)) as dst:
+        with closing(sqlite3.connect(str(source), timeout=20)) as src, src:
+            with closing(sqlite3.connect(str(snapshot))) as dst, dst:
                 src.backup(dst)
         _integrity(snapshot)
         size = snapshot.stat().st_size

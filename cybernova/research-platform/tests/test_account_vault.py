@@ -1,4 +1,5 @@
 """Offline tests for encrypted local account credential storage."""
+from contextlib import closing
 import os
 import sqlite3
 import tempfile
@@ -28,7 +29,7 @@ class AccountVaultTests(unittest.TestCase):
         )
         self.assertEqual(entry["status"], "pending")
         self.assertNotIn("password", entry)
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             row = db.execute(
                 "SELECT ciphertext FROM account_vault_entries WHERE record_id=?",
                 (entry["record_id"],),
@@ -68,7 +69,7 @@ class AccountVaultTests(unittest.TestCase):
             "AWS", "owner@example.net", "LongRandomPassword!123",
             "https://signin.aws.amazon.com",
         )
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             row = db.execute(
                 "SELECT ciphertext FROM account_vault_entries WHERE record_id=?",
                 (entry["record_id"],),
