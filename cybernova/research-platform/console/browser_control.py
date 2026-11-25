@@ -389,7 +389,7 @@ class BrowserSession:
         self._allowed_request_count = 0
         self._payment_submit_authorized = False
         self._payment_filled_fields: list[tuple[str, str]] = []
-        self._console_events: list[dict] =
+        self._console_events: list[dict] = []
         self._network_events: list[dict] = []
         self._request_started: dict[int, float] = {}
         self._attached_pages: set[int] = set()
