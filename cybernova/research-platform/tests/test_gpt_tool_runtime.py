@@ -214,13 +214,14 @@ class GPTToolRuntimeTests(unittest.TestCase):
     def test_protected_fill_errors_never_echo_password_values(self):
         from threading import RLock
 
-        secret = "UniqueSecretMustNotLeak!987"
+        captured = {}
         class FakeSession:
             def set_authorized_hosts(self, hosts):
                 pass
             def current_origin(self):
                 return "https://signin.aws.amazon.com"
             def fill_owner_input(self, label, value, kind, expected_origin=""):
+                captured["value"] = value
                 raise RuntimeError("Playwright fill failed value=" + value)
 
         class FakeVault:
@@ -228,11 +229,11 @@ class GPTToolRuntimeTests(unittest.TestCase):
                 return {"record_id": "av_" + "p" * 20, "service": service}
 
         runtime = GPTToolRuntime()
-        entry = {"session": FakeSession(), "call_lock": __import__("threading").RLock()}
+        entry = {"session": FakeSession(), "call_lock": RLock()}
         with patch.object(runtime._browser_pool, "acquire", return_value=("fake", entry)), \
              patch.object(runtime._browser_pool, "release"), \
              patch("console.gpt_tool_runtime.account_vault", return_value=FakeVault()), \
-             patch("console.gpt_tool_runtime.secrets.choice", side_effect=[*secret[:28]]):
+             patch("console.gpt_tool_runtime.secrets.choice", side_effect=lambda alphabet: alphabet[0]):
             result, failed = runtime.call(
                 "browser_generate_and_fill_password",
                 {"service": "AWS", "username": "owner@example.net",
@@ -241,8 +242,8 @@ class GPTToolRuntimeTests(unittest.TestCase):
                 user_messages=[{"role": "user", "content": "Create an AWS account"}],
             )
         self.assertTrue(failed)
-        self.assertNotIn(secret, str(result))
-        self.assertNotIn("MustNotLeak", str(result))
+        self.assertTrue(captured["value"])
+        self.assertNotIn(captured["value"], str(result))
         self.assertIn("protected_browser_fill_failed", result["error"])
 
     def test_generated_password_requires_explicit_account_creation_intent(self):
