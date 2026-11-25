@@ -352,6 +352,8 @@ class BrowserSession:
         parsed = urlsplit(self._page.url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("browser_current_page_not_https")
+        if parsed.port not in (None, 443):
+            raise ValueError("browser_current_page_nonstandard_https_port")
         host = parsed.hostname.lower()
         return "https://" + host
 
