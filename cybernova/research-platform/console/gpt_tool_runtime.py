@@ -29,6 +29,7 @@ try:
     from .computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
     from .github_tools import GITHUB_TOOLS, GITHUB_NAMES, github_call
     from .github_write_tools import GITHUB_WRITE_TOOLS, GITHUB_WRITE_NAMES, github_write_call
+    from .owner_input import owner_input_broker
 except ImportError:
     from tool_policy import task_intent_matches
     from browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
@@ -37,6 +38,7 @@ except ImportError:
     from computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
     from github_tools import GITHUB_TOOLS, GITHUB_NAMES, github_call
     from github_write_tools import GITHUB_WRITE_TOOLS, GITHUB_WRITE_NAMES, github_write_call
+    from owner_input import owner_input_broker
 
 
 try:
@@ -65,7 +67,7 @@ EXPLICIT_ONLY_TOOLS = frozenset()  # Full local tool pool is exposed in automati
 _TOOL_NAMES = frozenset(
     item["name"] for item in BROWSER_CONTROL_TOOLS
 ) | frozenset(item["name"] for item in RESEARCH_WEB_TOOLS) | {
-    "terminal_run", "terminal_status",
+    "terminal_run", "terminal_status", "owner_request_input", "browser_fill_owner_input",
 } | COMPUTER_TOOL_NAMES | GITHUB_NAMES | GITHUB_WRITE_NAMES
 
 # Composer tool bundles. Empty selection means automatic access to the full
@@ -130,7 +132,7 @@ def normalize_tool_groups(groups=None) -> list[str]:
 
 
 def tool_group_for_name(name: str) -> str:
-    if name.startswith("browser_"):
+    if name.startswith("browser_") or name == "owner_request_input":
         return "browser"
     if name.startswith("computer_"):
         return "computer"
@@ -272,6 +274,25 @@ def build_tool_catalog() -> list[dict]:
     rows.extend(_convert_mcp_tool(item) for item in COMPUTER_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in GITHUB_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in GITHUB_WRITE_TOOLS)
+    rows.extend([
+        _function_tool(
+            "owner_request_input",
+            "Pause the current task and request one sensitive value directly from the owner through Cybernova's local protected dialog. Allowed types: otp, password, contact. The value is held in memory only and is NEVER returned to the model or written to logs/files. Do not ask for payment-card data; use the provider's hosted payment page. Waits for the owner or times out.",
+            {"type": "object", "properties": {
+                "purpose": {"type": "string", "maxLength": 240},
+                "input_type": {"type": "string", "enum": ["otp", "password", "contact"]},
+                "field_label": {"type": "string", "maxLength": 120},
+            }, "required": ["purpose", "input_type", "field_label"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "browser_fill_owner_input",
+            "Fill one password, one-time verification code, or contact value previously supplied through owner_request_input. The secret is fetched internally and is never returned to the model. The request is bound to this conversation and can be consumed once.",
+            {"type": "object", "properties": {
+                "request_id": {"type": "string", "maxLength": 80},
+                "field_label": {"type": "string", "maxLength": 120},
+            }, "required": ["request_id", "field_label"], "additionalProperties": False},
+        ),
+    ])
     return rows
 
 
@@ -631,6 +652,31 @@ class GPTToolRuntime:
                 return github_call(name, args)
             if name in GITHUB_WRITE_NAMES:
                 return github_write_call(name, args, user_messages=user_messages)
+            if name == "owner_request_input":
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "owner_input_session_unavailable"}, True
+                result = owner_input_broker.request_and_wait(
+                    conversation_key, args.get("purpose"), args.get("input_type"),
+                    args.get("field_label"), timeout=300,
+                )
+                return result, not bool(result.get("ok"))
+            if name == "browser_fill_owner_input":
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "owner_input_session_unavailable"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        entry["session"].set_authorized_hosts(authorized_targets or set())
+                        input_type, value = owner_input_broker.consume(
+                            conversation_key, args.get("request_id")
+                        )
+                        result = entry["session"].fill_owner_input(
+                            args.get("field_label"), value, input_type
+                        )
+                        result["owner_input_consumed"] = True
+                        return result, not bool(result.get("ok"))
+                finally:
+                    self._browser_pool.release(key, entry)
             # Browser operations use their own per-conversation lock and worker
             # thread. They never hold the runtime-wide lock while Playwright runs.
             if name.startswith("browser_"):
