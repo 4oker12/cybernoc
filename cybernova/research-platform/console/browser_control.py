@@ -45,6 +45,11 @@ HIGH_IMPACT = re.compile(
     r"оплат|купить|заказать|оформить|подтвердить|брон|резерв|"
     r"удал|отмен|отпис|выйти|сброс|отключ|разорвать|деактив|стереть)"
 )
+PAYMENT_SUBMIT_TARGET = re.compile(
+    r"(?i)(?:\bpay(?:ment)?\b|purchase|buy\s+now|checkout|billing|"
+    r"add\s+(?:a\s+)?card|verify\s+(?:a\s+)?card|payment method|"
+    r"оплат|платеж|покуп|привязать карту|добавить карту|проверить карту)"
+)
 IRREVERSIBLE_SUBMIT_TARGET = re.compile(
     r"(?i)(pay(?:ment)?|purchase|buy\s+now|place\s+order|checkout|"
     r"\bbook(?:\s+now)?\b|\breserve\b|\border\b|\bdelete\b|\bremove\b|"
