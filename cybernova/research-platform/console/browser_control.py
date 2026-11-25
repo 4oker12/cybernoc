@@ -728,10 +728,10 @@ class BrowserSession:
     def _submit_payment_after_owner_approval(
         self, button_name: str, expected_origin: str, expected_action_origin: str,
     ) -> dict:
-        if self._current_origin() != expected_origin:
-            raise ValueError("payment_page_origin_changed")
         self._payment_submit_authorized = True
         try:
+            if self._current_origin() != expected_origin:
+                raise ValueError("payment_page_origin_changed")
             return self._dispatch(
                 "browser_submit_payment", {"name": button_name},
                 expected_action_origin=expected_action_origin,
