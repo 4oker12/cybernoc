@@ -24,7 +24,7 @@ def summary(name, result, failed, *, detail=None):
         text.update(detail)
     if outcome == "WARN":
         text["error"] = str(result.get("error") or result.get("reason") or "tool_reported_failure")[:160]
-    print(json.dumps(text, ensure_ascii=False, sort_keys=True), flush=True)
+    print(json.dumps(text, ensure_ascii=True, sort_keys=True), flush=True)
     return outcome == "PASS"
 
 class StubMCP:
@@ -61,7 +61,7 @@ def run():
         "computer_defender_status", "computer_defender_events",
         "computer_file_hash", "computer_list_directory",
         "computer_search_files", "computer_search_everywhere", "computer_ui_windows",
-        "browser_navigate", "browser_snapshot", "browser_follow_link",
+        "browser_navigate", "browser_snapshot", "browser_find_text", "browser_follow_link",
         "browser_network", "google_search", "research_source_open",
     }
     assert required.issubset(catalog), sorted(required - catalog)
@@ -159,14 +159,33 @@ def run():
             warnings.append("computer_file_hash_no_safe_fixture")
             print('{"test":"computer_file_hash","status":"SKIP","reason":"win_ini_missing"}')
 
-        browser = call("browser_navigate", {"url": "https://example.com/"})
+        browser = call("browser_navigate", {"url": "https://playwright.dev/python/docs/intro"}, important=True)
         if browser.get("ok"):
-            snapshot = call("browser_snapshot")
+            snapshot = call("browser_snapshot", important=True, detail=lambda x: {
+                "title": x.get("title"),
+                "page_type": x.get("page_type"),
+                "heading_count": len(x.get("headings", [])),
+                "heading_sample": [h.get("text") for h in x.get("headings", [])[:4]],
+                "link_count": x.get("content_stats", {}).get("link_count"),
+                "text_chars": len(x.get("visible_text") or ""),
+                "text_sample": (x.get("visible_text") or "")[:160],
+            })
+            if snapshot.get("ok") and (not snapshot.get("headings") or not snapshot.get("page_type")):
+                failures.append("browser_snapshot_semantic_map_incomplete")
+            found = call("browser_find_text", {
+                "query": "Installation", "max_matches": 3,
+            }, important=True, detail=lambda x: {
+                "matches": len(x.get("matches", [])),
+                "total_matches": x.get("total_matches"),
+                "scanned_blocks": x.get("scanned_blocks"),
+            })
+            if found.get("ok") and not found.get("matches"):
+                failures.append("browser_find_text_expected_phrase_missing")
             call("browser_network", detail=lambda x: {
                 "events_recorded": len(x.get("events", x.get("network_events", []))),
             })
             links = snapshot.get("links", [])
-            first = next((x for x in links if "iana.org" in str(x.get("url", ""))), None)
+            first = next((x for x in links if x.get("kind") in {"external", "document"} and x.get("name")), None)
             if first and first.get("name"):
                 call("browser_follow_link", {"name": first["name"]})
             else:

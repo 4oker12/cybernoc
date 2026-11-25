@@ -147,8 +147,8 @@ class BrowserControlTests(unittest.TestCase):
         deepseek_names = {item["function"]["name"] for item in model.tool_history[0]}
         self.assertEqual(len(model.tool_history), 1)  # No redundant review pass without tool activity.
         gpt_names = {item["name"] for item in runtime.tools}
-        for name in ("browser_navigate", "browser_snapshot", "browser_follow_link",
-                     "browser_tabs", "browser_network"):
+        for name in ("browser_navigate", "browser_snapshot", "browser_find_text",
+                     "browser_follow_link", "browser_tabs", "browser_network"):
             self.assertIn(name, gpt_names)
             self.assertIn(name, deepseek_names)
         self.assertIn("browser_submit", gpt_names)
