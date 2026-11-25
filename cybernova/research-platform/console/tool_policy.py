@@ -72,11 +72,12 @@ class ToolPolicyError(ValueError):
 
 
 def discovered_tools(rows: object) -> list[dict]:
+    """Normalize the full catalog or fail explicitly instead of silently truncating it."""
     if not isinstance(rows, list):
         raise ToolPolicyError("tools/list must be a list")
     found: list[dict] = []
     seen = set()
-    for raw in rows[:MAX_ADVERTISED]:
+    for raw in rows:
         if not isinstance(raw, dict):
             continue
         name = raw.get("name")
@@ -87,6 +88,8 @@ def discovered_tools(rows: object) -> list[dict]:
         # even *approved* dispatch. It can still be shown with a fallback.
         if not isinstance(schema, dict) or schema.get("type") != "object":
             schema = {"type": "object", "properties": {}, "additionalProperties": False}
+        if len(found) >= MAX_ADVERTISED:
+            raise ToolPolicyError("tool_catalog_limit_exceeded")
         found.append({
             "name": name,
             "description": str(raw.get("description") or "")[:400],

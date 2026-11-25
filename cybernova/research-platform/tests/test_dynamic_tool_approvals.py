@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 from console.agent import Agent, BackendError, APPROVAL_TTL_SECONDS
 from console.tool_policy import (
-    ToolPolicyError, discovered_tools, model_tools, validate_dynamic_arguments,
+    MAX_ADVERTISED, ToolPolicyError, discovered_tools, model_tools, validate_dynamic_arguments,
     safe_preview, schema_digest, action_description,
 )
 
@@ -72,6 +72,18 @@ class DynamicToolPolicyTests(unittest.TestCase):
     def test_invalid_names_and_duplicates_ignored(self):
         found = discovered_tools([NEW, NEW, {"name": "x;rm -rf", "inputSchema": {}}])
         self.assertEqual(len(found), 1)
+
+    def test_catalog_overflow_is_explicit_not_silently_truncated(self):
+        rows = [{
+            "name": f"dynamic_tool_{index:03d}",
+            "description": "Read-only test tool",
+            "inputSchema": {
+                "type": "object", "properties": {}, "required": [],
+                "additionalProperties": False,
+            },
+        } for index in range(MAX_ADVERTISED + 1)]
+        with self.assertRaisesRegex(ToolPolicyError, "tool_catalog_limit_exceeded"):
+            discovered_tools(rows)
 
     def test_dynamic_args_enforce_required_and_type(self):
         schema = NEW["inputSchema"]

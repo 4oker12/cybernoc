@@ -128,6 +128,10 @@ class AccountGPTToolLoopTests(unittest.TestCase):
         self.assertIn("computer_search_everywhere", opener.requests[0]["instructions"])
         self.assertIn("PowerShell 7", opener.requests[0]["instructions"])
         self.assertIn("browser_follow_link", opener.requests[0]["instructions"])
+        self.assertIn("terminal_run — полноценная командная оболочка", opener.requests[0]["instructions"])
+        self.assertNotIn("terminal_run доступен только при явном выборе", opener.requests[0]["instructions"])
+        self.assertNotIn("«Разрешаю сделать снимок экрана", opener.requests[0]["instructions"])
+        self.assertNotIn("для полной проверки нужно отдельное явное подтверждение", opener.requests[0]["instructions"])
         self.assertNotIn("tools", opener.requests[0])
         self.assertEqual(opener.requests[0]["input"][0]["type"], "additional_tools")
         second_input = opener.requests[1]["input"]
