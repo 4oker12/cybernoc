@@ -143,7 +143,7 @@ class OwnerInputBroker:
                         item["expected_origin"], item["account_label"],
                     )
                     item["vault_record_id"] = record["record_id"]
-                except AccountVaultError:
+                except Exception:
                     raise OwnerInputError("owner_input_vault_store_failed") from None
             item["value"] = value
             item["status"] = "submitted"
