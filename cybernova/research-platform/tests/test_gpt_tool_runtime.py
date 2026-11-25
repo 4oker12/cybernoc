@@ -35,6 +35,10 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertTrue(GITHUB_WRITE_NAMES.issubset(names))
         self.assertIn("browser_submit", names)
         self.assertTrue({
+            "account_mission_create", "account_mission_checkpoint",
+            "account_mission_get", "account_mission_list", "account_mission_resume",
+        }.issubset(names))
+        self.assertTrue({
             "computer_system_overview", "computer_performance_snapshot",
             "computer_process_list", "computer_disk_overview",
             "computer_list_directory", "computer_search_everywhere",
@@ -74,6 +78,8 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("browser_navigate", names)
         self.assertIn("browser_tabs", names)
         self.assertIn("browser_switch_tab", names)
+        self.assertIn("account_mission_create", names)
+        self.assertIn("account_mission_checkpoint", names)
         self.assertNotIn("computer_system_overview", names)
         self.assertNotIn("terminal_run", names)
         self.assertEqual(
@@ -101,6 +107,43 @@ class GPTToolRuntimeTests(unittest.TestCase):
         result, failed = runtime.call("github_repo_info", {"repo": "owner/repo"}, enabled_groups=["browser"])
         self.assertTrue(failed)
         self.assertEqual(result["error"], "tool_group_not_enabled")
+
+    def test_account_mission_tools_persist_checkpoints_and_resume_without_replay(self):
+        from tempfile import TemporaryDirectory
+        from console.account_missions import AccountMissionStore
+        from console.gpt_tool_runtime import tool_group_for_name
+
+        with TemporaryDirectory() as root:
+            store = AccountMissionStore(Path(root) / "missions.sqlite3")
+            runtime = GPTToolRuntime()
+            with patch("console.gpt_tool_runtime.account_mission_store", return_value=store):
+                created, failed = runtime.call(
+                    "account_mission_create",
+                    {"service": "AWS", "goal": "Create and verify account",
+                     "success_criteria": "Account dashboard is reachable"},
+                    enabled_groups=["browser"],
+                )
+                self.assertFalse(failed)
+                mission_id = created["mission"]["mission_id"]
+                checkpoint, failed = runtime.call(
+                    "account_mission_checkpoint",
+                    {"mission_id": mission_id, "step_key": "email",
+                     "step_name": "Confirm email", "step_status": "waiting_owner",
+                     "summary": "Provider sent a one-time code",
+                     "next_action": "Wait for owner code", "page_url": "",
+                     "mission_status": ""},
+                    enabled_groups=["browser"],
+                )
+                self.assertFalse(failed)
+                self.assertEqual(checkpoint["mission"]["status"], "waiting_owner")
+                resumed, failed = runtime.call(
+                    "account_mission_resume", {"mission_id": mission_id},
+                    enabled_groups=["browser"],
+                )
+                self.assertFalse(failed)
+                self.assertEqual(resumed["mission"]["status"], "running")
+                self.assertEqual(resumed["mission"]["steps"][0]["status"], "waiting_owner")
+                self.assertEqual(tool_group_for_name("account_mission_get"), "browser")
 
     def test_all_account_gpt_function_schemas_are_strict_and_closed(self):
         for tool in build_tool_catalog():
