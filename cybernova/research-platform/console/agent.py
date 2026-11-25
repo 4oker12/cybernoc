@@ -56,6 +56,17 @@ MAX_CONTEXT_HISTORY_CHARS = 2500
 MAX_CONTEXT_TOOL_CALLS = 8
 MAX_CONTEXT_TOOL_CHARS = 3500
 MAX_CONTEXT_SUMMARY_CHARS = 5000
+_BROWSER_PAGE_FIELDS = ("visible_text", "links", "buttons", "form_fields")
+_ROUTINE_READ_TOOLS = frozenset({
+    "browser_navigate", "browser_snapshot", "browser_follow_link", "browser_tabs",
+    "browser_back", "browser_forward", "browser_reload", "terminal_status",
+})
+_TOOL_FALLBACK_INTENT = re.compile(
+    r"(?i)https?://|\b(?:check|inspect|open|run|execute|browse|search|find|read|"
+    r"verify|continue|register|sign\s+in|log\s+in|submit|fetch|test)\b|"
+    r"\b(?:провер|откро|открыв|запус|выполн|найд|поиск|прочита|изуч|"
+    r"продолж|регистр|зарегистр|авториз|отправ|тестир)\w*"
+)
 MAX_VISION_IMAGE_CHARS = 12000000
 MAX_VISION_IMAGES = 3
 _IMAGE_DATA_URL_RE = re.compile(
@@ -457,6 +468,7 @@ def _compact_context(messages):
         index += 1
 
     pairs = []
+    seen_pages = set()
     for group_index, group in enumerate(groups):
         for pair_index, (call, output) in enumerate(zip(group["calls"], group["outputs"])):
             pairs.append((group_index, pair_index, call, output))
@@ -500,10 +512,32 @@ def _compact_context(messages):
         compact.append(assistant)
         compact.extend(group["between"])
         compact.extend(
-            {**output, "content": str(output.get("content") or "")[:MAX_CONTEXT_TOOL_CHARS]}
+            {**output, "content": _compact_tool_output(output, seen_pages)}
             for _, _, output in selected
         )
     return compact
+
+
+def _compact_tool_output(output, seen_pages):
+    content = str(output.get("content") or "")
+    if not str(output.get("tool_name", "")).startswith("browser_"):
+        return content[:MAX_CONTEXT_TOOL_CHARS]
+    try:
+        result = json.loads(content)
+    except ValueError:
+        return content[:MAX_CONTEXT_TOOL_CHARS]
+    if (not isinstance(result, dict) or result.get("ok") is not True
+            or not result.get("url") or "visible_text" not in result):
+        return content[:MAX_CONTEXT_TOOL_CHARS]
+    page = tuple(result.get(key) for key in ("url", "title", *_BROWSER_PAGE_FIELDS))
+    fingerprint = json.dumps(page, ensure_ascii=False, sort_keys=True)
+    if fingerprint in seen_pages:
+        result = {key: value for key, value in result.items() if key not in _BROWSER_PAGE_FIELDS}
+        result["page_content"] = "unchanged_from_earlier_tool_result"
+        content = json.dumps(result, ensure_ascii=False)
+    else:
+        seen_pages.add(fingerprint)
+    return content[:MAX_CONTEXT_TOOL_CHARS]
 
 
 def _restore_reasoning_history(persisted_history, in_memory_history, provider_identity=None):
@@ -730,9 +764,15 @@ class Agent:
                 "status": "not_required", "passes": 1,
                 "scope": "no_tool_activity",
             }
-            # A second model pass is useful for claims grounded in tool evidence,
-            # but it is wasteful and verbose for ordinary conversation turns.
-            if review_tools and isinstance(answer, str) and answer.strip() and (events or pending_requests):
+            routine_read = bool(events) and all(
+                item.get("type") == "tool_result" and item.get("name") in _ROUTINE_READ_TOOLS
+                and not item.get("is_error") and item.get("result", {}).get("ok") is True
+                for item in events
+            )
+            if routine_read and not pending_requests:
+                review["scope"] = "routine_read"
+            if (review_tools and isinstance(answer, str) and answer.strip()
+                    and (pending_requests or (events and not routine_read))):
                 review = {
                     "status": "incomplete", "passes": 1,
                     "scope": "existing_evidence_only",
@@ -894,7 +934,8 @@ class Agent:
                 if not calls and dsml_calls and tools_enabled:
                     calls = dsml_calls
                     selected_by = "dsml_content"
-                if (not calls and round_no == 0 and force_tools and tools):
+                if (not calls and round_no == 0 and force_tools and tools and
+                        (_TOOL_FALLBACK_INTENT.search(text) or not _clean_model_answer(result.get("content")))):
                     # Some derivative models ignore native tool_calls. The
                     # fallback still asks the active model to SELECT tools, and every tool
                     # goes through exactly the same strict validation.
