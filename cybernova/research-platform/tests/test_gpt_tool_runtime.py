@@ -211,6 +211,40 @@ class GPTToolRuntimeTests(unittest.TestCase):
             self.assertEqual(session.filled[-1][1], "ExistingSavedPassword!456")
             self.assertEqual(session.filled[-1][3], "https://signin.aws.amazon.com")
 
+    def test_protected_fill_errors_never_echo_password_values(self):
+        from threading import RLock
+
+        secret = "UniqueSecretMustNotLeak!987"
+        class FakeSession:
+            def set_authorized_hosts(self, hosts):
+                pass
+            def current_origin(self):
+                return "https://signin.aws.amazon.com"
+            def fill_owner_input(self, label, value, kind, expected_origin=""):
+                raise RuntimeError("Playwright fill failed value=" + value)
+
+        class FakeVault:
+            def store_password(self, service, username, password, origin, label):
+                return {"record_id": "av_" + "p" * 20, "service": service}
+
+        runtime = GPTToolRuntime()
+        entry = {"session": FakeSession(), "call_lock": __import__("threading").RLock()}
+        with patch.object(runtime._browser_pool, "acquire", return_value=("fake", entry)), \
+             patch.object(runtime._browser_pool, "release"), \
+             patch("console.gpt_tool_runtime.account_vault", return_value=FakeVault()), \
+             patch("console.gpt_tool_runtime.secrets.choice", side_effect=[*secret[:28]]):
+            result, failed = runtime.call(
+                "browser_generate_and_fill_password",
+                {"service": "AWS", "username": "owner@example.net",
+                 "account_label": "personal", "field_label": "Password"},
+                conversation_key="deepseek:" + "c" * 32, enabled_groups=["browser"],
+                user_messages=[{"role": "user", "content": "Create an AWS account"}],
+            )
+        self.assertTrue(failed)
+        self.assertNotIn(secret, str(result))
+        self.assertNotIn("MustNotLeak", str(result))
+        self.assertIn("protected_browser_fill_failed", result["error"])
+
     def test_generated_password_requires_explicit_account_creation_intent(self):
         runtime = GPTToolRuntime()
         result, failed = runtime.call(
