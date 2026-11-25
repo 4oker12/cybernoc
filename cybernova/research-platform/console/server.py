@@ -56,7 +56,7 @@ try:
     from .siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from .siwc_chat_store import GPTChatStore, GPTChatError
     from .research_scope import ResearchScopeStore, scope_profile
-    from .profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
+    from .profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for, relevant_memory
     from .model_settings import ModelSettingsError, apply_model_settings, get_model_settings, test_model_connection
 except ImportError:
     from agent import (
@@ -92,7 +92,7 @@ except ImportError:
     from siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from siwc_chat_store import GPTChatStore, GPTChatError
     from research_scope import ResearchScopeStore, scope_profile
-    from profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
+    from profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for, relevant_memory
     from model_settings import ModelSettingsError, apply_model_settings, get_model_settings, test_model_connection
 
 ROOT = Path(__file__).resolve().parent
@@ -172,6 +172,7 @@ def _begin_usage_progress(run_id: str) -> None:
             run_usage_progress.popitem(last=False)
         run_usage_progress[run_id] = {
             "status": "running",
+            "progress": {"phase": "preparing", "tool": None},
             "usage": {
                 "available": False, "input_tokens": None, "output_tokens": None,
                 "total_tokens": None, "requests": 0, "measured_requests": 0,
@@ -193,6 +194,19 @@ def _update_usage_progress(run_id: str, usage: dict) -> None:
         run_usage_progress.move_to_end(run_id)
 
 
+def _update_agent_progress(run_id: str, progress: dict) -> None:
+    with run_usage_lock:
+        item = run_usage_progress.get(run_id)
+        if item is None or item["status"] != "running":
+            return
+        phase = progress.get("phase")
+        if phase not in {"preparing", "analyzing", "executing", "finalizing", "reviewing"}:
+            return
+        tool = progress.get("tool")
+        item["progress"] = {"phase": phase, "tool": tool[:80] if isinstance(tool, str) else None}
+        item["updated_at"] = time.time()
+
+
 def _finish_usage_progress(run_id: str, status: str, usage: dict | None = None) -> None:
     with run_usage_lock:
         item = run_usage_progress.get(run_id)
@@ -211,6 +225,7 @@ def _read_usage_progress(run_id: str) -> dict | None:
         if item is None:
             return None
         return {"status": item["status"], "usage": dict(item["usage"]),
+                "progress": dict(item.get("progress", {})),
                 "updated_at": item["updated_at"]}
 
 
@@ -246,7 +261,7 @@ collaboration_step_lock = RLock()
 async def lifespan(app):
     worker = None
     if os.environ.get("CYBERNOVA_COMM_WORKER", "1") == "1":
-        worker = CommunicationWorker(communication_store())
+        worker = CommunicationWorker(communication_store(), model_factory=lambda: agent.ollama)
         worker.start()
     try:
         yield
@@ -1001,9 +1016,10 @@ def chat(payload: ChatRequest):
             )["task_id"]
             research_scope_store().save(state["task_id"], state["scope"])
         task_id = state["task_id"]
+        run_client = agent.ollama
         # Include ChatGPT feedback and background Qwen results which arrived
         # while the browser was open, instead of using stale in-memory history.
-        previous = store.read_dialog(task_id, limit=100)["messages"]
+        previous = store.recent_dialog(task_id, limit=100)["messages"]
         persisted_history = []
         for message in previous:
             if message["actor"] == "controller" and message["kind"] == "system":
@@ -1015,25 +1031,28 @@ def chat(payload: ChatRequest):
             elif message["actor"] == "qwen" and message["kind"] == "result":
                 history_item = {"role": "assistant", "content": message["body"]}
                 persisted_history.append(_attach_provider_state(
-                    store, task_id, message, history_item, agent.ollama,
+                    store, task_id, message, history_item, run_client,
                 ))
         if persisted_history:
             state["history"] = _restore_reasoning_history(
                 persisted_history[-MAX_HISTORY:], state["history"],
-                provider_identity=_provider_identity(agent.ollama),
+                provider_identity=_provider_identity(run_client),
             )
-        store.append(task_id, "human", "instruction", payload.message,
-                     status="running")
         try:
             selected_tool_groups = normalize_tool_groups(payload.tool_groups)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
+        try:
+            store.append(task_id, "human", "instruction", payload.message,
+                         status="running", require_available=True)
+        except CommunicationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         _begin_usage_progress(payload.run_id)
         outcome = None
         run_status = "failed"
         try:
             current_agent = Agent(
-                ollama=agent.ollama,
+                ollama=run_client,
                 mcp_factory=lambda: CommunicationToolClient(
                     TrafficToolClient(MCPClient(), state["traffic_artifacts"], scope=state["scope"]),
                     store, task_id,
@@ -1050,10 +1069,13 @@ def chat(payload: ChatRequest):
                 profile_instructions=mode_instructions_for(profile, "researcher"),
                 tool_groups=selected_tool_groups,
                 tools_enabled=payload.tools_enabled,
-                session_id=sid,
+                session_id=task_id,
+                input_budget=profile["researcher"]["input_budget"],
+                memory_context=relevant_memory(profile, payload.message),
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
+                on_progress=lambda progress: _update_agent_progress(payload.run_id, progress),
             )
-            run_status = "completed"
+            run_status = "failed" if outcome.get("execution_failed") else "completed"
         except Exception as exc:
             store.append(task_id, "controller", "system",
                          "Agent failed: " + type(exc).__name__, status="blocked")
@@ -1078,20 +1100,20 @@ def chat(payload: ChatRequest):
         assistant_history = {"role": "assistant", "content": outcome["answer"][:16000]}
         if isinstance(history_reasoning_content, str):
             assistant_history["reasoning_content"] = history_reasoning_content
-            assistant_history["_provider_identity"] = _provider_identity(agent.ollama)
+            assistant_history["_provider_identity"] = _provider_identity(run_client)
         state["history"].append(assistant_history)
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
         current_status = store.get_task(task_id)["status"]
         final_status = ("needs_review" if current_status == "needs_review"
-                        else "blocked" if requests else "completed")
+                        else "blocked" if requests or outcome.get("execution_failed") else "completed")
         event = store.append(
             task_id, "qwen", "result", outcome["answer"][:12000],
             status=final_status,
-            provider_state=_provider_state_payload(agent.ollama, history_reasoning_content),
+            provider_state=_provider_state_payload(run_client, history_reasoning_content),
         )
     return {"session_id": sid, "task_id": task_id, "event_seq": event["seq"],
-            "turn": state["turns"], "run_id": payload.run_id, **outcome}
+            "turn": state["turns"], "run_id": payload.run_id, "task_status": final_status, **outcome}
 
 
 @app.post("/api/approve")
@@ -1116,10 +1138,11 @@ def approve(payload: ApprovalRequest):
             )
             return {"ok": True, "decision": "denied", "message": "Действие отклонено; "
                     "инструмент не запускался", "tool_calls": 0}
+        run_client = agent.ollama
         try:
             # The reviewed agent checks the latest MCP schema before execution.
             current_agent = Agent(
-                ollama=agent.ollama,
+                ollama=run_client,
                 mcp_factory=lambda: CommunicationToolClient(
                     TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
                     communication_store(), state["task_id"]),
@@ -1137,7 +1160,7 @@ def approve(payload: ApprovalRequest):
         assistant_history = {"role": "assistant", "content": result["answer"][:16000]}
         if isinstance(history_reasoning_content, str):
             assistant_history["reasoning_content"] = history_reasoning_content
-            assistant_history["_provider_identity"] = _provider_identity(agent.ollama)
+            assistant_history["_provider_identity"] = _provider_identity(run_client)
         state["history"].append(assistant_history)
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
@@ -1150,7 +1173,7 @@ def approve(payload: ApprovalRequest):
         communication_store().append(
             state["task_id"], "qwen", "result", str(result["answer"])[:12000],
             status="completed",
-            provider_state=_provider_state_payload(agent.ollama, history_reasoning_content),
+            provider_state=_provider_state_payload(run_client, history_reasoning_content),
         )
         return {"ok": True, "decision": "approved", "session_id": payload.session_id,
                 "task_id": state["task_id"],
@@ -1242,11 +1265,36 @@ def communication_evidence(session_id: str):
 @app.get("/api/comm/tasks")
 def communication_tasks():
     """List recent persisted tasks in the local Cybernova Web UI."""
-    return {"tasks": communication_store().list_tasks(limit=25)}
+    store = communication_store()
+    tasks = store.list_tasks(limit=25)
+    return {"tasks": [{**task, "scheduled_at": store.scheduled_due(task["task_id"])} for task in tasks]}
+
+
+class ScheduleTextRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=9000)
+    due_at: str = Field(min_length=1, max_length=64)
+
+
+@app.post("/api/comm/schedule")
+def schedule_text_task(payload: ScheduleTextRequest):
+    if os.environ.get("CYBERNOVA_COMM_WORKER", "1") != "1":
+        raise HTTPException(status_code=503, detail="background_worker_disabled")
+    try:
+        return {"task": communication_store().schedule_text(payload.message, payload.due_at)}
+    except CommunicationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 class ResumeTaskRequest(BaseModel):
     task_id: str = Field(min_length=12, max_length=100)
+
+
+@app.post("/api/comm/cancel-scheduled")
+def cancel_scheduled_task(payload: ResumeTaskRequest):
+    try:
+        return {"task": communication_store().cancel_scheduled(payload.task_id)}
+    except CommunicationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/comm/resume")
@@ -1255,7 +1303,7 @@ def communication_resume(payload: ResumeTaskRequest):
     store = communication_store()
     try:
         task = store.get_task(payload.task_id)
-        dialog = store.read_dialog(payload.task_id, limit=100)
+        dialog = store.recent_dialog(payload.task_id, limit=100)
     except CommunicationError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     sid, state = _session(None)

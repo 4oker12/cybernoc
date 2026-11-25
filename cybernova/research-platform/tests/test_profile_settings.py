@@ -29,7 +29,7 @@ class ProfileSettingsTests(unittest.TestCase):
     def test_defaults_and_atomic_persistence_round_trip(self):
         defaults = self.profile_store.load()
         self.assertEqual(defaults["ui"]["theme"], "light")
-        self.assertEqual(defaults["researcher"]["behavior"]["autonomy"], 80)
+        self.assertEqual(defaults["researcher"]["behavior"]["autonomy"], 90)
         self.assertTrue(defaults["privacy"]["share_with_researcher"])
         defaults["user"]["display_name"] = "Operator"
         saved = self.profile_store.save(defaults)

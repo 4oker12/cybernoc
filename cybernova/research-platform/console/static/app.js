@@ -523,7 +523,7 @@ function newRunId(){
   if(window.crypto?.randomUUID)return window.crypto.randomUUID().replace(/-/g,"");
   return Array.from({length:32},()=>Math.floor(Math.random()*16).toString(16)).join("");
 }
-async function watchUsageProgress(runId,mode="qwen"){
+async function watchUsageProgress(runId,mode="qwen",pending=null){
   const isRunning=()=>mode==="gpt"?state.gptRunning:state.qwenRunning;
   const started=Date.now();
   while(isRunning()&&Date.now()-started<180000){
@@ -534,6 +534,11 @@ async function watchUsageProgress(runId,mode="qwen"){
         {cache:"no-store",headers:{"Accept":"application/json"}});
       if(!response.ok)continue;
       const progress=await response.json(),usage=progress.usage||{};
+      if(pending&&isRunning()&&pending.wrap.classList.contains("working")&&progress.status==="running"&&progress.progress){
+        const phases={preparing:"Проверяю доступные инструменты",analyzing:"Анализирую данные",executing:"Выполняю инструмент",finalizing:"Готовлю результат",reviewing:"Проверяю итог"};
+        const phase=phases[progress.progress.phase];
+        if(phase)pending.body.textContent=phase+(progress.progress.tool?" · "+progress.progress.tool:"")+"…";
+      }
       if(state.mode===mode&&usage.available===true){
         $("tokenUsageStatus").textContent=
           (progress.status==="running"?"Сейчас · ":"Токены · ")+
@@ -567,7 +572,7 @@ async function send(){
   const pending=renderMessage("assistant",(state.qwenModel||"Модель")+" формирует ответ…",true);
   const runId=newRunId();
   busy(true,"qwen");
-  const usageWatch=watchUsageProgress(runId,"qwen");
+  const usageWatch=watchUsageProgress(runId,"qwen",pending);
   try{
     const result=await requestJson("/api/chat",{
       session_id:state.sessionId,message:text,tool_groups:state.toolGroups,
@@ -584,14 +589,14 @@ async function send(){
     showEvents(result.events,result.tool_calls,result.selected_by,pending);
     // Generate contextual next questions independently; do not delay the model reply.
     // A pending approval is the next user decision, not a generic follow-up.
-    if(!result.events?.some(e=>e.type==="approval_required")){
+    if(!result.usage?.budget_reached&&!result.events?.some(e=>e.type==="approval_required")){
       void loadFollowups(result.session_id,result.turn,pending);
     }
     if(result.task_id)void refreshTaskList();
     if(result.events?.some(e=>e.name==="comm_request_review"&&e.result?.ok)){
       showTaskStatus("needs_review");
     }else{
-      showTaskStatus("completed");
+      showTaskStatus(result.task_status||"completed");
     }
     if(state.turns===1){
       const label=text.length>32?text.substring(0,31)+"…":text;
@@ -820,6 +825,12 @@ async function refreshTaskList(){
       button.append(text,status);
       button.addEventListener("click",()=>resumeTask(task.task_id));
       list.append(button);
+      if(task.scheduled_at&&taskStatus==="queued"){
+        const cancel=node("button","header-button","Отменить запуск");cancel.type="button";
+        cancel.title=new Date(task.scheduled_at).toLocaleString();
+        cancel.addEventListener("click",async()=>{try{await requestJson("/api/comm/cancel-scheduled",{task_id:task.task_id});await refreshTaskList();}catch(e){$("sendStatus").textContent=String(e.message||e);}});
+        list.append(cancel);
+      }
     }
     if(!list.childNodes.length)list.append(node("p","muted","Пока нет исследований."));
   }catch(_){}
@@ -851,6 +862,7 @@ async function resumeTask(taskId){
     const result=await requestJson("/api/comm/resume",{task_id:taskId});
     state.sessionId=result.session_id;
     state.taskId=result.task.task_id;
+    resetUsage("qwen");
     showResearchScope(result.scope);
     lastGptReview=null;
     $("chatgptToQwen").disabled=true;
@@ -1240,8 +1252,8 @@ function toolsPanel(show){
 const DEFAULT_PROFILE_SETTINGS={
   user:{display_name:"",role:"",about:"",preferences:""},
   privacy:{share_with_researcher:true,share_with_chatgpt:true},
-  researcher:{description:"",instructions:"",behavior:{autonomy:80,initiative:75,skepticism:85,vigilance:85,neutrality:95,brevity:80}},
-  chatgpt:{description:"",instructions:""},
+  researcher:{memory_notes:"",input_budget:120000,description:"Самостоятельный технический исследователь и исполнитель Cybernova.",instructions:"Работай от цели к проверяемому результату. Сначала изучи доступные инструменты и текущую реализацию, затем выполни независимые безопасные этапы, проверь результат и кратко укажи блокеры. При ограничении сайта не обходи защиту: используй разрешённые источники и явно разделяй недоступность и отсутствие результатов.",behavior:{autonomy:90,initiative:80,skepticism:90,vigilance:85,neutrality:95,brevity:80,research_depth:80,persistence:90,humor:25}},
+  chatgpt:{description:"Технический консультант, архитектор и независимый ревьюер.",instructions:"Сначала факты и цель, затем причинно-следственный анализ и проверяемый результат. Общайся естественно, без канцелярита; лёгкая ирония допустима только в подходящем контексте."},
   ui:{theme:"light",density:"comfortable",font_scale:100,sidebar_width:300,chat_width:1040,show_technical_details:false},
 };
 function applyInterfaceSettings(ui){
@@ -1278,8 +1290,10 @@ function populateProfileSettings(settings){
   $("shareChatGPT").checked=privacy.share_with_chatgpt!==false;
   $("researcherDescription").value=researcher.description||"";
   $("researcherInstructions").value=researcher.instructions||"";
-  for(const key of ["autonomy","initiative","skepticism","vigilance","neutrality","brevity"]){
-    const input=$("researcher"+key[0].toUpperCase()+key.slice(1));
+  if($("researcherMemoryNotes"))$("researcherMemoryNotes").value=researcher.memory_notes||"";
+  if($("researcherInputBudget"))$("researcherInputBudget").value=String(researcher.input_budget||120000);
+  for(const key of ["autonomy","initiative","skepticism","vigilance","neutrality","brevity","research_depth","persistence","humor"]){
+    const input=$("researcher"+key.split("_").map(part=>part[0].toUpperCase()+part.slice(1)).join(""));
     const output=$(input.id+"Value");
     input.value=String(behavior[key]);
     output.textContent=input.value;
@@ -1309,6 +1323,8 @@ function collectProfileSettings(){
     researcher:{
       description:$("researcherDescription").value,
       instructions:$("researcherInstructions").value,
+      memory_notes:$("researcherMemoryNotes")?.value||"",
+      input_budget:Number($("researcherInputBudget")?.value||120000),
       behavior:{
         autonomy:Number($("researcherAutonomy").value),
         initiative:Number($("researcherInitiative").value),
@@ -1316,6 +1332,9 @@ function collectProfileSettings(){
         vigilance:Number($("researcherVigilance").value),
         neutrality:Number($("researcherNeutrality").value),
         brevity:Number($("researcherBrevity").value),
+        research_depth:Number($("researcherResearchDepth").value),
+        persistence:Number($("researcherPersistence").value),
+        humor:Number($("researcherHumor").value),
       },
     },
     chatgpt:{
@@ -1614,6 +1633,18 @@ async function newCollab(){
   void refreshCollabRuns();
 }
 function init(){
+  $("scheduleTaskOpen")?.addEventListener("click",()=>{$("scheduleTaskDialog").showModal();});
+  $("scheduleTaskCancel")?.addEventListener("click",()=>{$("scheduleTaskDialog").close();});
+  $("scheduleTaskSave")?.addEventListener("click",async()=>{
+    const button=$("scheduleTaskSave");button.disabled=true;
+    try{
+      const message=$("scheduleTaskPrompt").value.trim();
+      const local=$("scheduleTaskTime").value;
+      if(!message)throw Error("Укажи задачу");
+      await requestJson("/api/comm/schedule",{message,due_at:(local?new Date(local):new Date()).toISOString()});
+      $("scheduleTaskPrompt").value="";$("scheduleTaskStatus").textContent="";$("scheduleTaskDialog").close();await refreshTaskList();
+    }catch(e){$("scheduleTaskStatus").textContent=String(e.message||e);}finally{button.disabled=false;}
+  });
   window.cybernovaWelcome=$("welcome").cloneNode(true);
   window.cybernovaGptWelcome=$("gptWelcome").cloneNode(true);
   showResearchScope({hosts:[],capture_detail:"evidence"});
@@ -1683,7 +1714,7 @@ function init(){
     const tab=event.target.closest("[data-profile-tab]");
     if(tab)selectProfileTab(tab.dataset.profileTab);
   });
-  for(const id of ["researcherAutonomy","researcherInitiative","researcherSkepticism","researcherVigilance","researcherNeutrality","researcherBrevity"]){
+  for(const id of ["researcherAutonomy","researcherInitiative","researcherSkepticism","researcherVigilance","researcherNeutrality","researcherBrevity","researcherResearchDepth","researcherPersistence","researcherHumor"]){
     $(id).addEventListener("input",()=>{$(id+"Value").textContent=$(id).value;});
   }
   void loadProfileSettings();

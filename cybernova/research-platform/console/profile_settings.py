@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 from threading import RLock
@@ -19,9 +20,12 @@ except ImportError:
 
 
 RESEARCHER_BEHAVIOR_DEFAULTS = {
-    "autonomy": 80,
-    "initiative": 75,
-    "skepticism": 85,
+    "autonomy": 90,
+    "initiative": 80,
+    "skepticism": 90,
+    "research_depth": 80,
+    "persistence": 90,
+    "humor": 25,
     "vigilance": 85,
     "neutrality": 95,
     "brevity": 80,
@@ -39,13 +43,15 @@ DEFAULT_SETTINGS = {
         "share_with_chatgpt": True,
     },
     "researcher": {
-        "description": "",
-        "instructions": "",
+        "description": "Самостоятельный технический исследователь и исполнитель Cybernova.",
+        "instructions": "Работай от цели к проверяемому результату. Сначала изучи доступные инструменты и текущую реализацию, затем выполни независимые безопасные этапы, проверь результат и кратко укажи блокеры. При ограничении сайта не обходи защиту: используй разрешённые источники и явно разделяй недоступность и отсутствие результатов.",
         "behavior": dict(RESEARCHER_BEHAVIOR_DEFAULTS),
+        "memory_notes": "",
+        "input_budget": 120000,
     },
     "chatgpt": {
-        "description": "",
-        "instructions": "",
+        "description": "Технический консультант, архитектор и независимый ревьюер.",
+        "instructions": "Сначала факты и цель, затем причинно-следственный анализ и проверяемый результат. Общайся естественно, без канцелярита; лёгкая ирония допустима только в подходящем контексте.",
     },
     "ui": {
         "theme": "light",
@@ -64,6 +70,7 @@ TEXT_LIMITS = {
     ("user", "preferences"): 3000,
     ("researcher", "description"): 2000,
     ("researcher", "instructions"): 10000,
+    ("researcher", "memory_notes"): 6000,
     ("chatgpt", "description"): 2000,
     ("chatgpt", "instructions"): 10000,
 }
@@ -105,6 +112,10 @@ def normalize_settings(value: object) -> dict:
                         raise ProfileSettingsError("invalid_researcher_behavior_" + behavior_key)
                     behavior[behavior_key] = behavior_value
                 result[section][key] = behavior
+            elif section == "researcher" and key == "input_budget":
+                if type(item) is not int or item not in {60000, 120000, 250000, 500000}:
+                    raise ProfileSettingsError("invalid_input_budget")
+                result[section][key] = item
             elif section == "privacy":
                 if type(item) is not bool:
                     raise ProfileSettingsError("invalid_profile_privacy_" + key)
@@ -269,6 +280,34 @@ def mode_instructions_for(settings: dict, mode: str) -> str:
             "объяснения и не подгоняй факты под первую гипотезу.\n"
             f"- Краткость {behavior['brevity']}/100: предпочитай компактный диалог и "
             "короткий отчёт о результате; расширяй объяснение только при реальной сложности "
-            "или прямой просьбе пользователя."
+            "или прямой просьбе пользователя.\n"
+            f"- Глубина исследования {behavior['research_depth']}/100: выбирай соразмерную задаче глубину, "
+            "проверяй первоисточники и конкурирующие гипотезы.\n"
+            f"- Настойчивость {behavior['persistence']}/100: после сбоя исследуй причину, "
+            "продолжай независимые этапы, не повторяй неизменный неудачный вызов и не обходи ограничения.\n"
+            f"- Неформальность и юмор {behavior['humor']}/100: общайся естественно; "
+            "уместны редкие ироничные замечания и мягкий чёрный юмор в бытовом или техническом диалоге. "
+            "При 0 не шути; в кризисе, медицинских, юридических и формальных отчётах сохраняй серьёзный тон. "
+            "Не высмеивай пользователя, жертв или уязвимых людей; точность важнее шуток."
         )
     return "\n\n".join(parts)[:12500]
+
+
+def relevant_memory(settings: dict, prompt: str) -> str:
+    """Owner-entered notes only; never auto-import another conversation or secrets."""
+    if not settings.get("privacy", {}).get("share_with_researcher", True):
+        return ""
+    notes = settings.get("researcher", {}).get("memory_notes", "")
+    def words(value):
+        return set(re.findall(r"[\w-]{3,}", value.casefold()))
+    query = words(prompt)
+    ranked = []
+    for index, line in enumerate(notes.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        score = len(query & words(line))
+        if score:
+            ranked.append((-score, index, line[:500]))
+    ranked.sort()
+    return "\n".join(row[2] for row in ranked[:4])[:2000]

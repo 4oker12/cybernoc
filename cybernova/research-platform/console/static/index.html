@@ -9,9 +9,9 @@
   <link rel="stylesheet" href="/static/styles.css?v=20261123-white-canvas-2">
   <link rel="stylesheet" href="/static/ux.css?v=20261123-global-design-1">
   <link rel="stylesheet" href="/static/design-system.css?v=20261123-github-green-primary-1">
-  <link rel="stylesheet" href="/static/variant3.css?v=20261123-github-green-primary-1">
+  <link rel="stylesheet" href="/static/variant3.css?v=20261125-integrated-1">
   <script defer src="/static/markdown.js?v=20261123-semantic-sections-1"></script>
-  <script defer src="/static/app.js?v=20261123-github-green-primary-1"></script>
+  <script defer src="/static/app.js?v=20261125-autonomy-3"></script>
   <script defer src="/static/model-settings.js?v=20261123-deepseek-controls-1"></script>
   <script defer src="/static/ux.js?v=20261123-global-design-2"></script>
 </head>
@@ -38,6 +38,7 @@
       <button class="session-item active" type="button" id="sessionItem">Новый диалог</button>
       <details class="sidebar-more" id="researchTasks">
         <summary>Задачи</summary>
+        <button type="button" id="scheduleTaskOpen" class="header-button">＋ В очередь / по времени</button>
         <div class="task-list" id="taskList" aria-label="Сохранённые задачи">
           <p class="muted">Загрузка задач…</p>
         </div>
@@ -161,7 +162,7 @@
       </div>
       <div class="composer-meta">
         <span id="uploadStatus">Файлы · Ctrl+V — вставить вывод · Enter — отправить</span>
-        <span id="tokenUsageStatus" title="Сумма фактических токенов, сообщённых провайдером">Токены: —</span>
+
         <span id="sendStatus" role="status">Готов</span>
       </div>
     </section>
@@ -169,6 +170,9 @@
 
   <aside class="inspector" id="inspector" aria-label="Инструменты" hidden>
     <div class="inspector-header"><strong>Инструменты и подключения</strong><button type="button" id="navChat" class="icon-button" aria-label="Закрыть">×</button></div>
+    <section class="scope-settings"><strong>Расход токенов</strong>
+        <span id="tokenUsageStatus" title="Сумма фактических токенов, сообщённых провайдером">Токены: —</span>
+    </section>
     <p class="inspector-note">Общие операции доступны в обоих режимах. Полный MCP работает у исследователя; ChatGPT получает результаты разрешённых операций через Cybernova.</p>
     <section class="utility-console" aria-label="Общие рабочие инструменты">
       <strong>Быстрые инструменты</strong>
@@ -242,6 +246,15 @@
     <div class="run-list" id="runList"><p class="muted">Пока нет вызовов.</p></div>
   </aside>
 </div>
+  <dialog id="scheduleTaskDialog" class="profile-dialog" aria-label="Планировщик задач">
+    <div class="profile-shell"><h3>Независимая текстовая задача</h3>
+      <p>До двух фоновых задач одновременно. Инструменты отключены. Выполнение возможно только при запущенной Cybernova; запрос передаётся выбранной модели.</p>
+      <label for="scheduleTaskPrompt">Задача</label><textarea id="scheduleTaskPrompt" maxlength="9000" rows="5"></textarea>
+      <label for="scheduleTaskTime">Время запуска (локальное; пустое — сейчас)</label><input id="scheduleTaskTime" type="datetime-local">
+      <p id="scheduleTaskStatus" role="status"></p>
+      <div><button type="button" id="scheduleTaskCancel" class="header-button">Закрыть</button> <button type="button" id="scheduleTaskSave" class="profile-save">Поставить в очередь</button></div>
+    </div>
+  </dialog>
   <dialog id="profileDialog" class="profile-dialog" aria-labelledby="profileTitle">
     <div class="profile-shell">
       <div class="profile-heading">
@@ -275,18 +288,18 @@
           <p class="researcher-behavior-help">Настройки применяются к следующим сообщениям. Значение 100 означает более выраженное качество.</p>
           <div class="researcher-behavior-grid">
             <div class="behavior-control">
-              <label for="researcherAutonomy"><span>Самостоятельность</span><output id="researcherAutonomyValue">80</output></label>
-              <input id="researcherAutonomy" type="range" min="0" max="100" step="5" value="80">
+              <label for="researcherAutonomy"><span>Самостоятельность</span><output id="researcherAutonomyValue">90</output></label>
+              <input id="researcherAutonomy" type="range" min="0" max="100" step="5" value="90">
               <p>Выполнять безопасные шаги без постоянных уточнений.</p>
             </div>
             <div class="behavior-control">
-              <label for="researcherInitiative"><span>Инициативность</span><output id="researcherInitiativeValue">75</output></label>
-              <input id="researcherInitiative" type="range" min="0" max="100" step="5" value="75">
+              <label for="researcherInitiative"><span>Инициативность</span><output id="researcherInitiativeValue">80</output></label>
+              <input id="researcherInitiative" type="range" min="0" max="100" step="5" value="80">
               <p>Продолжать очевидные этапы и искать альтернативы.</p>
             </div>
             <div class="behavior-control">
-              <label for="researcherSkepticism"><span>Скептицизм</span><output id="researcherSkepticismValue">85</output></label>
-              <input id="researcherSkepticism" type="range" min="0" max="100" step="5" value="85">
+              <label for="researcherSkepticism"><span>Скептицизм</span><output id="researcherSkepticismValue">90</output></label>
+              <input id="researcherSkepticism" type="range" min="0" max="100" step="5" value="90">
               <p>Проверять предположения и причинно-следственные связи.</p>
             </div>
             <div class="behavior-control">
@@ -304,8 +317,26 @@
               <input id="researcherBrevity" type="range" min="0" max="100" step="5" value="80">
               <p>Отвечать компактно, не превращая диалог в постоянный отчёт.</p>
             </div>
+            <div class="behavior-control">
+              <label for="researcherResearchDepth"><span>Глубина исследования</span><output id="researcherResearchDepthValue">80</output></label>
+              <input id="researcherResearchDepth" type="range" min="0" max="100" step="5" value="80">
+              <p>Сопоставлять источники и проверять альтернативные гипотезы.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherPersistence"><span>Настойчивость</span><output id="researcherPersistenceValue">90</output></label>
+              <input id="researcherPersistence" type="range" min="0" max="100" step="5" value="90">
+              <p>Искать допустимые альтернативы после ошибок, не повторять сбои.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherHumor"><span>Неформальность и юмор</span><output id="researcherHumorValue">25</output></label>
+              <input id="researcherHumor" type="range" min="0" max="100" step="5" value="25">
+              <p>Лёгкая ирония только там, где уместна.</p>
+            </div>
           </div>
         </div>
+        <label for="researcherMemoryNotes">Межсессионная память (одна заметка на строку)</label><textarea id="researcherMemoryNotes" rows="5" maxlength="6000" placeholder="Краткие проверенные решения, предпочтения и факты; без секретов"></textarea>
+        <p class="profile-help">Подходящие заметки передаются исследовательской модели при совпадении слов с задачей. Отключение передачи общего профиля также отключает память.</p>
+        <label for="researcherInputBudget">Мягкий бюджет входных токенов за ответ</label><select id="researcherInputBudget"><option value="60000">60 000</option><option value="120000" selected>120 000</option><option value="250000">250 000</option><option value="500000">500 000</option></select>
         <label for="researcherDescription">Описание роли / специализации</label><textarea id="researcherDescription" rows="3" maxlength="2000" placeholder="Каким исследователем должна быть модель, на чём специализироваться…"></textarea>
         <label for="researcherInstructions">Дополнительный системный промпт</label><textarea id="researcherInstructions" rows="7" maxlength="10000" placeholder="Методология, приоритеты, формат отчётов, обязательные этапы анализа…"></textarea>
       </section>
