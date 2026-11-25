@@ -649,7 +649,7 @@ class AgentTests(unittest.TestCase):
         self.assertIn("ОБЩИЙ ИНСТРУМЕНТАЛЬНЫЙ СТАНДАРТ CYBERNOVA", selection_prompt)
         self.assertIn("late_tool_69", selection_prompt)
         self.assertIn("Draft plan: use late_tool_69", selection_messages[-1]["content"])
-        self.assertIn("не является разрешением пользователя", selection_messages[-1]["content"])
+        self.assertIn("не разрешение пользователя", selection_messages[-1]["content"])
         self.assertEqual(mcp.calls, [("late_tool_69", {})])
         self.assertEqual(out["selected_by"], "model_json_fallback")
         self.assertEqual(out["tool_calls"], 1)
