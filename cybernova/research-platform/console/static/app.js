@@ -583,6 +583,10 @@ function renderOwnerPaymentFields(item){
     ["expiry_month","Месяц окончания (MM)","text","numeric",2],
     ["expiry_year","Год окончания (YY или YYYY)","text","numeric",4],
     ["cvv","CVV / CVC","password","numeric",4],
+    ["billing_address_line1","Платёжный адрес, строка 1","text","text",120],
+    ["billing_city","Город платёжного адреса","text","text",80],
+    ["billing_region","Область / штат","text","text",80],
+    ["billing_country","Страна платёжного адреса","text","text",80],
     ["billing_postal_code","Почтовый индекс для оплаты","text","text",20]
   ];
   for(const [key,label,type,inputMode,maxLength] of configs){
