@@ -103,13 +103,23 @@ class BrowserControlTests(unittest.TestCase):
         self.assertIn("browser_submit", gpt_names)
         self.assertIn("browser_submit", deepseek_names)
 
-    def test_browser_submit_keeps_account_registration_and_destructive_actions_manual(self):
-        for target in (
-            "Sign up", "Register", "Create account", "New account",
-            "Pay now", "Place order", "Delete account",
-        ):
+    def test_browser_submit_allows_registration_but_keeps_financial_and_destructive_actions_manual(self):
+        for target in ("Sign up", "Register", "Create account", "New account", "Join"):
+            with self.subTest(target=target):
+                self.assertIsNone(IRREVERSIBLE_SUBMIT_TARGET.search(target))
+        for target in ("Pay now", "Place order", "Delete account", "Unsubscribe"):
             with self.subTest(target=target):
                 self.assertIsNotNone(IRREVERSIBLE_SUBMIT_TARGET.search(target))
+
+    def test_registration_intent_authorizes_browser_submit(self):
+        from console.tool_policy import task_intent_matches
+        description = "Submit one visible registration form only when the user requests account creation."
+        self.assertTrue(task_intent_matches(
+            "browser_submit", description, "Зарегистрируй аккаунт на AWS и заверши регистрацию."
+        ))
+        self.assertFalse(task_intent_matches(
+            "browser_submit", description, "Изучи форму регистрации, ничего не отправляй."
+        ))
 
     def test_browser_submit_requires_explicit_current_user_intent_and_dispatches_when_requested(self):
         from console.gpt_tool_runtime import GPTToolRuntime
