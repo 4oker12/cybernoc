@@ -4,6 +4,7 @@ import re
 import secrets
 import threading
 import time
+from datetime import datetime
 from urllib.parse import urlsplit
 
 try:
@@ -14,6 +15,82 @@ except ImportError:
 
 class OwnerInputError(ValueError):
     pass
+
+
+
+_PAYMENT_FIELD_KEYS = frozenset({
+    "card_number", "expiry", "expiry_month", "expiry_year", "cvv",
+    "cardholder_name", "billing_postal_code",
+})
+_PAYMENT_REQUIRED_KEYS = frozenset({"card_number", "expiry_month", "expiry_year", "cvv"})
+
+
+def _normalize_payment_card(value, payment_fields):
+    if not isinstance(value, dict):
+        raise OwnerInputError("payment_card_payload_invalid")
+    expected = set(_PAYMENT_REQUIRED_KEYS)
+    if "cardholder_name" in payment_fields:
+        expected.add("cardholder_name")
+    if "billing_postal_code" in payment_fields:
+        expected.add("billing_postal_code")
+    if set(value) != expected:
+        raise OwnerInputError("payment_card_fields_invalid")
+    if any(not isinstance(item, str) for item in value.values()):
+        raise OwnerInputError("payment_card_fields_invalid")
+
+    number = re.sub(r"[ -]", "", value["card_number"])
+    if not re.fullmatch(r"\d{12,19}", number):
+        raise OwnerInputError("payment_card_number_invalid")
+    checksum = 0
+    for index, digit in enumerate(reversed(number)):
+        n = int(digit)
+        if index % 2:
+            n *= 2
+            if n > 9:
+                n -= 9
+        checksum += n
+    if checksum % 10:
+        raise OwnerInputError("payment_card_number_checksum_invalid")
+
+    month = value["expiry_month"].strip()
+    year = value["expiry_year"].strip()
+    if not re.fullmatch(r"(?:0[1-9]|1[0-2])", month):
+        raise OwnerInputError("payment_card_expiry_month_invalid")
+    if not re.fullmatch(r"(?:\d{2}|\d{4})", year):
+        raise OwnerInputError("payment_card_expiry_year_invalid")
+    year_full = int(year) if len(year) == 4 else 2000 + int(year)
+    now = datetime.now()
+    if year_full < now.year or (year_full == now.year and int(month) < now.month):
+        raise OwnerInputError("payment_card_expired")
+
+    cvv = value["cvv"].strip()
+    if not re.fullmatch(r"\d{3,4}", cvv):
+        raise OwnerInputError("payment_card_security_code_invalid")
+
+    normalized = {
+        "card_number": number,
+        "expiry_month": month,
+        "expiry_year": year,
+        "cvv": cvv,
+    }
+    if "cardholder_name" in expected:
+        name = value["cardholder_name"].strip()
+        if not 2 <= len(name) <= 80 or "\x00" in name:
+            raise OwnerInputError("payment_cardholder_name_invalid")
+        normalized["cardholder_name"] = name
+    if "billing_postal_code" in expected:
+        postal = value["billing_postal_code"].strip()
+        if not 2 <= len(postal) <= 20 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 -]*", postal):
+            raise OwnerInputError("payment_billing_postal_code_invalid")
+        normalized["billing_postal_code"] = postal
+    return normalized
+
+
+def _wipe_mapping(value):
+    if isinstance(value, dict):
+        for key in list(value):
+            value[key] = ""
+        value.clear()
 
 
 class OwnerInputBroker:
@@ -40,11 +117,12 @@ class OwnerInputBroker:
     def request_and_wait(
         self, session_id, purpose, input_type, field_label, timeout=300, *,
         expected_origin="", offer_vault_save=False, service="", username="", account_label="",
+        payment_fields=None, payment_field_hosts=None, action_origin="", action_button="",
     ):
         session_id = self._session(session_id)
         purpose = self._clean(purpose, "purpose", 240)
         field_label = self._clean(field_label, "field_label", 120)
-        if input_type not in {"otp", "password", "contact"}:
+        if input_type not in {"otp", "password", "contact", "payment_card", "payment_confirmation"}:
             raise OwnerInputError("owner_input_type_invalid")
         if not isinstance(offer_vault_save, bool):
             raise OwnerInputError("owner_input_vault_option_invalid")
@@ -60,6 +138,46 @@ class OwnerInputBroker:
                     raise ValueError
             except (ValueError, TypeError):
                 raise OwnerInputError("owner_input_origin_invalid") from None
+        if input_type in {"payment_card", "payment_confirmation"} and not expected_origin:
+            raise OwnerInputError("owner_input_origin_required")
+        payment_fields = []
+        payment_field_hosts = {}
+        action_origin = ""
+        action_button = ""
+        if input_type == "payment_card":
+            if offer_vault_save:
+                raise OwnerInputError("payment_card_never_saved")
+            if not isinstance(payment_fields, (list, tuple)) or not payment_fields:
+                raise OwnerInputError("payment_form_fields_invalid")
+            payment_fields = list(dict.fromkeys(payment_fields))
+            if (any(field not in _PAYMENT_FIELD_KEYS for field in payment_fields)
+                    or "card_number" not in payment_fields or "cvv" not in payment_fields
+                    or not ("expiry" in payment_fields or
+                            {"expiry_month", "expiry_year"}.issubset(payment_fields))):
+                raise OwnerInputError("payment_form_fields_invalid")
+            if not isinstance(payment_field_hosts, dict) or set(payment_field_hosts) != set(payment_fields):
+                raise OwnerInputError("payment_form_hosts_invalid")
+            clean_hosts = {}
+            for field, host in payment_field_hosts.items():
+                if not isinstance(host, str) or not re.fullmatch(r"[a-z0-9.-]{1,253}", host.lower()):
+                    raise OwnerInputError("payment_form_hosts_invalid")
+                clean_hosts[field] = host.lower().rstrip(".")
+            payment_field_hosts = clean_hosts
+        elif input_type == "payment_confirmation":
+            if offer_vault_save:
+                raise OwnerInputError("payment_confirmation_invalid")
+            action_button = self._clean(action_button, "action_button", 180)
+            try:
+                parsed_action = urlsplit(action_origin)
+                if (parsed_action.scheme != "https" or not parsed_action.hostname
+                        or parsed_action.username or parsed_action.password
+                        or parsed_action.port not in (None, 443)
+                        or parsed_action.path not in {"", "/"}
+                        or parsed_action.query or parsed_action.fragment):
+                    raise ValueError
+                action_origin = "https://" + parsed_action.hostname.lower()
+            except (ValueError, TypeError):
+                raise OwnerInputError("payment_action_origin_invalid") from None
         if offer_vault_save:
             if input_type != "password" or not expected_origin:
                 raise OwnerInputError("owner_input_vault_save_not_available")
@@ -83,6 +201,14 @@ class OwnerInputBroker:
                 "offer_vault_save": offer_vault_save, "service": service,
                 "username": username, "account_label": account_label,
                 "vault_record_id": None,
+                "payment_fields": payment_fields,
+                "payment_field_hosts": payment_field_hosts,
+                "payment_frame_hosts": sorted({
+                    host for host in payment_field_hosts.values()
+                    if host != urlsplit(expected_origin).hostname.lower()
+                }),
+                "approved_frame_hosts": [],
+                "action_origin": action_origin, "action_button": action_button,
                 "event": threading.Event(), "status": "pending", "value": None,
             }
             self._requests[request_id] = item
@@ -112,40 +238,73 @@ class OwnerInputBroker:
             return {"request_id": item["request_id"], "purpose": item["purpose"],
                     "input_type": item["input_type"], "field_label": item["field_label"],
                     "vault_save_available": bool(item["offer_vault_save"]),
-                    "account_label": item["account_label"]}
+                    "account_label": item["account_label"],
+                    "payment_fields": list(item["payment_fields"]),
+                    "payment_frame_hosts": list(item["payment_frame_hosts"]),
+                    "payment_field_hosts": dict(item["payment_field_hosts"]),
+                    "action_origin": item["action_origin"],
+                    "action_button": item["action_button"]}
 
-    def submit(self, session_id, request_id, value, save_to_vault=False):
+    def submit(
+        self, session_id, request_id, value=None, save_to_vault=False, *,
+        payment_card=None, approved_frame_hosts=None, decision=None,
+    ):
         session_id = self._session(session_id)
         if not isinstance(save_to_vault, bool):
             raise OwnerInputError("owner_input_vault_option_invalid")
         if not isinstance(request_id, str) or not re.fullmatch(r"oin_[A-Za-z0-9_-]{16,64}", request_id):
             raise OwnerInputError("owner_input_request_invalid")
-        if not isinstance(value, str) or not value or len(value) > 512 or "\x00" in value:
-            raise OwnerInputError("owner_input_value_invalid")
         with self._lock:
             self._expire_locked()
             item = self._requests.get(request_id)
             if item is None or item["session_id"] != session_id or item["status"] != "pending":
                 raise OwnerInputError("owner_input_request_not_active")
             kind = item["input_type"]
-            if kind == "otp" and not re.fullmatch(r"\d{4,8}", value.strip()):
-                raise OwnerInputError("owner_input_otp_format_invalid")
-            if kind == "password" and not 8 <= len(value) <= 256:
-                raise OwnerInputError("owner_input_password_length_invalid")
-            if kind == "contact" and len(value.strip()) < 3:
-                raise OwnerInputError("owner_input_contact_invalid")
-            if save_to_vault:
-                if kind != "password" or not item.get("offer_vault_save"):
-                    raise OwnerInputError("owner_input_vault_save_not_available")
-                try:
-                    record = account_vault().store_password(
-                        item["service"], item["username"], value,
-                        item["expected_origin"], item["account_label"],
-                    )
-                    item["vault_record_id"] = record["record_id"]
-                except Exception:
-                    raise OwnerInputError("owner_input_vault_store_failed") from None
-            item["value"] = value
+            if kind == "payment_card":
+                if value is not None or decision is not None or save_to_vault:
+                    raise OwnerInputError("payment_card_payload_invalid")
+                normalized = _normalize_payment_card(payment_card, item["payment_fields"])
+                if not isinstance(approved_frame_hosts, list) or any(
+                    not isinstance(host, str) for host in approved_frame_hosts
+                ):
+                    raise OwnerInputError("payment_frame_approval_invalid")
+                approved = list(dict.fromkeys(host.lower().rstrip(".") for host in approved_frame_hosts))
+                if any(host not in item["payment_frame_hosts"] for host in approved):
+                    raise OwnerInputError("payment_frame_approval_invalid")
+                required_external = set(item["payment_frame_hosts"])
+                if not required_external.issubset(set(approved)):
+                    raise OwnerInputError("payment_frame_host_approval_required")
+                item["approved_frame_hosts"] = approved
+                item["value"] = normalized
+            elif kind == "payment_confirmation":
+                if (type(decision) is not bool or value is not None
+                        or payment_card is not None or save_to_vault
+                        or approved_frame_hosts not in (None, [])):
+                    raise OwnerInputError("payment_confirmation_payload_invalid")
+                item["value"] = decision
+            else:
+                if payment_card is not None or decision is not None or approved_frame_hosts not in (None, []):
+                    raise OwnerInputError("owner_input_payload_invalid")
+                if not isinstance(value, str) or not value or len(value) > 512 or "\x00" in value:
+                    raise OwnerInputError("owner_input_value_invalid")
+                if kind == "otp" and not re.fullmatch(r"\d{4,8}", value.strip()):
+                    raise OwnerInputError("owner_input_otp_format_invalid")
+                if kind == "password" and not 8 <= len(value) <= 256:
+                    raise OwnerInputError("owner_input_password_length_invalid")
+                if kind == "contact" and len(value.strip()) < 3:
+                    raise OwnerInputError("owner_input_contact_invalid")
+                if save_to_vault:
+                    if kind != "password" or not item.get("offer_vault_save"):
+                        raise OwnerInputError("owner_input_vault_save_not_available")
+                    try:
+                        record = account_vault().store_password(
+                            item["service"], item["username"], value,
+                            item["expected_origin"], item["account_label"],
+                        )
+                        item["vault_record_id"] = record["record_id"]
+                    except Exception:
+                        raise OwnerInputError("owner_input_vault_store_failed") from None
+                item["value"] = value
             item["status"] = "submitted"
             item["event"].set()
         return {"ok": True, "accepted": True}
@@ -167,6 +326,41 @@ class OwnerInputBroker:
             raise OwnerInputError("owner_input_value_missing")
         return kind, value, expected_origin
 
+    def consume_payment_card(self, session_id, request_id):
+        session_id = self._session(session_id)
+        with self._lock:
+            self._expire_locked()
+            item = self._requests.get(request_id)
+            if (item is None or item["session_id"] != session_id
+                    or item["status"] != "submitted" or item["input_type"] != "payment_card"):
+                raise OwnerInputError("payment_card_not_ready_or_already_used")
+            value = item["value"]
+            expected_origin = item["expected_origin"]
+            field_hosts = dict(item["payment_field_hosts"])
+            approved_hosts = list(item["approved_frame_hosts"])
+            self._drop_locked(request_id, clear_value=False)
+        if not isinstance(value, dict):
+            raise OwnerInputError("payment_card_value_missing")
+        return value, expected_origin, field_hosts, approved_hosts
+
+    def consume_payment_confirmation(self, session_id, request_id):
+        session_id = self._session(session_id)
+        with self._lock:
+            self._expire_locked()
+            item = self._requests.get(request_id)
+            if (item is None or item["session_id"] != session_id
+                    or item["status"] != "submitted"
+                    or item["input_type"] != "payment_confirmation"):
+                raise OwnerInputError("payment_confirmation_not_ready_or_already_used")
+            decision = item["value"]
+            expected_origin = item["expected_origin"]
+            action_origin = item["action_origin"]
+            action_button = item["action_button"]
+            self._drop_locked(request_id)
+        if type(decision) is not bool:
+            raise OwnerInputError("payment_confirmation_value_missing")
+        return decision, expected_origin, action_origin, action_button
+
     def cancel(self, session_id, request_id):
         session_id = self._session(session_id)
         with self._lock:
@@ -179,11 +373,13 @@ class OwnerInputBroker:
             self._drop_locked(request_id)
         return {"ok": True, "cancelled": True}
 
-    def _drop_locked(self, request_id):
+    def _drop_locked(self, request_id, *, clear_value=True):
         item = self._requests.pop(request_id, None)
         if item is not None and self._by_session.get(item["session_id"]) == request_id:
             self._by_session.pop(item["session_id"], None)
         if item is not None:
+            if clear_value:
+                _wipe_mapping(item.get("value"))
             item["value"] = None
 
     def _expire_locked(self):
