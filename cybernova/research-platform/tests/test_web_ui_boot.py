@@ -135,7 +135,8 @@ class WebUIBootTests(unittest.TestCase):
         app=(STATIC/"app.js").read_text(encoding="utf-8")
         script=r"""
 const vm=require('node:vm');
-const html=process.argv[1], app=process.argv[2];
+const fs=require('node:fs');
+const html=fs.readFileSync(process.argv[1],'utf8'), app=fs.readFileSync(process.argv[2],'utf8');
 const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);
 const nodes=new Map();
 class Elem {
@@ -244,7 +245,7 @@ if(detail.children[1].textContent!==largeMessage)
  throw Error('Expansion lost the full original answer');
 
 """
-        run=subprocess.run(["node","-e",script,html,app],
+        run=subprocess.run(["node","-e",script,str(STATIC/"index.html"),str(STATIC/"app.js")],
                            capture_output=True,text=True,timeout=20)
         self.assertEqual(run.returncode,0,run.stderr)
 

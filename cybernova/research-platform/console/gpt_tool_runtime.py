@@ -744,14 +744,20 @@ class GPTToolRuntime:
 
     def mcp_tools(self, groups=None) -> list[dict]:
         """Expose only the tools allowed by the user's current group selection."""
-        return [
-            {
+        rows = []
+        for item in self.tools_for_groups(groups):
+            schema = item["parameters"]
+            if item["name"] == "browser_fill":
+                # Responses strict mode requires all keys, including nullable
+                # options. MCP/native callers may omit those optional keys.
+                # BrowserSession still validates that a target or coords exist.
+                schema = {**schema, "required": ["value"]}
+            rows.append({
                 "name": item["name"],
                 "description": item["description"],
-                "inputSchema": item["parameters"],
-            }
-            for item in self.tools_for_groups(groups)
-        ]
+                "inputSchema": schema,
+            })
+        return rows
 
     def call(self, name: str, args: dict, *, authorized_targets=None,
              user_messages=None, enabled_groups=None,
@@ -1084,7 +1090,7 @@ class GPTToolRuntime:
                                 shell_paths[shell_id] = None
                     cmd_exe = bool(shell_paths.get("cmd"))
                     modules = {}
-                    for module in ("psutil", "pyautogui", "pywinauto", "win32com", "playwright"):
+                    for module in ("psutil", "pyautogui", "pywinauto", "win32com", "patchright", "playwright"):
                         try:
                             modules[module] = importlib.util.find_spec(module) is not None
                         except (ImportError, ModuleNotFoundError, ValueError):

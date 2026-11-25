@@ -119,8 +119,8 @@ class DualChatTests(unittest.TestCase):
                             ("/static/model-settings.js","GET")):
             self.assertTrue(allowed_path(path,method))
         self.assertFalse(allowed_path("/api/siwc/tokens","GET"))
-        html=(ROOT/"console/static/index.html").read_text()
-        js=(ROOT/"console/static/app.js").read_text()
+        html=(ROOT/"console/static/index.html").read_text(encoding="utf-8")
+        js=(ROOT/"console/static/app.js").read_text(encoding="utf-8")
         for marker in ('id="modeQwen"','id="modeChatGPT"','id="gptThreadList"',
                        'id="gptTopModel"','id="navProfile"','id="profileDialog"',
                        'data-profile-tab="chatgpt"','/static/markdown.js','/static/ux.css',
@@ -158,7 +158,7 @@ class N {
 }
 const doc={createElement:tag=>new N(tag),
  createTextNode:t=>({tag:'#text',textContent:t,children:[]})};
-const w={};vm.runInNewContext(process.argv[1],{document:doc,window:w,URL});
+const w={};vm.runInNewContext(require('node:fs').readFileSync(process.argv[1],'utf8'),{document:doc,window:w,URL});
 const text=['# Отчёт','**Рекомендация Qwen**','**важный** пункт',
 '| Следующий шаг | Критерий успеха |','| --- | --- |','| Проверить лог | Есть запись |',
 '- Первый пункт','[плохая ссылка](javascript:alert(1)) <img src=x>'].join('\n');
@@ -172,7 +172,7 @@ if(tags.includes('section'))throw Error('unexpected colored audit card');
 if(!nodes.some(x=>x.tag==='h2' && (x.children||[]).some(y=>(y.textContent||'').includes('Рекомендация'))))
  throw Error('recommendation heading not recognized');
 """
-        check=subprocess.run(["node","-e",script,source.read_text()],
+        check=subprocess.run(["node","-e",script,str(source)],
                              capture_output=True,text=True)
         self.assertEqual(check.returncode,0,check.stderr)
 

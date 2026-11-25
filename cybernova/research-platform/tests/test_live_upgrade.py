@@ -1,6 +1,7 @@
 """Offline regression: live upgrade preserves communications before restart."""
 import os
 from pathlib import Path
+from contextlib import closing
 import sqlite3
 import sys
 import tempfile
@@ -18,14 +19,14 @@ class LiveUpgradeTests(unittest.TestCase):
             private=Path(tmp)/"private"
             private.mkdir(mode=0o700)
             path=private/"communications.sqlite3"
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.execute("CREATE TABLE task(test TEXT NOT NULL)")
                 db.execute("INSERT INTO task VALUES ('preserved')")
             with patch.object(up,"PRIVATE",private), patch.object(up,"DB",path):
                 up.backup_db()
             backups=list((private/"upgrade-backups").glob("*.sqlite3"))
             self.assertEqual(len(backups),1)
-            with sqlite3.connect(backups[0]) as copy:
+            with closing(sqlite3.connect(backups[0])) as copy, copy:
                 self.assertEqual(copy.execute("SELECT test FROM task").fetchone()[0],
                                  "preserved")
                 self.assertEqual(copy.execute("PRAGMA integrity_check").fetchone()[0],"ok")
@@ -34,7 +35,7 @@ class LiveUpgradeTests(unittest.TestCase):
                 self.assertEqual((private/"upgrade-backups").stat().st_mode & 0o077,0)
 
     def test_live_runtime_config_contains_persistent_siwc(self):
-        source=(ROOT/"console/upgrade_communication.py").read_text()
+        source=(ROOT/"console/upgrade_communication.py").read_text(encoding="utf-8")
         self.assertIn("CYBERNOVA_SIWC_DIR=",source)
         self.assertIn("CYBERNOVA_SIWC_CALLBACK_PORT=18795",source)
         self.assertIn("backup_db()",source)

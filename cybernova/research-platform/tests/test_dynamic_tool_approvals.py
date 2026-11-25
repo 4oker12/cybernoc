@@ -73,6 +73,13 @@ class DynamicToolPolicyTests(unittest.TestCase):
         found = discovered_tools([NEW, NEW, {"name": "x;rm -rf", "inputSchema": {}}])
         self.assertEqual(len(found), 1)
 
+    def test_invalid_rows_do_not_consume_catalog_slots(self):
+        rows = [None] * 128 + [{
+            "name": "valid_tool", "description": "Inspect",
+            "inputSchema": {"type": "object", "properties": {}},
+        }]
+        self.assertEqual([item["name"] for item in discovered_tools(rows)], ["valid_tool"])
+
     def test_dynamic_args_enforce_required_and_type(self):
         schema = NEW["inputSchema"]
         self.assertEqual(validate_dynamic_arguments({"domain": "example.test"}, schema),

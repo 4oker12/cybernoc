@@ -38,7 +38,7 @@ class ScannerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "projects" / "demo").mkdir(parents=True)
         (self.root / "rules" / "nuclei-reviewed").mkdir(parents=True)
         (self.root / "rules" / "semgrep-reviewed").mkdir(parents=True)

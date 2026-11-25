@@ -52,8 +52,14 @@ class PortableMigrationTests(unittest.TestCase):
         self.key.write_bytes(b"short")
         with self.assertRaises(manager.InstallError):
             manager.import_backup_key(self.key)
+    def test_import_refuses_symlink(self):
         self.key.unlink()
-        self.key.symlink_to(self.archive)
+        try:
+            self.key.symlink_to(self.archive)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Windows symlink privilege unavailable")
+            raise
         with self.assertRaises(manager.InstallError):
             manager.import_backup_key(self.key)
 

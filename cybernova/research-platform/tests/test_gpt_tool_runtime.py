@@ -453,6 +453,19 @@ class GPTToolRuntimeTests(unittest.TestCase):
             self.assertFalse(failed)
             self.assertEqual(verified["entry"]["status"], "active")
 
+    def test_browser_fill_mcp_accepts_optional_fields_without_changing_strict_gpt(self):
+        from console.tool_policy import validate_dynamic_arguments
+        runtime = GPTToolRuntime()
+        try:
+            schema = next(row["inputSchema"] for row in runtime.mcp_tools(["browser"])
+                          if row["name"] == "browser_fill")
+            supplied = {"target": "Display name", "value": "Synthetic"}
+            self.assertEqual(validate_dynamic_arguments(supplied, schema), supplied)
+            strict_schema = runtime.tool_map["browser_fill"]["parameters"]
+            self.assertEqual(set(strict_schema["required"]), set(strict_schema["properties"]))
+        finally:
+            runtime.close()
+
     def test_all_account_gpt_function_schemas_are_strict_and_closed(self):
         for tool in build_tool_catalog():
             with self.subTest(tool=tool["name"]):
