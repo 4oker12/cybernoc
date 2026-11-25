@@ -14,7 +14,7 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,qwenRunning:fals
   },
   lastUsage:{qwen:null,gpt:null},
   collabRun:null,collabLooping:false,collabStopRequested:false,
-  ownerInputTimer:null,ownerInputRequestId:null,ownerInputType:null};
+  ownerInputRequestId:null,ownerInputType:null};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка Console API / MCP",
@@ -592,29 +592,45 @@ function updateDiagnosticsLinks(){
   }
 }
 
-async function watchUsageProgress(runId,mode="qwen"){
+function showUsageProgress(progress,mode){
+  if(!progress||state.mode!==mode)return;
+  const usage=progress.usage||{};
+  if(usage.available===true){
+    $("tokenUsageStatus").textContent=
+      (progress.status==="running"?"Сейчас · ":"Токены · ")+
+      "вход "+formatTokens(usage.input_tokens)+" · выход "+
+      formatTokens(usage.output_tokens)+" · всего "+formatTokens(usage.total_tokens);
+    $("tokenUsageStatus").title="Промежуточный usage от провайдера "+
+      (usage.provider||"")+". "+(usage.complete===false?"Учёт частичный.":"");
+  }else if(progress.status==="running"){
+    $("tokenUsageStatus").textContent="Модель работает · ждём usage провайдера";
+  }
+}
+async function watchUsageProgress(runId,mode="gpt"){
   const isRunning=()=>mode==="gpt"?state.gptRunning:state.qwenRunning;
   const started=Date.now();
-  while(isRunning()&&Date.now()-started<180000){
-    await new Promise(resolve=>setTimeout(resolve,650));
+  let failures=0,delay=1200;
+  while(isRunning()){
+    await new Promise(resolve=>setTimeout(resolve,delay));
     if(!isRunning())break;
     try{
       const response=await fetch("/api/usage-progress?run_id="+encodeURIComponent(runId),
-        {cache:"no-store",headers:{"Accept":"application/json"}});
-      if(!response.ok)continue;
-      const progress=await response.json(),usage=progress.usage||{};
-      if(state.mode===mode&&usage.available===true){
-        $("tokenUsageStatus").textContent=
-          (progress.status==="running"?"Сейчас · ":"Токены · ")+
-          "вход "+formatTokens(usage.input_tokens)+" · выход "+
-          formatTokens(usage.output_tokens)+" · всего "+formatTokens(usage.total_tokens);
-        $("tokenUsageStatus").title="Промежуточный usage от провайдера "+
-          (usage.provider||"")+". "+(usage.complete===false?"Учёт частичный.":"");
-      }else if(state.mode===mode&&progress.status==="running"){
-        $("tokenUsageStatus").textContent="Модель работает · ждём usage провайдера";
+        {cache:"no-store",headers:{"Accept":"application/json"},signal:AbortSignal.timeout(8000)});
+      if(!response.ok){
+        if(response.status===404&&Date.now()-started<10000)continue;
+        throw Object.assign(Error("HTTP "+response.status),{permanent:response.status<500});
       }
+      const progress=await response.json();
+      showUsageProgress(progress,mode);
+      failures=0;delay=1500;
       if(progress.status!=="running")break;
-    }catch(_){}
+    }catch(error){
+      failures++;
+      delay=Math.min(8000,1500*Math.pow(2,Math.min(failures,3)));
+      if(state.mode===mode&&(error.permanent||failures>=3))
+        $("tokenUsageStatus").textContent="Учёт токенов недоступен: "+String(error.message||error);
+      if(error.permanent)break;
+    }
   }
 }
 async function requestJson(path,data,signal){
@@ -631,15 +647,16 @@ async function requestChatTurn(data,pending){
   const receipt=newRunId();
   const deadline=Date.now()+15*60*1000;
   let accepted=false, failures=0;
+  const request={...data,receipt};
   try{
-    await requestJson("/api/chat/start",{...data,receipt},AbortSignal.timeout(10000));
+    await requestJson("/api/chat/start",request,AbortSignal.timeout(10000));
     accepted=true;
   }catch(exc){
     if(!(exc instanceof TypeError)&&exc.name!=="TimeoutError"&&!(exc.status>=500))throw exc;
   }
-  pending.body.textContent=accepted?"Задача принята. Ожидаем результат…":"Проверяем, принял ли сервер задачу…";
+  pending.body.textContent=accepted?"Задача в очереди…":"Проверяем, принял ли сервер задачу…";
   while(Date.now()<deadline){
-    await new Promise(resolve=>setTimeout(resolve,1000));
+    await new Promise(resolve=>setTimeout(resolve,Math.min(8000,1000*Math.pow(2,Math.min(failures,3)))));
     let job;
     try{
       job=await requestJson("/api/chat/result",{receipt},AbortSignal.timeout(10000));
@@ -647,13 +664,27 @@ async function requestChatTurn(data,pending){
       const transient=exc instanceof TypeError||exc.name==="TimeoutError"||
         exc.status>=500||(!accepted&&exc.status===404);
       if(!transient||++failures>=15)throw exc;
+      if(!accepted&&exc.status===404&&failures>=2){
+        try{
+          await requestJson("/api/chat/start",request,AbortSignal.timeout(10000));
+          accepted=true;
+        }catch(startError){
+          if(startError.status===409||startError.status===422)throw startError;
+        }
+      }
       pending.body.textContent="Связь прервалась. Проверяем статус задачи…";
       continue;
     }
+    showUsageProgress(job.usage_progress,"qwen");
+    renderOwnerInput(job.owner_input);
     if(job.status==="completed")return job.result;
     if(job.status==="failed")throw Error(job.detail||"Выполнение задачи завершилось ошибкой");
     const progress=job.progress;
-    if(progress?.event==="model_request_start"){
+    if(job.state==="waiting_for_owner_input"){
+      pending.body.textContent="Ожидаем защищённый ввод владельца…";
+    }else if(job.state==="queued"){
+      pending.body.textContent="Задача в очереди…";
+    }else if(progress?.event==="model_request_start"){
       pending.body.textContent="Ожидаем ответ модели…";
     }else if(progress?.event==="tool_call_start"&&progress.tool){
       pending.body.textContent="Выполняется инструмент "+progress.tool+"…";
@@ -742,12 +773,7 @@ function renderOwnerPaymentFrames(item){
     list.append(label);
   }
 }
-async function pollOwnerInput(){
-  if(!state.sessionId)return;
-  try{
-    const response=await fetch("/api/owner-input/pending?session_id="+encodeURIComponent(state.sessionId),{cache:"no-store"});
-    if(!response.ok)return;
-    const data=await response.json(),item=data.pending;
+function renderOwnerInput(item){
     if(!item||item.request_id===state.ownerInputRequestId)return;
     state.ownerInputRequestId=item.request_id;
     state.ownerInputType=item.input_type;
@@ -796,15 +822,8 @@ async function pollOwnerInput(){
       $("ownerInputSubmit").textContent="Передать и продолжить";
       input.focus();
     }
+    if($("ownerInputDialog").open)$("ownerInputDialog").close();
     $("ownerInputDialog").showModal();
-  }catch(_){}
-}
-function startOwnerInputPolling(){
-  if(state.ownerInputTimer)clearInterval(state.ownerInputTimer);
-  state.ownerInputTimer=setInterval(pollOwnerInput,900);
-}
-function stopOwnerInputPolling(){
-  if(state.ownerInputTimer){clearInterval(state.ownerInputTimer);state.ownerInputTimer=null;}
 }
 async function submitOwnerInput(){
   if(!state.sessionId||!state.ownerInputRequestId)return;
@@ -864,18 +883,21 @@ async function submitOwnerInput(){
   }
 }
 async function cancelOwnerInput(){
-  if(!state.sessionId||!state.ownerInputRequestId)return;
+  if(!state.sessionId||!state.ownerInputRequestId||$("ownerInputCancel").disabled)return;
+  $("ownerInputCancel").disabled=true;
   try{
-    await fetch("/api/owner-input/cancel",{
-      method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({session_id:state.sessionId,request_id:state.ownerInputRequestId}),
-      cache:"no-store",credentials:"same-origin",referrerPolicy:"no-referrer"
-    });
-  }catch(_){}
-  $("ownerInputDialog").close();
-  resetOwnerInputValues();
-  state.ownerInputRequestId=null;
-  state.ownerInputType=null;
+    await requestJson("/api/owner-input/cancel",{
+      session_id:state.sessionId,request_id:state.ownerInputRequestId
+    },AbortSignal.timeout(10000));
+    $("ownerInputDialog").close();
+    resetOwnerInputValues();
+    state.ownerInputRequestId=null;
+    state.ownerInputType=null;
+  }catch(error){
+    $("ownerInputError").textContent="Отмена не подтверждена: "+String(error.message||error);
+  }finally{
+    $("ownerInputCancel").disabled=false;
+  }
 }
 async function send(){
   if(state.mode==="gpt")return sendGPT();
@@ -889,9 +911,7 @@ async function send(){
   const runId=newRunId();
   setDiagnosticsContext({...state.diagnostics.qwen,run_id:runId},"qwen");
   state.sessionId=state.sessionId||newRunId();
-  startOwnerInputPolling();
   busy(true,"qwen");
-  const usageWatch=watchUsageProgress(runId,"qwen");
   try{
     const result=await requestChatTurn({
       session_id:state.sessionId,message:text,tool_groups:state.toolGroups,
@@ -929,11 +949,10 @@ async function send(){
     pending.body.textContent="Ошибка: "+String(exc.message||exc)+" | ID: "+runId;
     $("sendStatus").textContent="Ошибка подключения";
   }finally{
-    stopOwnerInputPolling();
     if($("ownerInputDialog").open)$("ownerInputDialog").close();
     $("ownerInputValue").value="";
     state.ownerInputRequestId=null;
-    busy(false,"qwen");await usageWatch;$("messageInput").focus();toBottom();
+    busy(false,"qwen");$("messageInput").focus();toBottom();
   }
 }
 function gptWelcome(){
