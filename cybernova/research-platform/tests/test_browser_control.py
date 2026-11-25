@@ -15,7 +15,8 @@ from console.browser_control import (
     BROWSER_CONTROL_TOOLS, BROWSER_CONTROL_NAMES, BrowserSession,
     HIGH_IMPACT, IRREVERSIBLE_SUBMIT_TARGET, PAYMENT_SUBMIT_TARGET,
     _payment_field_kind, _redact_text, _safe_url, validate_public_url,
-    _disable_profile_session_restore,
+    _disable_profile_session_restore, _locate_across_frames,
+    _browser_field_is_sensitive, BROWSER_CONTROL_TOOLS,
 )
 
 
@@ -431,6 +432,163 @@ class BrowserControlTests(unittest.TestCase):
         for label in ("Search trains", "Find tickets", "Continue reading"):
             self.assertIsNone(HIGH_IMPACT.search(label))
 
+
+
+    def test_browser_fill_tool_schema_exposes_expanded_locator_and_input_options(self):
+        fill = next(item for item in BROWSER_CONTROL_TOOLS if item["name"] == "browser_fill")
+        properties = fill["inputSchema"]["properties"]
+        self.assertTrue({"label", "target", "value", "coords", "clear", "human_like"}.issubset(properties))
+        self.assertEqual(fill["inputSchema"]["required"], ["value"])
+
+    def test_browser_fill_locator_searches_nested_frames_and_data_agent_id(self):
+        class Element:
+            def __init__(self, **overrides):
+                self.metadata = {
+                    "tag": "input", "type": "email", "editable": True,
+                    "disabled": False, "read_only": False, "id": "",
+                    "name": "email", "placeholder": "", "aria_label": "",
+                    "autocomplete": "email", "role": "textbox", "labels": "Email",
+                    "data_agent_id": "",
+                }
+                self.metadata.update(overrides)
+
+        class Locator:
+            def __init__(self, elements=None):
+                self.elements = list(elements or [])
+            def count(self):
+                return len(self.elements)
+            def nth(self, index):
+                return Locator([self.elements[index]])
+            def is_visible(self):
+                return True
+            def is_enabled(self):
+                return True
+            def evaluate(self, _script):
+                return self.elements[0].metadata
+
+        class Frame:
+            def __init__(self):
+                self.labels = {}
+                self.placeholders = {}
+                self.roles = {}
+                self.selectors = {}
+            def get_by_label(self, name, exact=True):
+                return self.labels.get((name, exact), Locator())
+            def get_by_placeholder(self, name, exact=True):
+                return self.placeholders.get((name, exact), Locator())
+            def get_by_role(self, role, name=None, exact=True):
+                return self.roles.get((role, name, exact), Locator())
+            def locator(self, selector):
+                return self.selectors.get(selector, Locator())
+
+        main, child = Frame(), Frame()
+        page = type("FakePage", (), {})()
+        page.main_frame = main
+        page.frames = [main, child]
+        email = Element()
+        child.labels[("Email", True)] = Locator([email])
+        found = _locate_across_frames(page, "Email")
+        self.assertIs(found.elements[0], email)
+
+        marked = Element(data_agent_id="email-control")
+        main.selectors['[data-agent-id="email-control"]'] = Locator([marked])
+        found = _locate_across_frames(page, "email-control")
+        self.assertIs(found.elements[0], marked)
+
+    def test_browser_fill_locator_accepts_explicit_css_and_rejects_ambiguity(self):
+        class Element:
+            metadata = {
+                "tag": "input", "type": "text", "editable": True,
+                "disabled": False, "read_only": False, "id": "email",
+                "name": "email", "placeholder": "", "aria_label": "",
+                "autocomplete": "", "role": "textbox", "labels": "",
+                "data_agent_id": "",
+            }
+        class Locator:
+            def __init__(self, elements=None):
+                self.elements = list(elements or [])
+            def count(self): return len(self.elements)
+            def nth(self, index): return Locator([self.elements[index]])
+            def is_visible(self): return True
+            def is_enabled(self): return True
+            def evaluate(self, _script): return self.elements[0].metadata
+        class Frame:
+            def __init__(self):
+                self.selectors = {}
+                self.labels = {}
+            def locator(self, selector): return self.selectors.get(selector, Locator())
+            def get_by_label(self, name, exact=True): return self.labels.get((name, exact), Locator())
+            def get_by_placeholder(self, name, exact=True): return Locator()
+            def get_by_role(self, role, name=None, exact=True): return Locator()
+        main = Frame()
+        page = type("FakePage", (), {"main_frame": main, "frames": [main]})()
+        element = Element()
+        main.selectors['input[name="email"]'] = Locator([element])
+        found = _locate_across_frames(page, 'input[name="email"]')
+        self.assertIs(found.elements[0], element)
+
+        first, second = Element(), Element()
+        main.labels[("Email", True)] = Locator([first, second])
+        with self.assertRaisesRegex(ValueError, "browser_field_not_unique_or_interactable"):
+            _locate_across_frames(page, "Email")
+
+    def test_browser_fill_sensitive_fields_remain_in_protected_owner_input_path(self):
+        self.assertTrue(_browser_field_is_sensitive({
+            "tag": "input", "type": "password", "autocomplete": "current-password",
+        }, "Password"))
+        self.assertTrue(_browser_field_is_sensitive({
+            "tag": "input", "type": "text", "autocomplete": "one-time-code",
+        }, "Verification code"))
+        self.assertTrue(_browser_field_is_sensitive({
+            "tag": "input", "type": "text", "autocomplete": "cc-number",
+        }, "Card number"))
+        self.assertFalse(_browser_field_is_sensitive({
+            "tag": "input", "type": "email", "autocomplete": "email",
+        }, "Email address"))
+
+    def test_browser_fill_dispatch_keeps_legacy_label_and_uses_frame_locator(self):
+        class Element:
+            def __init__(self):
+                self.metadata = {
+                    "tag": "input", "type": "email", "editable": True,
+                    "disabled": False, "read_only": False, "id": "",
+                    "name": "email", "placeholder": "", "aria_label": "",
+                    "autocomplete": "email", "role": "textbox", "labels": "Email",
+                    "data_agent_id": "",
+                }
+                self.filled = None
+        class Locator:
+            def __init__(self, elements=None):
+                self.elements = list(elements or [])
+            def count(self): return len(self.elements)
+            def nth(self, index): return Locator([self.elements[index]])
+            def is_visible(self): return True
+            def is_enabled(self): return True
+            def evaluate(self, _script): return self.elements[0].metadata
+            def fill(self, value, timeout=None): self.elements[0].filled = value
+        class Frame:
+            def __init__(self, element):
+                self.element = element
+            def locator(self, _selector): return Locator()
+            def get_by_label(self, name, exact=True):
+                return Locator([self.element]) if name == "Email" and exact else Locator()
+            def get_by_placeholder(self, _name, exact=True): return Locator()
+            def get_by_role(self, _role, name=None, exact=True): return Locator()
+        element = Element()
+        frame = Frame(element)
+        page = type("FakePage", (), {"main_frame": frame, "frames": [frame]})()
+        session = BrowserSession(headless=True)
+        try:
+            session._ensure = lambda: None
+            session._page = page
+            session._snapshot = lambda: {"ok": True}
+            result = session._dispatch("browser_fill", {
+                "label": "Email", "value": "operator@example.net", "human_like": False,
+            })
+            self.assertTrue(result["ok"])
+            self.assertEqual(element.filled, "operator@example.net")
+        finally:
+            session._executor.shutdown(wait=False, cancel_futures=True)
 
 if __name__ == "__main__":
     unittest.main()
