@@ -821,8 +821,8 @@ class GPTToolRuntime:
                     if isinstance(message, dict) and message.get("role") == "user"
                 )
                 if not re.search(
-                    r"(?i)(?:\\bcreate\\b.{0,50}\\baccount\\b|\\bregister\\b|"
-                    r"\\bsign[\\s-]?up\\b|создай.{0,50}аккаунт|зарегистр|регай|"
+                    r"(?i)(?:\bcreate\b.{0,50}\baccount\b|\bregister\b|"
+                    r"\bsign[\s-]?up\b|создай.{0,50}аккаунт|зарегистр|регай|"
                     r"заведи.{0,50}аккаунт)",
                     user_text,
                 ):
