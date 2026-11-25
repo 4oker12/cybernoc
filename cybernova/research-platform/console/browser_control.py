@@ -111,6 +111,10 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_submit",
           "Submit one visible form/button only when the latest user message explicitly asks for the relevant action. User-requested account sign-up/registration is permitted. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Payment, purchase, deletion and account-removal actions remain blocked.",
           {"name": {**STRING, "description": "Exact accessible name of the visible form submit button"}}, ["name"]),
+    _tool("browser_submit_payment",
+          "Request explicit owner confirmation inside Cybernova's protected chat dialog, then submit exactly one visible payment or payment-verification form. The dialog shows the merchant origin, button and purpose. Never use for purchases or subscriptions unless the owner confirms the exact action in that dialog.",
+          {"name": {**STRING, "description": "Exact accessible name of the visible payment or payment-verification submit button"},
+           "purpose": {**STRING, "description": "Concise factual summary of the visible payment action, including amount and recurring terms when shown; say when unknown"}}, ["name", "purpose"]),
 ]
 BROWSER_CONTROL_NAMES = frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS)
 APPROVAL_TOOL_NAMES = frozenset({"browser_submit"})
@@ -233,6 +237,42 @@ def validate_public_url(url: str, authorized_hosts=None) -> tuple[str, list[str]
     return host, addresses
 
 
+def _payment_field_kind(meta: dict) -> str | None:
+    autocomplete = str(meta.get("autocomplete") or "").strip().lower()
+    text = " ".join(str(meta.get(key) or "") for key in (
+        "name", "id", "placeholder", "aria_label", "labels", "autocomplete",
+    )).casefold()
+    if autocomplete == "cc-number" or re.search(
+        r"(?:card|cc)[ _-]*number|credit[ _-]*card|(?:^|[ _-])pan(?:$|[ _-])", text
+    ):
+        return "card_number"
+    if autocomplete == "cc-csc" or re.search(
+        r"\b(?:cvv|cvc|csc)\b|security[ _-]*code|card[ _-]*code", text
+    ):
+        return "cvv"
+    if autocomplete == "cc-exp-month" or re.search(
+        r"(?:cc|card|exp|expiry|expiration)[ _-]*(?:exp[ _-]*)?month", text
+    ):
+        return "expiry_month"
+    if autocomplete == "cc-exp-year" or re.search(
+        r"(?:cc|card|exp|expiry|expiration)[ _-]*(?:exp[ _-]*)?year", text
+    ):
+        return "expiry_year"
+    if autocomplete == "cc-exp" or re.search(
+        r"(?:cc[ _-]*)?(?:exp|expiry|expiration)[ _-]*(?:date)?|valid[ _-]*thru", text
+    ):
+        return "expiry"
+    if autocomplete == "cc-name" or re.search(
+        r"card[ _-]*holder|name[ _-]*on[ _-]*card|card[ _-]*name", text
+    ):
+        return "cardholder_name"
+    if autocomplete == "cc-postal-code" or re.search(
+        r"(?:billing[ _-]*)?(?:postal|zip)[ _-]*(?:code)?", text
+    ):
+        return "billing_postal_code"
+    return None
+
+
 def _safe_url(url: str) -> str:
     try:
         parsed = urlsplit(url)
@@ -324,6 +364,7 @@ class BrowserSession:
         self._allow_post_origin: str | None = None
         self._allow_post_remaining = 0
         self._allowed_request_count = 0
+        self._payment_submit_authorized = False
         self._console_events: list[dict] = []
         self._network_events: list[dict] = []
         self._request_started: dict[int, float] = {}
@@ -356,6 +397,262 @@ class BrowserSession:
             raise ValueError("browser_current_page_nonstandard_https_port")
         host = parsed.hostname.lower()
         return "https://" + host
+
+    def _payment_candidates(self) -> dict:
+        self._ensure()
+        candidates = {}
+        script = """els => els.map((el,index) => {
+            const r = el.getBoundingClientRect();
+            const s = getComputedStyle(el);
+            return {
+                index, tag: el.tagName.toLowerCase(),
+                type: (el.getAttribute('type') || '').toLowerCase(),
+                autocomplete: el.getAttribute('autocomplete') || '',
+                name: el.getAttribute('name') || '',
+                id: el.id || '',
+                placeholder: el.getAttribute('placeholder') || '',
+                aria_label: el.getAttribute('aria-label') || '',
+                labels: Array.from(el.labels || []).map(x => x.innerText || '').join(' '),
+                max_length: el.maxLength || 0,
+                visible: r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none',
+                disabled: !!el.disabled
+            };
+        })"""
+        for frame in list(self._page.frames):
+            try:
+                parsed = urlsplit(frame.url)
+                if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+                    continue
+                host = parsed.hostname.lower().rstrip(".")
+                rows = frame.locator("input,select").evaluate_all(script)
+            except Exception:
+                continue
+            for meta in rows:
+                if not meta.get("visible") or meta.get("disabled"):
+                    continue
+                kind = _payment_field_kind(meta)
+                if kind:
+                    candidates.setdefault(kind, []).append((frame, meta["index"], host, meta))
+        return candidates
+
+    def inspect_payment_form(self) -> dict:
+        if self._closed:
+            raise ValueError("browser_session_closed")
+        try:
+            return self._executor.submit(
+                copy_context().run, self._inspect_payment_form
+            ).result(timeout=20)
+        except FutureTimeout:
+            raise ValueError("browser_action_timeout") from None
+
+    def _inspect_payment_form(self) -> dict:
+        origin = self._current_origin()
+        candidates = self._payment_candidates()
+        field_hosts = {}
+
+        def choose(kind, required=False):
+            matches = candidates.get(kind, [])
+            if len(matches) == 1:
+                field_hosts[kind] = matches[0][2]
+                return True
+            if required:
+                raise ValueError("payment_form_field_missing_or_ambiguous:" + kind)
+            return False
+
+        choose("card_number", required=True)
+        choose("cvv", required=True)
+        if len(candidates.get("expiry", [])) == 1:
+            choose("expiry", required=True)
+        elif (len(candidates.get("expiry_month", [])) == 1
+              and len(candidates.get("expiry_year", [])) == 1):
+            choose("expiry_month", required=True)
+            choose("expiry_year", required=True)
+        else:
+            raise ValueError("payment_form_field_missing_or_ambiguous:expiry")
+        choose("cardholder_name")
+        choose("billing_postal_code")
+        main_host = urlsplit(origin).hostname.lower()
+        frame_hosts = sorted({host for host in field_hosts.values() if host != main_host})
+        return {
+            "ok": True, "origin": origin,
+            "fields": list(field_hosts),
+            "field_hosts": field_hosts,
+            "payment_frame_hosts": frame_hosts,
+        }
+
+    def fill_owner_payment_card(
+        self, card: dict, expected_origin: str, field_hosts: dict,
+        approved_frame_hosts: list[str],
+    ) -> dict:
+        if self._closed:
+            raise ValueError("browser_session_closed")
+        try:
+            return self._executor.submit(
+                copy_context().run, self._fill_owner_payment_card,
+                card, expected_origin, field_hosts, approved_frame_hosts,
+            ).result(timeout=45)
+        except FutureTimeout:
+            raise ValueError("browser_action_timeout") from None
+
+    def _fill_owner_payment_card(
+        self, card: dict, expected_origin: str, field_hosts: dict,
+        approved_frame_hosts: list[str],
+    ) -> dict:
+        if not isinstance(card, dict) or not isinstance(field_hosts, dict):
+            raise ValueError("payment_card_arguments_invalid")
+        self._ensure()
+        if self._current_origin() != expected_origin:
+            raise ValueError("payment_form_origin_changed")
+        if not isinstance(approved_frame_hosts, list):
+            raise ValueError("payment_frame_approval_invalid")
+        allowed_hosts = {urlsplit(expected_origin).hostname.lower()}
+        allowed_hosts.update(
+            host.lower().rstrip(".") for host in approved_frame_hosts
+            if isinstance(host, str)
+        )
+        candidates = self._payment_candidates()
+        current_hosts = {}
+        for kind, expected_host in field_hosts.items():
+            matches = [
+                item for item in candidates.get(kind, [])
+                if item[2] == expected_host and item[2] in allowed_hosts
+            ]
+            if len(matches) != 1:
+                raise ValueError("payment_form_changed_or_field_ambiguous:" + kind)
+            current_hosts[kind] = matches[0][2]
+        if current_hosts != field_hosts:
+            raise ValueError("payment_form_changed")
+        expected_keys = {"card_number", "expiry_month", "expiry_year", "cvv"}
+        if "cardholder_name" in field_hosts:
+            expected_keys.add("cardholder_name")
+        if "billing_postal_code" in field_hosts:
+            expected_keys.add("billing_postal_code")
+        if set(card) != expected_keys:
+            raise ValueError("payment_card_fields_mismatch")
+
+        filled = []
+        def fill_kind(kind, value):
+            matches = [
+                item for item in candidates.get(kind, [])
+                if item[2] == field_hosts[kind]
+            ]
+            if len(matches) != 1:
+                raise ValueError("payment_form_field_ambiguous:" + kind)
+            frame, index, _host, meta = matches[0]
+            locator = frame.locator("input,select").nth(index)
+            if locator.evaluate("el => !!(el.value || '')"):
+                raise ValueError("payment_form_field_already_populated:" + kind)
+            if meta.get("tag") == "select":
+                options = locator.locator("option").evaluate_all(
+                    "els => els.map(el => ({value:el.value,text:(el.textContent||'').trim()}))"
+                )
+                target = str(value)
+                option = next((x for x in options if x["value"] == target), None)
+                if option is None and target.isdigit():
+                    option = next((
+                        x for x in options
+                        if x["value"].isdigit() and int(x["value"]) == int(target)
+                    ), None)
+                if option is None:
+                    raise ValueError("payment_form_option_not_found:" + kind)
+                locator.select_option(value=option["value"], timeout=7000)
+            else:
+                if meta.get("type") not in {"", "text", "tel", "number", "password"}:
+                    raise ValueError("payment_form_input_type_unsupported:" + kind)
+                locator.fill(str(value), timeout=7000)
+            filled.append(locator)
+
+        try:
+            if "cardholder_name" in field_hosts:
+                fill_kind("cardholder_name", card["cardholder_name"])
+            fill_kind("card_number", card["card_number"])
+            if "expiry" in field_hosts:
+                fill_kind("expiry", card["expiry_month"] + "/" + card["expiry_year"][-2:])
+            else:
+                fill_kind("expiry_month", card["expiry_month"])
+                year = card["expiry_year"]
+                year_candidates = [
+                    item for item in candidates.get("expiry_year", [])
+                    if item[2] == field_hosts["expiry_year"]
+                ]
+                if len(year_candidates) == 1:
+                    meta = year_candidates[0][3]
+                    if meta.get("max_length", 0) >= 4 or "yyyy" in str(meta.get("placeholder", "")).lower():
+                        year = year if len(year) == 4 else str(2000 + int(year))
+                    else:
+                        year = year[-2:]
+                fill_kind("expiry_year", year)
+            fill_kind("cvv", card["cvv"])
+            if "billing_postal_code" in field_hosts:
+                fill_kind("billing_postal_code", card["billing_postal_code"])
+        except Exception:
+            for locator in reversed(filled):
+                try:
+                    locator.fill("")
+                except Exception:
+                    pass
+            raise
+        return {
+            "ok": True, "payment_card_filled": True,
+            "filled_fields": sorted(field_hosts),
+            "merchant_origin": expected_origin,
+            "payment_frame_hosts": sorted(set(field_hosts.values()) - {urlsplit(expected_origin).hostname.lower()}),
+            "card_data_saved": False,
+        }
+
+    def inspect_submit_target(self, button_name: str) -> dict:
+        if self._closed:
+            raise ValueError("browser_session_closed")
+        try:
+            return self._executor.submit(
+                copy_context().run, self._inspect_submit_target, button_name
+            ).result(timeout=15)
+        except FutureTimeout:
+            raise ValueError("browser_action_timeout") from None
+
+    def _inspect_submit_target(self, button_name: str) -> dict:
+        self._ensure()
+        if not isinstance(button_name, str) or not button_name.strip() or len(button_name) > 180:
+            raise ValueError("browser_button_name_invalid")
+        button = self._one("button", button_name)
+        form_action = button.evaluate(
+            "el => (el.form && el.form.action) ? el.form.action : ''"
+        )
+        submit_target = form_action or self._page.url
+        validate_public_url(submit_target, self._authorized_hosts)
+        return {
+            "ok": True, "button": button_name.strip(),
+            "merchant_origin": self._current_origin(),
+            "action_origin": _origin(submit_target),
+            "payment_target": bool(PAYMENT_SUBMIT_TARGET.search(button_name + " " + submit_target)),
+        }
+
+    def submit_payment_after_owner_approval(
+        self, button_name: str, expected_origin: str, expected_action_origin: str,
+    ) -> dict:
+        if self._closed:
+            raise ValueError("browser_session_closed")
+        try:
+            return self._executor.submit(
+                copy_context().run, self._submit_payment_after_owner_approval,
+                button_name, expected_origin, expected_action_origin,
+            ).result(timeout=45)
+        except FutureTimeout:
+            raise ValueError("browser_action_timeout") from None
+
+    def _submit_payment_after_owner_approval(
+        self, button_name: str, expected_origin: str, expected_action_origin: str,
+    ) -> dict:
+        if self._current_origin() != expected_origin:
+            raise ValueError("payment_page_origin_changed")
+        self._payment_submit_authorized = True
+        try:
+            return self._dispatch(
+                "browser_submit_payment", {"name": button_name},
+                expected_action_origin=expected_action_origin,
+            )
+        finally:
+            self._payment_submit_authorized = False
 
     def fill_owner_input(
         self, label: str, value: str, input_type: str, expected_origin: str = "",
@@ -689,7 +986,7 @@ class BrowserSession:
             raise ValueError("browser_target_not_interactable")
         return locator
 
-    def _dispatch(self, name: str, args: dict) -> dict:
+    def _dispatch(self, name: str, args: dict, expected_action_origin: str | None = None) -> dict:
         if name not in BROWSER_CONTROL_NAMES:
             raise ValueError("unknown_browser_control_tool")
         if not isinstance(args, dict):
@@ -862,7 +1159,9 @@ class BrowserSession:
             except Exception:
                 locator.select_option(value=value, timeout=7000)
             return self._snapshot()
-        if name in {"browser_click_button", "browser_submit"}:
+        if name in {"browser_click_button", "browser_submit", "browser_submit_payment"}:
+            if name == "browser_submit_payment" and not self._payment_submit_authorized:
+                raise ValueError("payment_submit_requires_chat_confirmation")
             if set(args) != {"name"}:
                 raise ValueError("browser_arguments_invalid")
             target = args["name"]
@@ -891,8 +1190,18 @@ class BrowserSession:
                         "reason": "financial_or_destructive_submit_target",
                         "button": target[:180],
                         "form_action": _safe_url(submit_target),
-                        "message": "Эта кнопка относится к оплате, удалению или другому необратимому действию. Общего разрешения на отправку формы недостаточно; действие оставлено человеку.",
+                        "message": "Для финансового действия требуется отдельное подтверждение в защищённом диалоге Cybernova.",
                     }
+                self._allow_post_origin = _origin(submit_target)
+                self._allow_post_remaining = 1
+                self._allowed_request_count = 0
+            elif name == "browser_submit_payment":
+                submit_target = form_action or self._page.url
+                validate_public_url(submit_target, self._authorized_hosts)
+                if not PAYMENT_SUBMIT_TARGET.search(target + " " + submit_target):
+                    raise ValueError("payment_submit_target_not_recognized")
+                if expected_action_origin != _origin(submit_target):
+                    raise ValueError("payment_action_origin_changed")
                 self._allow_post_origin = _origin(submit_target)
                 self._allow_post_remaining = 1
                 self._allowed_request_count = 0
@@ -907,9 +1216,17 @@ class BrowserSession:
                 except Exception:
                     pass
             finally:
-                if name == "browser_submit":
+                if name in {"browser_submit", "browser_submit_payment"}:
                     self._allow_post_origin = None
                     self._allow_post_remaining = 0
+            if name == "browser_submit_payment":
+                return {
+                    "ok": True, "payment_action_submitted": True,
+                    "button": target[:180],
+                    "approved_submit_origin": _origin(submit_target),
+                    "approved_post_requests_allowed": self._allowed_request_count,
+                    "other_write_requests": "blocked",
+                }
             result = self._snapshot()
             if name == "browser_submit":
                 result["approved_submit"] = True
