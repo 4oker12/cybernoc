@@ -620,6 +620,23 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(out["tool_calls"],1)
         self.assertEqual(out["answer"],"CIDR confirmed")
 
+    def test_scoped_local_file_request_does_not_trigger_browser_fallback(self):
+        class BrowserMCP(FakeMCP):
+            def initialize(self):
+                return TOOLS + [{
+                    "name": "browser_open", "description": "Open a page",
+                    "inputSchema": {"type": "object", "properties": {
+                        "url": {"type": "string"}}, "required": ["url"]},
+                }]
+        mcp = BrowserMCP()
+        lm = FakeOllama([{"content": "Локальная проверка."}])
+        out = Agent(lm, lambda: mcp).run(
+            [], "Проверь файл config.ini на ноутбуке", force_tools=False,
+            scope={"hosts": ["internal.example"]},
+        )
+        self.assertEqual(mcp.calls, [])
+        self.assertEqual(out["tool_calls"], 0)
+
     def test_local_file_search_does_not_trigger_public_google_fallback(self):
         class ResearchMCP(FakeMCP):
             def initialize(self):

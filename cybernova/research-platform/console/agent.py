@@ -908,13 +908,14 @@ class Agent:
                             "; ".join(
                                 t["function"]["name"] + ": " +
                                 t["function"]["description"][:100] +
-                                " | required: " + ",".join(
-                                    str(key) for key in
-                                    t["function"]["parameters"].get("required", [])
+                                " | args: " + ",".join(
+                                    str(key) + ("*" if key in
+                                        t["function"]["parameters"].get("required", []) else "")
+                                    for key in t["function"]["parameters"].get("properties", {})
                                 )
                                 for t in tools
                             ) +
-                            ". Можно выбрать 0–3 вызова. Если инструменты не нужны, верни "
+                            ". * обозначает обязательный аргумент. Можно выбрать 0–3 вызова. Если инструменты не нужны, верни "
                             "{\"calls\":[]}. Иначе верни строго JSON вида "
                             "{\"calls\":[{\"name\":\"точное_имя\",\"arguments\":{}}]}. "
                             "Ничего не исполняй текстом; дополнительные права запрашивай."},
@@ -983,14 +984,20 @@ class Agent:
                     # model may ignore native tool calls AND JSON fallback.
                     # Try exactly one browser evidence call instead of claiming
                     # there is no access. Scope/policy enforcement is in tool.
-                    requested_url = re.search(r"https://[A-Za-z0-9.-]+(?:/[A-Za-z0-9_./?=&%+~-]*)?", text)
-                    selected_url = requested_url.group(0) if requested_url else (
+                    requested_url = re.search(r"https?://[^\s<>\"']+", text)
+                    selected_url = requested_url.group(0).rstrip(".,);]") if requested_url else (
                         "https://" + scope_hosts[0] + "/" if scope_hosts else None)
                     browser_intent = bool(re.search(
-                        r"(?i)(?:открой|исследуй|изучи|проверь|проанализируй|собери|network|devtools|браузер|сайт)",
+                        r"(?i)(?:браузер|сайт|web\s*page|website|devtools|"
+                        r"(?:открой|перейди|посети|open|navigate|visit).{0,40}https?://)",
                         text))
+                    browser_negated = bool(re.search(
+                        r"(?i)(?:не\s+(?:открывай|переходи|посещай|запускай.{0,15}браузер)|"
+                        r"(?:do\s+not|don't|never)\s+(?:open|navigate|visit))",
+                        text))
+                    browser_intent = browser_intent and not browser_negated
                     if selected_url and browser_intent and round_no == 0:
-                        # Prefer the shared Playwright navigator when present.
+                        # Prefer the shared Chromium navigator when present.
                         # Legacy MCP-only agents retain their browser_network/open
                         # fallback and its existing URL argument contract.
                         if self.local_tool_runtime is not None and "browser_navigate" in descriptors:
