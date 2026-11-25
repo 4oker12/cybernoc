@@ -217,7 +217,24 @@ def task_intent_matches(name: str, description: str, user_text: str) -> bool:
         r"\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)",
         text,
     ):
-        return False
+        # A request such as "зарегистрируй аккаунт, не спрашивай меня" is
+        # positive registration intent; only negation of the action itself
+        # must suppress the submit.
+        registration_intent = re.search(
+            r"(?i)(зарегистр|регай|создай.{0,20}аккаунт|заведи.{0,20}аккаунт|"
+            r"register|sign.?up|create.{0,20}account)", text,
+        )
+        registration_negated = re.search(
+            r"(?i)(?:не\s+(?:зарегистр|регист|созда|отправ|делай)|"
+            r"(?:do\s+not|don't)\s+(?:register|sign.?up|create.{0,20}account|submit|send))",
+            text,
+        )
+        benign_owner_prompt = re.search(
+            r"(?i)(?:не\s+(?:спрашивай|дергай|уточняй|мешай)|"
+            r"(?:do\s+not|don't)\s+ask)", text,
+        )
+        if not (registration_intent and not registration_negated and benign_owner_prompt):
+            return False
     definition = (str(name) + " " + str(description)).casefold()
     groups = (
         (r"(?:delete|remove|destroy|drop|purge|format)", r"(?:удал|delete|remove|destroy|drop|purge|форматир)"),
