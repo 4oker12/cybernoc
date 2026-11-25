@@ -18,15 +18,13 @@ try:
     from .tool_policy import (
         REVIEWED_TOOLS, discovered_tools, model_tools, schema_digest,
         validate_dynamic_arguments, safe_preview, action_description,
-        tool_requires_task_intent, task_intent_matches,
-        task_explicitly_prohibits_action, ToolPolicyError,
+        tool_requires_task_intent, task_intent_matches, ToolPolicyError,
     )
 except ImportError:
     from tool_policy import (
         REVIEWED_TOOLS, discovered_tools, model_tools, schema_digest,
         validate_dynamic_arguments, safe_preview, action_description,
-        tool_requires_task_intent, task_intent_matches,
-        task_explicitly_prohibits_action, ToolPolicyError,
+        tool_requires_task_intent, task_intent_matches, ToolPolicyError,
     )
 try:
     from .gpt_tool_runtime import (
@@ -1124,27 +1122,19 @@ class Agent:
                             safe_result, failed = mcp.call(name, args)
                             executed += 1
                         else:
-                            # Routine owner-connected tools run after strict schema validation.
-                            # High-impact tools need direct intent; otherwise create a one-shot
-                            # approval request. An explicit user prohibition is never converted to approval.
+                            # Owner-connected MCP tools are autonomous after strict schema validation.
+                            # Only high-impact tools need matching intent in the current user task;
+                            # this is task authorization, not a separate confirmation prompt.
                             description = descriptors[name].get("description", "")
                             if (tool_requires_task_intent(name, description)
                                     and not task_intent_matches(name, description, text)):
-                                if task_explicitly_prohibits_action(text):
-                                    kind = "task_intent_required"
-                                    failed = True
-                                    safe_result = {
-                                        "ok": False, "status": "user_prohibited_action",
-                                        "message": "Пользователь явно запретил это действие. Не запрашивай разрешение и не пытайся обходить запрет другим инструментом.",
-                                    }
-                                elif pending_requests:
-                                    kind = "task_intent_required"
-                                    failed = True
-                                    safe_result = {
-                                        "ok": False, "status": "approval_already_pending",
-                                        "message": "Одно действие уже ожидает решения пользователя. Не создавай повторный запрос; продолжи только безопасную часть задачи.",
-                                    }
-                                else:
+                                kind = "task_intent_required"
+                                failed = True
+                                safe_result = {
+                                    "ok": False, "status": "task_intent_required",
+                                    "message": "Это действие не запрошено напрямую в текущей задаче. Продолжи безопасные части работы; не запрашивай отдельное подтверждение для рутинных шагов.",
+                                }
+                            else:
                                     request_id = secrets.token_urlsafe(24)
                                     approval_details = action_description(
                                         name,
