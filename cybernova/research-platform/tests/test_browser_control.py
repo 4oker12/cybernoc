@@ -239,6 +239,7 @@ class BrowserControlTests(unittest.TestCase):
                     "playwright": playwright,
                     "playwright.sync_api": sync_api,
                 }), patch.dict("os.environ", {
+                    "CYBERNOVA_BROWSER_BACKEND": "playwright",
                     "CYBERNOVA_GPT_BROWSER_EPHEMERAL": "",
                     "CYBERNOVA_GPT_BROWSER_RESTORE_SESSION": "0",
                 }):

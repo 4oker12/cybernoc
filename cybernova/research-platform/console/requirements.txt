@@ -7,6 +7,7 @@ PyJWT>=2.9,<3
 
 # Pin Playwright: its Python package bundles the Node driver and browser revision.
 # Upgrade only after reviewing the matching signed upstream release.
+patchright==1.64.4
 playwright==1.65.2
 psutil>=5.9,<8
 pyautogui>=0.9.54,<1; sys_platform == 'win32'

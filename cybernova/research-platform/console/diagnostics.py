@@ -33,6 +33,7 @@ BOOT_ID = os.urandom(8).hex()
 _TIMELINE_STRINGS = frozenset({
     "event", "mode", "module", "stage", "status", "tool", "provider", "model",
     "error_type", "error_code", "method", "session_kind",
+    "backend", "preferred_backend", "fallback_reason",
 })
 _TIMELINE_INTS = frozenset({
     "duration_ms", "http_status", "upstream_http_status", "pid", "exit_code",

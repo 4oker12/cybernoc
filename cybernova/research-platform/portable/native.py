@@ -145,12 +145,13 @@ def install_browser(data: Path) -> dict:
     python = _python(data)
     if not python.exists():
         raise NativeError("run_install_first")
-    proc = subprocess.run(
-        [str(python), "-m", "playwright", "install", "chromium"],
-        check=False,
-    )
-    if proc.returncode:
-        raise NativeError("playwright_chromium_install_failed")
+    for backend in ("patchright", "playwright"):
+        proc = subprocess.run(
+            [str(python), "-m", backend, "install", "chromium"],
+            check=False,
+        )
+        if proc.returncode:
+            raise NativeError(f"{backend}_chromium_install_failed")
     return {"chromium_installed": True, "browser": "Chromium"}
 
 
@@ -160,7 +161,7 @@ def _chromium_installed(data: Path) -> bool:
         return False
     probe = (
         "from pathlib import Path; "
-        "from playwright.sync_api import sync_playwright; "
+        "from patchright.sync_api import sync_playwright; "
         "p=sync_playwright().start(); "
         "print(Path(p.chromium.executable_path).is_file()); "
         "p.stop()"

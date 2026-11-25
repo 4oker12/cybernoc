@@ -63,8 +63,10 @@ class NativeInstallerTests(unittest.TestCase):
              )()) as run:
             result=native.install_browser(self.data)
         self.assertTrue(result["chromium_installed"])
-        self.assertEqual(run.call_args.args[0],
-                         [str(python),"-m","playwright","install","chromium"])
+        self.assertEqual([item.args[0] for item in run.call_args_list], [
+            [str(python), "-m", "patchright", "install", "chromium"],
+            [str(python), "-m", "playwright", "install", "chromium"],
+        ])
 
     def test_backups_are_never_activated_implicitly(self):
         native.init(self.data,"ollama","test:latest")

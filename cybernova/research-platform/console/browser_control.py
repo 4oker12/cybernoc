@@ -23,8 +23,10 @@ from urllib.parse import urljoin, urlsplit
 
 try:
     from .diagnostics import event as diagnostic_event
+    from .browser_backend import backend_order, launch_with_backend
 except ImportError:
     from diagnostics import event as diagnostic_event
+    from browser_backend import backend_order, launch_with_backend
 
 MAX_URL = 2048
 MAX_TEXT = 6500
@@ -318,6 +320,7 @@ class BrowserSession:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cybernova-chromium")
         self._closed = False
         self._pw = None
+        self._backend = None
         self._browser = None
         self._context = None
         self._page = None
@@ -368,19 +371,11 @@ class BrowserSession:
     def _ensure(self):
         if self._page is not None and not self._page.is_closed():
             return
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            raise ValueError("playwright_python_not_installed") from None
-        if self._pw is None:
-            self._pw = sync_playwright().start()
         if self._context is not None:
             try:
                 _ = self._context.pages
             except Exception:
-                self._context = None
-                self._browser = None
-                self._page = None
+                self._shutdown()
         restore_session = os.environ.get(
             "CYBERNOVA_GPT_BROWSER_RESTORE_SESSION", "0"
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -394,17 +389,9 @@ class BrowserSession:
                 "1", "true", "yes", "on",
             }
             diagnostic_event("browser_launch_start", headless=self._headless,
-                             session_kind="ephemeral" if ephemeral else "persistent")
-            if ephemeral:
-                self._browser = self._pw.chromium.launch(
-                    headless=self._headless, args=launch_args,
-                )
-                self._context = self._browser.new_context(
-                    accept_downloads=False, service_workers="block",
-                    ignore_https_errors=False, java_script_enabled=True,
-                    viewport={"width": 1440, "height": 1000},
-                )
-            else:
+                             session_kind="ephemeral" if ephemeral else "persistent",
+                             preferred_backend=backend_order()[0])
+            if not ephemeral:
                 configured_profile = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")
                 if self._profile_dir is not None:
                     profile_dir = self._profile_dir
@@ -422,26 +409,37 @@ class BrowserSession:
                         profile_dir.chmod(0o700)
                     except OSError:
                         pass
-                self._context = self._pw.chromium.launch_persistent_context(
-                    user_data_dir=str(profile_dir),
-                    headless=self._headless,
-                    args=launch_args,
-                    accept_downloads=False, service_workers="block",
-                    ignore_https_errors=False, java_script_enabled=True,
-                    viewport={"width": 1440, "height": 1000},
+            context_options = {
+                "accept_downloads": False, "service_workers": "block",
+                "ignore_https_errors": False, "java_script_enabled": True,
+                "viewport": {"width": 1440, "height": 1000},
+            }
+            launch_options = {"headless": self._headless, "args": launch_args}
+
+            def launch(runtime):
+                if ephemeral:
+                    browser = runtime.chromium.launch(**launch_options)
+                    return browser, browser.new_context(**context_options)
+                return None, runtime.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir), **launch_options, **context_options,
                 )
-                self._browser = None
-            self._context.route("**/*", self._route)
-            # WebSockets bypass the ordinary HTTP route handler; block them
-            # explicitly so a page cannot open an uninspected socket.
-            self._context.route_web_socket(
-                "**/*", lambda websocket: websocket.close(
-                    code=1008, reason="Cybernova browser policy",
-                ),
-            )
+
+            self._pw, self._backend, created, fallback_reason = launch_with_backend(launch)
+            self._browser, self._context = created
+            try:
+                self._context.route("**/*", self._route)
+                # WebSockets bypass HTTP routing, so block them explicitly.
+                self._context.route_web_socket(
+                    "**/*", lambda websocket: websocket.close(
+                        code=1008, reason="Cybernova browser policy",
+                    ),
+                )
+            except Exception:
+                self._shutdown()
+                raise ValueError("browser_policy_install_failed") from None
             diagnostic_event("browser_launch_ready", headless=self._headless,
                              session_kind="ephemeral" if ephemeral else "persistent",
-                             status="ok")
+                             backend=self._backend, fallback_reason=fallback_reason, status="ok")
         pages = list(self._context.pages)
         if not restore_session:
             # A dedicated persistent profile keeps authentication state, but
@@ -596,7 +594,8 @@ class BrowserSession:
         blocked = self._blocked[-12:]
         return {
             "ok": True,
-            "browser": "isolated Chromium / Playwright",
+            "browser": "isolated Chromium",
+            "browser_backend": self._backend,
             "url": _safe_url(page.url),
             "title": _redact_text(page.title())[:220],
             "visible_text": _redact_text(text),
@@ -866,6 +865,7 @@ class BrowserSession:
         except Exception:
             pass
         self._page = self._context = self._browser = self._pw = None
+        self._backend = None
         self._attached_pages.clear()
         diagnostic_event("browser_shutdown", status="ok")
 
