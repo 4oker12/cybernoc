@@ -104,7 +104,7 @@ class BrowserControlTests(unittest.TestCase):
         self.assertIn("browser_submit", deepseek_names)
 
     def test_browser_submit_allows_registration_but_keeps_financial_and_destructive_actions_manual(self):
-        for target in ("Sign up", "Register", "Create account", "New account", "Join"):
+        for target in ("Sign up", "Register", "Create account", "New account", "Join", "Регистрация", "Создать аккаунт"):
             with self.subTest(target=target):
                 self.assertIsNone(IRREVERSIBLE_SUBMIT_TARGET.search(target))
         for target in ("Pay now", "Place order", "Delete account", "Unsubscribe"):
