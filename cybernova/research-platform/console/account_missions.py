@@ -34,7 +34,7 @@ STEP_KEY = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 SECRET_ASSIGNMENT = re.compile(
     r"(?i)\b(password|passwd|passcode|secret|token|api[_-]?key|"
     r"access[_-]?key|authorization|cookie|otp|verification[_ ]code)"
-    r"\s*[:=]\s*[^,\s;]+"
+    r"\s*[:=]\s*(?:Bearer\s+)?[^,\s;]+"
 )
 BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}")
 AWS_KEY = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
@@ -241,6 +241,8 @@ class AccountMissionStore:
         summary = _safe_text(summary, "summary", 1200)
         next_action = _safe_text(next_action, "next_action", 600) if next_action else ""
         safe_url = _safe_url(page_url)
+        if mission_status == "completed" and step_status not in {"completed", "skipped"}:
+            raise AccountMissionError("completion_requires_verified_step")
         now = _utc()
         with self._lock, self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -254,6 +256,15 @@ class AccountMissionStore:
                 "SELECT status,created_at FROM account_mission_steps "
                 "WHERE mission_id=? AND step_key=?", (mission_id, step_key)
             ).fetchone()
+            if mission_status == "completed":
+                unfinished = db.execute(
+                    "SELECT COUNT(*) FROM account_mission_steps WHERE mission_id=? "
+                    "AND step_key<>? AND status NOT IN ('completed','skipped')",
+                    (mission_id, step_key),
+                ).fetchone()[0]
+                if unfinished:
+                    db.rollback()
+                    raise AccountMissionError("mission_has_unfinished_steps")
             # A duplicate/replayed "started" event must never downgrade a step
             # already verified as complete.
             if existing and existing["status"] in {"completed", "skipped"} and step_status == "started":
@@ -316,22 +327,28 @@ class AccountMissionStore:
         with self._lock, self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
-                "SELECT mission_id FROM account_missions WHERE status='running'"
+                "SELECT mission_id,status FROM account_missions "
+                "WHERE status IN ('running','waiting_owner')"
             ).fetchall()
             for row in rows:
                 mission_id = row["mission_id"]
+                if row["status"] == "running":
+                    db.execute(
+                        "UPDATE account_mission_steps SET status='needs_reconciliation',"
+                        "summary='Process restarted during this step; inspect external state before retrying.',"
+                        "next_action='Reopen the saved site/profile and verify whether the prior action completed.',"
+                        "updated_at=?,revision=revision+1 WHERE mission_id=? AND status='started'",
+                        (now, mission_id),
+                    )
+                    next_action = "Process restarted. Reconcile the last in-flight step before continuing."
+                else:
+                    # Owner input values are deliberately volatile and are not
+                    # restored after restart. Ask for a fresh code/password.
+                    next_action = "The protected owner-input request was lost on restart; recheck the provider page and request fresh input."
                 db.execute(
-                    "UPDATE account_mission_steps SET status='needs_reconciliation',"
-                    "summary='Process restarted during this step; inspect external state before retrying.',"
-                    "next_action='Reopen the saved site/profile and verify whether the prior action completed.',"
-                    "updated_at=?,revision=revision+1 WHERE mission_id=? AND status='started'",
-                    (now, mission_id),
-                )
-                db.execute(
-                    "UPDATE account_missions SET status='blocked',"
-                    "next_action='Process restarted. Reconcile the last in-flight step before continuing.',"
+                    "UPDATE account_missions SET status='blocked',next_action=?,"
                     "updated_at=?,revision=revision+1 WHERE mission_id=?",
-                    (now, mission_id),
+                    (next_action, now, mission_id),
                 )
             db.commit()
             return len(rows)
