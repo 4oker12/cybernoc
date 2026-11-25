@@ -637,15 +637,19 @@ class AgentTests(unittest.TestCase):
 
         mcp = ManyToolMCP()
         lm = FakeOllama([
-            {"role": "assistant", "content": "No native calls"},
+            {"role": "assistant", "content": "Draft plan: use late_tool_69 to inspect the requested state."},
             {"role": "assistant", "content": '{"calls":[{"name":"late_tool_69","arguments":{}}]}'},
             {"role": "assistant", "content": "Late tool executed."},
         ])
         out = Agent(lm, lambda: mcp).run(
             [], "Use the last available tool", force_tools=True,
         )
-        selection_prompt = lm.prompts[1][0][0]["content"]
+        selection_messages = lm.prompts[1][0]
+        selection_prompt = selection_messages[0]["content"]
+        self.assertIn("ОБЩИЙ ИНСТРУМЕНТАЛЬНЫЙ СТАНДАРТ CYBERNOVA", selection_prompt)
         self.assertIn("late_tool_69", selection_prompt)
+        self.assertIn("Draft plan: use late_tool_69", selection_messages[-1]["content"])
+        self.assertIn("не является разрешением пользователя", selection_messages[-1]["content"])
         self.assertEqual(mcp.calls, [("late_tool_69", {})])
         self.assertEqual(out["selected_by"], "model_json_fallback")
         self.assertEqual(out["tool_calls"], 1)
