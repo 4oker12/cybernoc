@@ -41,6 +41,7 @@ _TIMELINE_STRINGS = frozenset({
     "error_type", "error_code", "method", "session_kind", "agent", "source",
     "tool_group", "target_host", "resource_type", "shell", "operation",
     "decision", "action", "component", "result_code", "input_type",
+    "backend", "preferred_backend", "primary", "selected", "reason",
 })
 _TIMELINE_INTS = frozenset({
     "duration_ms", "http_status", "upstream_http_status", "pid", "exit_code",

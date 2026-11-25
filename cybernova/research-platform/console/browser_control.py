@@ -1101,8 +1101,12 @@ class BrowserSession:
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _ensure(self):
-        if self._page is not None and not self._page.is_closed():
-            return
+        if self._page is not None:
+            try:
+                if not self._page.is_closed():
+                    return
+            except Exception:
+                self._shutdown()
         if self._context is not None:
             try:
                 _ = self._context.pages
@@ -1192,14 +1196,20 @@ class BrowserSession:
                     selected=self._backend,
                     reason=fallback_reason,
                 )
-            self._context.route("**/*", self._route)
-            # WebSockets bypass the ordinary HTTP route handler; block them
-            # explicitly so a page cannot open an uninspected socket.
-            self._context.route_web_socket(
-                "**/*", lambda websocket: websocket.close(
-                    code=1008, reason="Cybernova browser policy",
-                ),
-            )
+            try:
+                self._context.route("**/*", self._route)
+                # Both network guards are mandatory before a page may be used.
+                self._context.route_web_socket(
+                    "**/*", lambda websocket: websocket.close(
+                        code=1008, reason="Cybernova browser policy",
+                    ),
+                )
+            except Exception as exc:
+                diagnostic_event("browser_policy_install_failed", kind="error",
+                                 backend=self._backend, status="failed",
+                                 error_type=type(exc).__name__)
+                self._shutdown()
+                raise ValueError("browser_policy_install_failed") from None
             diagnostic_event(
                 "browser_launch_ready",
                 headless=self._headless,
@@ -1207,19 +1217,22 @@ class BrowserSession:
                 backend=self._backend,
                 status="ok",
             )
-        pages = list(self._context.pages)
-        if not restore_session:
-            # A dedicated persistent profile keeps authentication state, but
-            # restored tabs are not trusted as the next task's working page.
-            for stale_page in pages:
-                try:
+        try:
+            pages = list(self._context.pages)
+            if not restore_session:
+                # Preserve authentication state, not restored working tabs.
+                for stale_page in pages:
                     stale_page.close()
-                except Exception:
-                    pass
-            self._page = self._context.new_page()
-        else:
-            self._page = pages[0] if pages else self._context.new_page()
-        self._attach_page(self._page)
+                self._page = self._context.new_page()
+            else:
+                self._page = pages[0] if pages else self._context.new_page()
+            self._attach_page(self._page)
+        except Exception as exc:
+            diagnostic_event("browser_page_setup_failed", kind="error",
+                             backend=self._backend, status="failed",
+                             error_type=type(exc).__name__)
+            self._shutdown()
+            raise ValueError("browser_page_setup_failed") from None
 
     def _attach_page(self, page):
         page_id = id(page)
@@ -1422,7 +1435,8 @@ class BrowserSession:
         blocked = self._blocked[-12:]
         return {
             "ok": True,
-            "browser": "isolated Chromium / Playwright",
+            "browser": "isolated Chromium",
+            "browser_backend": self._backend,
             "url": _safe_url(page.url),
             "title": _redact_text(title)[:220],
             "visible_text": _redact_text("\n".join(text_parts)),

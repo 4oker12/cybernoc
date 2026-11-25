@@ -5,9 +5,9 @@ import html
 import json
 
 try:
-    from .diagnostics import adapter_error_code, span as diagnostic_span
+    from .diagnostics import adapter_error_code, event as diagnostic_event, span as diagnostic_span
 except ImportError:
-    from diagnostics import adapter_error_code, span as diagnostic_span
+    from diagnostics import adapter_error_code, event as diagnostic_event, span as diagnostic_span
 import os
 import re
 import secrets
@@ -885,6 +885,8 @@ class Agent:
                 assistant_reasoning_content = history_reasoning_content
                 record_usage(result)
                 publish_usage()
+                round_source = "native"
+                extra_search_call = None
                 dsml_calls, clean_content, had_dsml = _extract_dsml_calls(
                     result.get("content"), set(descriptors) if tools_enabled else set()
                 )
@@ -893,7 +895,7 @@ class Agent:
                 calls = (result.get("tool_calls") or []) if tools_enabled else []
                 if not calls and dsml_calls and tools_enabled:
                     calls = dsml_calls
-                    selected_by = "dsml_content"
+                    selected_by = round_source = "dsml_content"
                 if (not calls and round_no == 0 and force_tools and tools):
                     # Some derivative models ignore native tool_calls. The
                     # fallback still asks the active model to SELECT tools, and every tool
@@ -903,8 +905,15 @@ class Agent:
                             "Ты — основная модель-исследователь Cybernova. По контексту уже собранных наблюдений реши, "
                             "нужны ли следующие реальные инструменты. "
                             "Список функций: " +
-                            "; ".join(t["function"]["name"] + ": " +
-                                      t["function"]["description"][:130] for t in tools)[:6500] +
+                            "; ".join(
+                                t["function"]["name"] + ": " +
+                                t["function"]["description"][:100] +
+                                " | required: " + ",".join(
+                                    str(key) for key in
+                                    t["function"]["parameters"].get("required", [])
+                                )
+                                for t in tools
+                            ) +
                             ". Можно выбрать 0–3 вызова. Если инструменты не нужны, верни "
                             "{\"calls\":[]}. Иначе верни строго JSON вида "
                             "{\"calls\":[{\"name\":\"точное_имя\",\"arguments\":{}}]}. "
@@ -922,7 +931,7 @@ class Agent:
                             calls = [{"function": {"name": v.get("name"), "arguments": v.get("arguments")}}
                                      for v in suggested[:3] if isinstance(v, dict)]
                             if calls:
-                                selected_by = "model_json_fallback"
+                                selected_by = round_source = "model_json_fallback"
                     except (ValueError, TypeError, AttributeError):
                         events.append({"type": "tool_selection_error", "message": "Active model did not return valid JSON"})
                 if not executed and not pending_requests and tools and round_no == 0:
@@ -930,11 +939,16 @@ class Agent:
                     # real incidents. Ensure one privacy-filtered search is part
                     # of the first tool batch, even if the model selected another
                     # tool or ignored native/JSON tool selection.
+                    # Local file/repository searches are not public web queries.
                     wants_research = bool(re.search(
-                        r"(?i)(?:google|гугл|найди.{0,30}(?:интернет|сети|кейс|случа|форум)|"
-                        r"поищи|пошукай|найди|знайди|реальн.{0,20}(?:кейс|инцидент)|похож.{0,20}(?:случ|кейс)|"
-                        r"форум|CVE-\d{4}-\d+|\bCVE\b|уязвимост|вразлив|vulnerabilit|"
-                        r"exploit|security advisory|incident report|bug bounty)",
+                        r"(?i)(?:\bgoogle\b|гугл|в\s+интернет[еа]?|в\s+сети|"
+                        r"(?:поищи|пошукай|найди|знайди).{0,35}(?:форум|документац|"
+                        r"публичн|реальн.{0,12}кейс|реальн.{0,12}инцидент)|"
+                        r"CVE-\d{4}-\d+|\bCVE\b|security advisory|incident report|bug bounty)",
+                        text,
+                    )) and not bool(re.search(
+                        r"(?i)(?:не\s+(?:гугл|ищи.{0,25}(?:интернет|сети))|"
+                        r"(?:do\s+not|don't|never)\s+(?:google|search.{0,20}web))",
                         text,
                     ))
                     already_searching = any(
@@ -958,10 +972,11 @@ class Agent:
                             search_schema = descriptors["google_search"].get("inputSchema", {})
                             if "page" in (search_schema.get("properties") or {}):
                                 search_args["page"] = 1
-                            calls.append({"function": {
+                            extra_search_call = {"function": {
                                 "name": "google_search",
                                 "arguments": search_args,
-                            }})
+                            }}
+                            calls.append(extra_search_call)
                             selected_by = "google_research_fallback"
                 if not calls and not executed and not pending_requests and tools:
                     # On unambiguous, scoped website research tasks a weak local
@@ -985,32 +1000,8 @@ class Agent:
                         else:
                             chosen, chosen_args = "browser_open", {"url": selected_url}
                         if chosen in descriptors:
-                            observed, error_flag = self._call_registered_tool(
-                                chosen, chosen_args, mcp=mcp,
-                                authorized_targets=authorized_targets,
-                                user_messages=task_messages,
-                                enabled_groups=selected_groups or None,
-                                conversation_key=conversation_key,
-                            )
-                            executed += 1
-                            selected_by = "evidence_first_fallback"
-                            serialized = json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]
-                            events.append({
-                                "type": "tool_result", "name": chosen,
-                                "arguments": {"url": selected_url},
-                                "is_error": bool(error_flag),
-                                "result": observed,
-                            })
-                            context.append({"role": "system", "content":
-                                "Реальный инструмент " + chosen +
-                                " уже вызван контроллером. Отдели полученные факты "
-                                "от ошибок и гипотез. Не утверждай, что инструментов нет."})
-                            context.append(_controller_tool_turn(
-                                chosen, chosen_args, assistant_reasoning_content,
-                            ))
-                            context.append({"role": "tool", "tool_name": chosen,
-                                            "content": serialized})
-                            continue
+                            calls = _controller_tool_turn(chosen, chosen_args)["tool_calls"]
+                            selected_by = round_source = "evidence_first_fallback"
                 if not calls and not executed and not pending_requests and mcp and tools and round_no == 0:
                     # A derivative model sometimes lists coding advice without
                     # calling any real tools. Ground the FIRST coding response in
@@ -1023,25 +1014,8 @@ class Agent:
                         r"улучш|создай|напиши|доработ|рефактор|разбер)",
                         text))
                     if wants_dev and "dev_list" in descriptors:
-                        observed, error_flag = mcp.call("dev_list", {"limit": 100})
-                        executed += 1
-                        selected_by = "developer_evidence_fallback"
-                        events.append({
-                            "type": "tool_result", "name": "dev_list",
-                            "arguments": {"limit": 100},
-                            "is_error": bool(error_flag), "result": observed,
-                        })
-                        context.append({"role": "system", "content":
-                            "Получена реальная структура Git-проекта dev_list. "
-                            "Если нужен конкретный исходный файл, вызывай dev_read; "
-                            "если нужно менять код, используй dev_edit/dev_test. "
-                            "Не утверждай, что у тебя нет доступа к репозиторию."})
-                        context.append(_controller_tool_turn(
-                            "dev_list", {"limit": 100}, assistant_reasoning_content,
-                        ))
-                        context.append({"role": "tool", "tool_name": "dev_list",
-                                        "content": json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]})
-                        continue
+                        calls = _controller_tool_turn("dev_list", {"limit": 100})["tool_calls"]
+                        selected_by = round_source = "developer_evidence_fallback"
                 if not calls:
                     answer = _clean_model_answer(result.get("content"))
                     if not answer:
@@ -1067,6 +1041,12 @@ class Agent:
                     allowed_names = set(descriptors)
                     safe_result, failed = {}, False
                     args, kind, event = {}, "tool_result", {}
+                    route_source = ("google_research_fallback"
+                                    if raw is extra_search_call else round_source)
+                    diagnostic_event("tool_route_selected", kind="action",
+                                     tool=name, source=route_source,
+                                     round=round_no + 1,
+                                     decision="local" if name in local_names else "mcp")
                     try:
                         if name not in allowed_names:
                             raise BackendError("tool_not_registered")
@@ -1159,6 +1139,7 @@ class Agent:
                     serialized = json.dumps(safe_result, ensure_ascii=False)[:MAX_RESULT]
                     safe_event = {
                         "type": kind, "name": str(name)[:80],
+                        "route_source": route_source,
                         "arguments": _safe_args(name, args) if name in REVIEWED_TOOLS
                                      else safe_preview(args),
                         "is_error": failed or safe_result.get("ok") is False,

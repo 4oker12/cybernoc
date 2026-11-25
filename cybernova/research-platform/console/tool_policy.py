@@ -76,7 +76,9 @@ def discovered_tools(rows: object) -> list[dict]:
         raise ToolPolicyError("tools/list must be a list")
     found: list[dict] = []
     seen = set()
-    for raw in rows[:MAX_ADVERTISED]:
+    for raw in rows:
+        if len(found) >= MAX_ADVERTISED:
+            break
         if not isinstance(raw, dict):
             continue
         name = raw.get("name")

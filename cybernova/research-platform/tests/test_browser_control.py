@@ -312,6 +312,29 @@ class BrowserControlTests(unittest.TestCase):
             finally:
                 browser._executor.shutdown(wait=False, cancel_futures=True)
 
+    def test_failed_network_policy_install_cannot_leave_reusable_context(self):
+        from unittest.mock import MagicMock
+        browser = BrowserSession(headless=True)
+        context, runtime = MagicMock(), MagicMock()
+        context.route_web_socket.side_effect = RuntimeError("guard unavailable")
+        try:
+            with patch.dict("os.environ", {
+                "CYBERNOVA_GPT_BROWSER_EPHEMERAL": "1",
+            }), patch("console.browser_control.launch_with_backend",
+                      return_value=(runtime, "patchright", (None, context), None)) as launch:
+                for _ in range(2):
+                    with self.assertRaisesRegex(ValueError, "browser_policy_install_failed"):
+                        browser._ensure()
+                    self.assertIsNone(browser._context)
+                    self.assertIsNone(browser._page)
+                    self.assertIsNone(browser._backend)
+                self.assertEqual(launch.call_count, 2)
+            self.assertEqual(context.close.call_count, 2)
+            self.assertEqual(runtime.stop.call_count, 2)
+            context.new_page.assert_not_called()
+        finally:
+            browser.close()
+
     def test_browser_text_redacts_credentials_and_jwts(self):
         value = "api_key=abc12345 Bearer abcdefghijklmnop eyJabcdefghijk.abcdefghijk.abcdefghijk"
         redacted = _redact_text(value)

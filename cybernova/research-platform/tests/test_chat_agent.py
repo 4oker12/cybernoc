@@ -620,6 +620,39 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(out["tool_calls"],1)
         self.assertEqual(out["answer"],"CIDR confirmed")
 
+    def test_local_file_search_does_not_trigger_public_google_fallback(self):
+        class ResearchMCP(FakeMCP):
+            def initialize(self):
+                return TOOLS + [{
+                    "name": "google_search", "description": "Public Google search",
+                    "inputSchema": {"type": "object", "properties": {
+                        "query": {"type": "string"}}, "required": ["query"]},
+                }]
+        mcp = ResearchMCP()
+        lm = FakeOllama([{"content": "Локальный поиск."}])
+        out = Agent(lm, lambda: mcp).run(
+            [], "Найди файл config.ini на ноутбуке", force_tools=False,
+        )
+        self.assertEqual(mcp.calls, [])
+        self.assertEqual(out["tool_calls"], 0)
+
+    def test_json_fallback_catalog_includes_tools_after_old_character_limit(self):
+        class LargeMCP(FakeMCP):
+            def initialize(self):
+                return [{
+                    "name": "inspection_" + str(i), "description": "x" * 150,
+                    "inputSchema": {"type": "object", "properties": {}},
+                } for i in range(80)]
+        mcp = LargeMCP()
+        lm = FakeOllama([
+            {"content": "Inspect."},
+            {"content": '{"calls":[]}'},
+        ])
+        Agent(lm, lambda: mcp).run([], "Check status", force_tools=True)
+        prompt = lm.prompts[1][0][0]["content"]
+        self.assertIn("inspection_79", prompt)
+        self.assertEqual(mcp.calls, [])
+
     def test_invalid_json_fallback_does_not_execute(self):
         mcp=FakeMCP()
         lm=FakeOllama([
