@@ -206,6 +206,17 @@ HIGH_IMPACT_TOOL_RE = re.compile(
     r"archive.?extract|file.?move|organize)"
 )
 
+TASK_NEGATION_RE = re.compile(
+    r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотмена\b|"
+    r"\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)"
+)
+
+
+def task_explicitly_prohibits_action(user_text: str) -> bool:
+    """Conservatively detect an explicit prohibition before presenting an approval card."""
+    return bool(TASK_NEGATION_RE.search(str(user_text or "")))
+
+
 
 def tool_requires_task_intent(name: str, description: str = "") -> bool:
     """Return true only for tool definitions whose names/descriptions signal a side effect."""
@@ -215,11 +226,7 @@ def tool_requires_task_intent(name: str, description: str = "") -> bool:
 def task_intent_matches(name: str, description: str, user_text: str) -> bool:
     """Check that the current user task directly asks for the high-impact action."""
     text = str(user_text or "")
-    if re.search(
-        r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотмена\b|"
-        r"\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)",
-        text,
-    ):
+    if task_explicitly_prohibits_action(text):
         return False
     definition = (str(name) + " " + str(description)).casefold()
     groups = (
@@ -277,7 +284,7 @@ def action_description(
     return {
         "tool": name,
         "purpose": ("Задача пользователя: " + objective[:280])
-                   if objective else "Qwen запрашивает инструмент для текущей задачи",
+                   if objective else "Агент запрашивает инструмент для текущей задачи",
         "reason": reason,
         "tool_description": description[:240],
         "arguments": safe_preview(args),

@@ -18,13 +18,15 @@ try:
     from .tool_policy import (
         REVIEWED_TOOLS, discovered_tools, model_tools, schema_digest,
         validate_dynamic_arguments, safe_preview, action_description,
-        tool_requires_task_intent, task_intent_matches, ToolPolicyError,
+        tool_requires_task_intent, task_intent_matches,
+        task_explicitly_prohibits_action, ToolPolicyError,
     )
 except ImportError:
     from tool_policy import (
         REVIEWED_TOOLS, discovered_tools, model_tools, schema_digest,
         validate_dynamic_arguments, safe_preview, action_description,
-        tool_requires_task_intent, task_intent_matches, ToolPolicyError,
+        tool_requires_task_intent, task_intent_matches,
+        task_explicitly_prohibits_action, ToolPolicyError,
     )
 try:
     from .gpt_tool_runtime import (
@@ -1122,18 +1124,54 @@ class Agent:
                             safe_result, failed = mcp.call(name, args)
                             executed += 1
                         else:
-                            # Owner-connected MCP tools are autonomous after strict schema validation.
-                            # Only high-impact tools need matching intent in the current user task;
-                            # this is task authorization, not a separate confirmation prompt.
+                            # Routine owner-connected tools run after strict schema validation.
+                            # High-impact tools need direct intent; otherwise create a one-shot
+                            # approval request. An explicit user prohibition is never converted to approval.
                             description = descriptors[name].get("description", "")
                             if (tool_requires_task_intent(name, description)
                                     and not task_intent_matches(name, description, text)):
-                                kind = "task_intent_required"
-                                failed = True
-                                safe_result = {
-                                    "ok": False, "status": "task_intent_required",
-                                    "message": "Это действие не запрошено напрямую в текущей задаче. Продолжи безопасные части работы; не запрашивай отдельное подтверждение для рутинных шагов.",
-                                }
+                                if task_explicitly_prohibits_action(text):
+                                    kind = "task_intent_required"
+                                    failed = True
+                                    safe_result = {
+                                        "ok": False, "status": "user_prohibited_action",
+                                        "message": "Пользователь явно запретил это действие. Не запрашивай разрешение и не пытайся обходить запрет другим инструментом.",
+                                    }
+                                elif pending_requests:
+                                    kind = "task_intent_required"
+                                    failed = True
+                                    safe_result = {
+                                        "ok": False, "status": "approval_already_pending",
+                                        "message": "Одно действие уже ожидает решения пользователя. Не создавай повторный запрос; продолжи только безопасную часть задачи.",
+                                    }
+                                else:
+                                    request_id = secrets.token_urlsafe(24)
+                                    approval_details = action_description(
+                                        name,
+                                        "Действие не было прямо запрошено в текущем сообщении; требуется одноразовое разрешение владельца.",
+                                        args,
+                                        description=description,
+                                    )
+                                    pending_requests.append({
+                                        "request_id": request_id,
+                                        "tool": name,
+                                        "args": args,
+                                        "schema_hash": schema_digest(descriptors[name]),
+                                        "created_at": time.time(),
+                                    })
+                                    kind = "approval_required"
+                                    safe_result = {
+                                        "status": "approval_required",
+                                        "execution": "not_started",
+                                        "message": "Действие не запускалось. Ожидается одноразовое решение пользователя.",
+                                    }
+                                    event = {
+                                        "request_id": request_id,
+                                        "purpose": approval_details["purpose"],
+                                        "tool_description": approval_details["tool_description"],
+                                        "reason": approval_details["reason"],
+                                        "arguments": approval_details["arguments"],
+                                    }
                             else:
                                 if mcp is None:
                                     raise BackendError("mcp_backend_unavailable")

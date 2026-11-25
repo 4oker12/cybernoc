@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT))
 from console.agent import Agent, BackendError, APPROVAL_TTL_SECONDS
 from console.tool_policy import (
     MAX_ADVERTISED, ToolPolicyError, discovered_tools, model_tools, validate_dynamic_arguments,
-    safe_preview, schema_digest, action_description,
+    safe_preview, schema_digest, action_description, task_explicitly_prohibits_action,
 )
 
 NEW = {
@@ -28,6 +28,21 @@ CHANGED = {**NEW, "inputSchema": {
     "properties": {"domain": {"type": "string"}, "mode": {"type": "string"}},
     "required": ["domain"],
 }}
+
+
+HIGH_IMPACT = {
+    "name": "owner_shell_execute",
+    "description": "Execute a shell command on the owner-controlled host.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "command": {"type": "string"},
+            "api_token": {"type": "string"},
+        },
+        "required": ["command"],
+        "additionalProperties": False,
+    },
+}
 
 
 class FakeMCP:
@@ -121,6 +136,55 @@ class DynamicToolPolicyTests(unittest.TestCase):
         self.assertEqual(result["events"][0]["type"], "tool_result")
         self.assertEqual(result["approval_requests"], [])
 
+    def test_unrequested_high_impact_tool_creates_visible_one_shot_approval(self):
+        mcp = FakeMCP([HIGH_IMPACT])
+        qwen = FakeQwen([
+            tool_call("owner_shell_execute", {
+                "command": "Get-Process", "api_token": "NOT-TO-BE-SHOWN",
+            }),
+            {"role": "assistant", "content": "Действие ожидает разрешения."},
+            {"role": "assistant", "content": "Команда не выполнялась; ожидается решение пользователя."},
+            {"role": "assistant", "content": "Одобренная команда выполнена."},
+        ])
+        worker = Agent(qwen, lambda: mcp)
+        result = worker.run(
+            [], "Проверь состояние проекта", force_tools=False,
+        )
+        self.assertEqual(mcp.calls, [])
+        self.assertEqual(result["tool_calls"], 0)
+        self.assertEqual(len(result["approval_requests"]), 1)
+        request = result["approval_requests"][0]
+        self.assertEqual(request["tool"], "owner_shell_execute")
+        self.assertEqual(request["args"]["api_token"], "NOT-TO-BE-SHOWN")
+        self.assertGreaterEqual(len(request["request_id"]), 16)
+        self.assertEqual(result["events"][0]["type"], "approval_required")
+        self.assertEqual(result["events"][0]["request_id"], request["request_id"])
+        self.assertEqual(result["events"][0]["arguments"]["api_token"], "[REDACTED SECRET]")
+        self.assertNotIn("NOT-TO-BE-SHOWN", str(result["events"]))
+        self.assertEqual(result["events"][0]["result"]["execution"], "not_started")
+
+        approved = worker.execute_approved(request, [])
+        self.assertEqual(approved["selected_by"], "user_approved")
+        self.assertEqual(mcp.calls, [("owner_shell_execute", {
+            "command": "Get-Process", "api_token": "NOT-TO-BE-SHOWN",
+        })])
+
+    def test_explicitly_prohibited_high_impact_action_never_creates_approval(self):
+        mcp = FakeMCP([HIGH_IMPACT])
+        qwen = FakeQwen([
+            tool_call("owner_shell_execute", {"command": "Remove-Item C:\\temp\\x"}),
+            {"role": "assistant", "content": "Запрещённое действие не выполнено."},
+            {"role": "assistant", "content": "Подтверждаю: действие не выполнялось."},
+        ])
+        result = Agent(qwen, lambda: mcp).run(
+            [], "Не запускай команду; только проверь статус", force_tools=False,
+        )
+        self.assertTrue(task_explicitly_prohibits_action("Не запускай команду"))
+        self.assertEqual(result["approval_requests"], [])
+        self.assertEqual(result["events"][0]["type"], "task_intent_required")
+        self.assertEqual(result["events"][0]["result"]["status"], "user_prohibited_action")
+        self.assertEqual(mcp.calls, [])
+
     def test_task_tool_calls_execute_once_with_exact_schema_arguments(self):
         mcp = FakeMCP()
         qwen = FakeQwen([tool_call(), {"role": "assistant", "content": "По результату: тест"}])
@@ -165,6 +229,7 @@ class DynamicToolPolicyTests(unittest.TestCase):
         desc = action_description("dns_research","unreviewed",{"domain":"example.test"})
         self.assertEqual(desc["approval"], "required")
         self.assertEqual(desc["execution"], "not_started")
+        self.assertIn("Агент запрашивает", desc["purpose"])
 
 
 if __name__=="__main__":

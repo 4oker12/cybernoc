@@ -1121,7 +1121,9 @@ def approve(payload: ApprovalRequest):
             current_agent = Agent(
                 ollama=agent.ollama,
                 mcp_factory=lambda: CommunicationToolClient(
-                    TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
+                    TrafficToolClient(
+                        MCPClient(), state["traffic_artifacts"], scope=state["scope"],
+                    ),
                     communication_store(), state["task_id"]),
                 local_tool_runtime=deepseek_tool_runtime,
             )
