@@ -815,6 +815,18 @@ class GPTToolRuntime:
                 finally:
                     self._browser_pool.release(key, entry)
             if name == "browser_generate_and_fill_password":
+                user_text = " ".join(
+                    str(message.get("content") or "")
+                    for message in (user_messages or [])
+                    if isinstance(message, dict) and message.get("role") == "user"
+                )
+                if not re.search(
+                    r"(?i)(?:\\bcreate\\b.{0,50}\\baccount\\b|\\bregister\\b|"
+                    r"\\bsign[\\s-]?up\\b|создай.{0,50}аккаунт|зарегистр|регай|"
+                    r"заведи.{0,50}аккаунт)",
+                    user_text,
+                ):
+                    return {"ok": False, "error": "account_creation_intent_required"}, True
                 if not isinstance(conversation_key, str) or not conversation_key:
                     return {"ok": False, "error": "browser_conversation_required"}, True
                 key, entry = self._browser_pool.acquire(conversation_key)
