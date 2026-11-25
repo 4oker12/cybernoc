@@ -218,6 +218,13 @@ def _wipe_payment_card(card):
         card.clear()
 
 
+def _clear_payment_form_for_owner(session):
+    try:
+        return session.clear_payment_form()
+    except Exception:
+        return {"ok": False, "cleared_fields": []}
+
+
 def extract_user_targets(messages: list[dict]) -> set[str]:
     """Only allow active host checks against targets explicitly named by the user."""
     text = "\n".join(
@@ -907,6 +914,14 @@ class GPTToolRuntime:
                     action_button=button_name,
                 )
                 if not request.get("ok"):
+                    key, entry = self._browser_pool.acquire(conversation_key)
+                    try:
+                        with entry["call_lock"]:
+                            session = entry["session"]
+                            session.set_authorized_hosts(authorized_targets or set())
+                            _clear_payment_form_for_owner(session)
+                    finally:
+                        self._browser_pool.release(key, entry)
                     return request, True
                 decision, origin, action_origin, approved_button = (
                     owner_input_broker.consume_payment_confirmation(
@@ -914,6 +929,14 @@ class GPTToolRuntime:
                     )
                 )
                 if not decision:
+                    key, entry = self._browser_pool.acquire(conversation_key)
+                    try:
+                        with entry["call_lock"]:
+                            session = entry["session"]
+                            session.set_authorized_hosts(authorized_targets or set())
+                            _clear_payment_form_for_owner(session)
+                    finally:
+                        self._browser_pool.release(key, entry)
                     return {"ok": False, "status": "owner_declined_payment_action"}, True
                 key, entry = self._browser_pool.acquire(conversation_key)
                 try:
