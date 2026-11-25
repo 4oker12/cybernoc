@@ -20,7 +20,7 @@ from typing import Any
 import time
 from urllib import request, error, parse
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -62,7 +62,7 @@ try:
     from .diagnostics import (
         configure as configure_diagnostics, failure as log_failure, observe_chat,
         adapter_error_code, diagnostic_context, diagnostic_ref,
-        event as diagnostic_event, set_context,
+        event as diagnostic_event, set_context, CHAT_PROGRESS_SINK,
     )
     from .upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from .siwc import connection as chatgpt_connection, SIWCError
@@ -102,7 +102,7 @@ except ImportError:
     from diagnostics import (
         configure as configure_diagnostics, failure as log_failure, observe_chat,
         adapter_error_code, diagnostic_context, diagnostic_ref,
-        event as diagnostic_event, set_context,
+        event as diagnostic_event, set_context, CHAT_PROGRESS_SINK,
     )
     from upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from siwc import connection as chatgpt_connection, SIWCError
@@ -1243,6 +1243,67 @@ def chat(payload: ChatRequest):
                 "task_ref": diagnostic_ref("task", task_id),
                 "run_id": payload.run_id,
             }, **outcome}
+
+
+chat_jobs: OrderedDict[str, dict] = OrderedDict()
+chat_jobs_lock = RLock()
+
+
+class ChatJobReceipt(BaseModel):
+    receipt: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class ChatJobRequest(ChatRequest, ChatJobReceipt):
+    pass
+
+
+def _complete_chat_job(payload: ChatJobRequest):
+    def publish(event):
+        if event["event"] not in {"model_request_start", "tool_call_start", "tool_call_completed", "tool_call_failed"}:
+            return
+        progress = {key: event[key] for key in ("event", "tool", "status") if key in event}
+        with chat_jobs_lock:
+            chat_jobs[payload.receipt]["progress"] = progress
+
+    token = CHAT_PROGRESS_SINK.set(publish)
+    try:
+        result = {"status": "completed", "result": chat(payload)}
+    except HTTPException as exc:
+        result = {"status": "failed", "detail": "chat_job_failed", "http_status": exc.status_code}
+    except Exception:
+        result = {"status": "failed", "detail": "chat_job_failed"}
+    finally:
+        CHAT_PROGRESS_SINK.reset(token)
+    with chat_jobs_lock:
+        chat_jobs[payload.receipt].update(result)
+
+
+@app.post("/api/chat/start", status_code=202)
+def start_chat_job(payload: ChatJobRequest, background: BackgroundTasks):
+    with chat_jobs_lock:
+        existing = chat_jobs.get(payload.receipt)
+        if existing is not None:
+            if existing["run_id"] != payload.run_id:
+                raise HTTPException(status_code=409, detail="chat_receipt_conflict")
+            return {"status": existing["status"]}
+        if sum(job["status"] == "running" for job in chat_jobs.values()) >= 4:
+            raise HTTPException(status_code=429, detail="chat_queue_full")
+        if len(chat_jobs) >= 32:
+            oldest_finished = next(key for key, job in chat_jobs.items()
+                                   if job["status"] != "running")
+            del chat_jobs[oldest_finished]
+        chat_jobs[payload.receipt] = {"status": "running", "run_id": payload.run_id}
+        background.add_task(_complete_chat_job, payload)
+    return {"status": "running"}
+
+
+@app.post("/api/chat/result")
+def chat_job_result(payload: ChatJobReceipt):
+    with chat_jobs_lock:
+        job = chat_jobs.get(payload.receipt)
+        if job is None:
+            raise HTTPException(status_code=404, detail="chat_result_not_found")
+        return dict(job)
 
 
 @app.post("/api/approve")
