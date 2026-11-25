@@ -523,7 +523,7 @@ function newRunId(){
   if(window.crypto?.randomUUID)return window.crypto.randomUUID().replace(/-/g,"");
   return Array.from({length:32},()=>Math.floor(Math.random()*16).toString(16)).join("");
 }
-async function watchUsageProgress(runId,mode="qwen"){
+async function watchUsageProgress(runId,mode="qwen",pending=null){
   const isRunning=()=>mode==="gpt"?state.gptRunning:state.qwenRunning;
   const started=Date.now();
   while(isRunning()&&Date.now()-started<180000){
@@ -534,6 +534,11 @@ async function watchUsageProgress(runId,mode="qwen"){
         {cache:"no-store",headers:{"Accept":"application/json"}});
       if(!response.ok)continue;
       const progress=await response.json(),usage=progress.usage||{};
+      if(pending&&progress.status==="running"&&progress.progress){
+        const phases={preparing:"Проверяю доступные инструменты",analyzing:"Анализирую данные",executing:"Выполняю инструмент",finalizing:"Готовлю результат",reviewing:"Проверяю итог"};
+        const phase=phases[progress.progress.phase];
+        if(phase)pending.body.textContent=phase+(progress.progress.tool?" · "+progress.progress.tool:"")+"…";
+      }
       if(state.mode===mode&&usage.available===true){
         $("tokenUsageStatus").textContent=
           (progress.status==="running"?"Сейчас · ":"Токены · ")+
@@ -567,7 +572,7 @@ async function send(){
   const pending=renderMessage("assistant",(state.qwenModel||"Модель")+" формирует ответ…",true);
   const runId=newRunId();
   busy(true,"qwen");
-  const usageWatch=watchUsageProgress(runId,"qwen");
+  const usageWatch=watchUsageProgress(runId,"qwen",pending);
   try{
     const result=await requestJson("/api/chat",{
       session_id:state.sessionId,message:text,tool_groups:state.toolGroups,
@@ -591,7 +596,7 @@ async function send(){
     if(result.events?.some(e=>e.name==="comm_request_review"&&e.result?.ok)){
       showTaskStatus("needs_review");
     }else{
-      showTaskStatus("completed");
+      showTaskStatus(result.task_status||"completed");
     }
     if(state.turns===1){
       const label=text.length>32?text.substring(0,31)+"…":text;
@@ -1240,7 +1245,7 @@ function toolsPanel(show){
 const DEFAULT_PROFILE_SETTINGS={
   user:{display_name:"",role:"",about:"",preferences:""},
   privacy:{share_with_researcher:true,share_with_chatgpt:true},
-  researcher:{description:"",instructions:"",behavior:{autonomy:80,initiative:75,skepticism:85,vigilance:85,neutrality:95,brevity:80}},
+  researcher:{description:"",instructions:"",behavior:{autonomy:90,initiative:80,skepticism:90,vigilance:85,neutrality:95,brevity:80,research_depth:80,persistence:90,humor:25}},
   chatgpt:{description:"",instructions:""},
   ui:{theme:"light",density:"comfortable",font_scale:100,sidebar_width:300,chat_width:1040,show_technical_details:false},
 };
@@ -1278,8 +1283,8 @@ function populateProfileSettings(settings){
   $("shareChatGPT").checked=privacy.share_with_chatgpt!==false;
   $("researcherDescription").value=researcher.description||"";
   $("researcherInstructions").value=researcher.instructions||"";
-  for(const key of ["autonomy","initiative","skepticism","vigilance","neutrality","brevity"]){
-    const input=$("researcher"+key[0].toUpperCase()+key.slice(1));
+  for(const key of ["autonomy","initiative","skepticism","vigilance","neutrality","brevity","research_depth","persistence","humor"]){
+    const input=$("researcher"+key.split("_").map(part=>part[0].toUpperCase()+part.slice(1)).join(""));
     const output=$(input.id+"Value");
     input.value=String(behavior[key]);
     output.textContent=input.value;
@@ -1316,6 +1321,9 @@ function collectProfileSettings(){
         vigilance:Number($("researcherVigilance").value),
         neutrality:Number($("researcherNeutrality").value),
         brevity:Number($("researcherBrevity").value),
+        research_depth:Number($("researcherResearchDepth").value),
+        persistence:Number($("researcherPersistence").value),
+        humor:Number($("researcherHumor").value),
       },
     },
     chatgpt:{
@@ -1683,7 +1691,7 @@ function init(){
     const tab=event.target.closest("[data-profile-tab]");
     if(tab)selectProfileTab(tab.dataset.profileTab);
   });
-  for(const id of ["researcherAutonomy","researcherInitiative","researcherSkepticism","researcherVigilance","researcherNeutrality","researcherBrevity"]){
+  for(const id of ["researcherAutonomy","researcherInitiative","researcherSkepticism","researcherVigilance","researcherNeutrality","researcherBrevity","researcherResearchDepth","researcherPersistence","researcherHumor"]){
     $(id).addEventListener("input",()=>{$(id+"Value").textContent=$(id).value;});
   }
   void loadProfileSettings();

@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="/static/design-system.css?v=20261123-github-green-primary-1">
   <link rel="stylesheet" href="/static/variant3.css?v=20261123-github-green-primary-1">
   <script defer src="/static/markdown.js?v=20261123-semantic-sections-1"></script>
-  <script defer src="/static/app.js?v=20261123-github-green-primary-1"></script>
+  <script defer src="/static/app.js?v=20261125-autonomy-1"></script>
   <script defer src="/static/model-settings.js?v=20261123-deepseek-controls-1"></script>
   <script defer src="/static/ux.js?v=20261123-global-design-2"></script>
 </head>
@@ -275,18 +275,18 @@
           <p class="researcher-behavior-help">Настройки применяются к следующим сообщениям. Значение 100 означает более выраженное качество.</p>
           <div class="researcher-behavior-grid">
             <div class="behavior-control">
-              <label for="researcherAutonomy"><span>Самостоятельность</span><output id="researcherAutonomyValue">80</output></label>
-              <input id="researcherAutonomy" type="range" min="0" max="100" step="5" value="80">
+              <label for="researcherAutonomy"><span>Самостоятельность</span><output id="researcherAutonomyValue">90</output></label>
+              <input id="researcherAutonomy" type="range" min="0" max="100" step="5" value="90">
               <p>Выполнять безопасные шаги без постоянных уточнений.</p>
             </div>
             <div class="behavior-control">
-              <label for="researcherInitiative"><span>Инициативность</span><output id="researcherInitiativeValue">75</output></label>
-              <input id="researcherInitiative" type="range" min="0" max="100" step="5" value="75">
+              <label for="researcherInitiative"><span>Инициативность</span><output id="researcherInitiativeValue">80</output></label>
+              <input id="researcherInitiative" type="range" min="0" max="100" step="5" value="80">
               <p>Продолжать очевидные этапы и искать альтернативы.</p>
             </div>
             <div class="behavior-control">
-              <label for="researcherSkepticism"><span>Скептицизм</span><output id="researcherSkepticismValue">85</output></label>
-              <input id="researcherSkepticism" type="range" min="0" max="100" step="5" value="85">
+              <label for="researcherSkepticism"><span>Скептицизм</span><output id="researcherSkepticismValue">90</output></label>
+              <input id="researcherSkepticism" type="range" min="0" max="100" step="5" value="90">
               <p>Проверять предположения и причинно-следственные связи.</p>
             </div>
             <div class="behavior-control">
@@ -303,6 +303,21 @@
               <label for="researcherBrevity"><span>Краткость</span><output id="researcherBrevityValue">80</output></label>
               <input id="researcherBrevity" type="range" min="0" max="100" step="5" value="80">
               <p>Отвечать компактно, не превращая диалог в постоянный отчёт.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherResearchDepth"><span>Глубина исследования</span><output id="researcherResearchDepthValue">80</output></label>
+              <input id="researcherResearchDepth" type="range" min="0" max="100" step="5" value="80">
+              <p>Сопоставлять источники и проверять альтернативные гипотезы.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherPersistence"><span>Настойчивость</span><output id="researcherPersistenceValue">90</output></label>
+              <input id="researcherPersistence" type="range" min="0" max="100" step="5" value="90">
+              <p>Искать допустимые альтернативы после ошибок, не повторять сбои.</p>
+            </div>
+            <div class="behavior-control">
+              <label for="researcherHumor"><span>Неформальность и юмор</span><output id="researcherHumorValue">25</output></label>
+              <input id="researcherHumor" type="range" min="0" max="100" step="5" value="25">
+              <p>Лёгкая ирония только там, где уместна.</p>
             </div>
           </div>
         </div>

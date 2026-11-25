@@ -172,6 +172,7 @@ def _begin_usage_progress(run_id: str) -> None:
             run_usage_progress.popitem(last=False)
         run_usage_progress[run_id] = {
             "status": "running",
+            "progress": {"phase": "preparing", "tool": None},
             "usage": {
                 "available": False, "input_tokens": None, "output_tokens": None,
                 "total_tokens": None, "requests": 0, "measured_requests": 0,
@@ -193,6 +194,19 @@ def _update_usage_progress(run_id: str, usage: dict) -> None:
         run_usage_progress.move_to_end(run_id)
 
 
+def _update_agent_progress(run_id: str, progress: dict) -> None:
+    with run_usage_lock:
+        item = run_usage_progress.get(run_id)
+        if item is None or item["status"] != "running":
+            return
+        phase = progress.get("phase")
+        if phase not in {"preparing", "analyzing", "executing", "finalizing", "reviewing"}:
+            return
+        tool = progress.get("tool")
+        item["progress"] = {"phase": phase, "tool": tool[:80] if isinstance(tool, str) else None}
+        item["updated_at"] = time.time()
+
+
 def _finish_usage_progress(run_id: str, status: str, usage: dict | None = None) -> None:
     with run_usage_lock:
         item = run_usage_progress.get(run_id)
@@ -211,6 +225,7 @@ def _read_usage_progress(run_id: str) -> dict | None:
         if item is None:
             return None
         return {"status": item["status"], "usage": dict(item["usage"]),
+                "progress": dict(item.get("progress", {})),
                 "updated_at": item["updated_at"]}
 
 
@@ -1052,8 +1067,9 @@ def chat(payload: ChatRequest):
                 tools_enabled=payload.tools_enabled,
                 session_id=sid,
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
+                on_progress=lambda progress: _update_agent_progress(payload.run_id, progress),
             )
-            run_status = "completed"
+            run_status = "failed" if outcome.get("execution_failed") else "completed"
         except Exception as exc:
             store.append(task_id, "controller", "system",
                          "Agent failed: " + type(exc).__name__, status="blocked")
@@ -1084,14 +1100,14 @@ def chat(payload: ChatRequest):
         state["turns"] += 1
         current_status = store.get_task(task_id)["status"]
         final_status = ("needs_review" if current_status == "needs_review"
-                        else "blocked" if requests else "completed")
+                        else "blocked" if requests or outcome.get("execution_failed") else "completed")
         event = store.append(
             task_id, "qwen", "result", outcome["answer"][:12000],
             status=final_status,
             provider_state=_provider_state_payload(agent.ollama, history_reasoning_content),
         )
     return {"session_id": sid, "task_id": task_id, "event_seq": event["seq"],
-            "turn": state["turns"], "run_id": payload.run_id, **outcome}
+            "turn": state["turns"], "run_id": payload.run_id, "task_status": final_status, **outcome}
 
 
 @app.post("/api/approve")

@@ -67,6 +67,11 @@ OFFLINE_TOOLS = frozenset({
     "ip_network_summary", "local_webui_health",
 })
 ACTIVE_TOOLS = frozenset({"http_get"})
+try:
+    from .autonomous_skills import select_skill_guidance, FailedCallGuard
+except ImportError:
+    from autonomous_skills import select_skill_guidance, FailedCallGuard
+
 BASE_SYSTEM = AGENT_PROFILE
 BASE_SYSTEM_TEXT_ONLY = AGENT_PROFILE_TEXT_ONLY
 
@@ -618,7 +623,7 @@ class Agent:
             scope: dict | None = None, user_context: str = "",
             profile_instructions: str = "", tool_groups: list[str] | None = None,
             tools_enabled: bool = True, on_usage=None,
-            session_id: str | None = None) -> dict:
+            session_id: str | None = None, on_progress=None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
         selected_groups = normalize_tool_groups(tool_groups or [])
@@ -678,8 +683,16 @@ class Agent:
 
         history_reasoning_content = None
 
+        def progress(phase, tool=None):
+            if on_progress is not None:
+                try:
+                    on_progress({"phase": phase, "tool": tool})
+                except Exception:
+                    pass  # UI telemetry must not interrupt execution.
+
         def finalize_answer():
             nonlocal history_reasoning_content
+            progress("finalizing")
             final_instruction = (
                 "Ответь пользователю на языке его последнего сообщения естественно и по существу. "
                 "Все инструменты сейчас отключены: ничего не вызывай и не имитируй. "
@@ -738,6 +751,7 @@ class Agent:
                     "scope": "existing_evidence_only",
                 }
                 try:
+                    progress("reviewing")
                     second_pass = _compact_context(context)
                     draft_message = {"role": "assistant", "content": answer[:12000]}
                     if isinstance(history_reasoning_content, str):
@@ -800,6 +814,11 @@ class Agent:
             context.append({"role": "system", "content": user_context[:8500]})
         if profile_instructions:
             context.append({"role": "system", "content": profile_instructions[:12500]})
+        if tools_enabled:
+            guidance = select_skill_guidance(text)
+            if guidance:
+                context.append({"role": "system", "content": guidance})
+        progress("preparing")
         # Owner-selected scope is trusted policy metadata, not model output.
         # It describes targets and evidence mode; it is not a blanket
         # authorization for changing production systems.
@@ -870,6 +889,7 @@ class Agent:
                 events.append({"type": "tool_catalog_error", "message": str(exc)[:240]})
                 descriptors, tools = {}, []
         count, gets, executed = 0, 0, 0
+        failed_calls = FailedCallGuard()
         selected_by = "native"
         try:
             for round_no in range(MAX_ROUNDS):
@@ -877,6 +897,7 @@ class Agent:
                     context.append({"role": "system", "content":
                         "Достигнут лимит инструментальных итераций. Подготовь итог по уже собранным данным."})
                     return result_payload(finalize_answer())
+                progress("analyzing")
                 result = self._model_chat(_compact_context(context), tools if tools_enabled else [])
                 history_reasoning_content = (
                     result.get("reasoning_content")
@@ -1067,6 +1088,7 @@ class Agent:
                     allowed_names = set(descriptors)
                     safe_result, failed = {}, False
                     args, kind, event = {}, "tool_result", {}
+                    dispatched = False
                     try:
                         if name not in allowed_names:
                             raise BackendError("tool_not_registered")
@@ -1083,6 +1105,10 @@ class Agent:
                                 max_argument_bytes=1_100_000 if name in GITHUB_WRITE_NAMES else 8192,
                                 max_value_length=250_000 if name in GITHUB_WRITE_NAMES else 4096,
                             )
+                        if failed_calls.blocked(name, args):
+                            kind = "repeated_failure_suppressed"
+                            raise BackendError("identical_failed_call_suppressed_choose_alternative")
+                        progress("executing", name)
                         if name == "http_get":
                             if not public_get:
                                 raise BackendError("public_http_not_enabled")
@@ -1103,9 +1129,11 @@ class Agent:
                                 }
                             else:
                                 gets += 1
+                                dispatched = True
                                 safe_result, failed = mcp.call(name, args)
                                 executed += 1
                         elif name in local_names:
+                            dispatched = True
                             safe_result, failed = self._call_registered_tool(
                                 name, args, mcp=mcp,
                                 authorized_targets=authorized_targets,
@@ -1117,6 +1145,7 @@ class Agent:
                         elif name in REVIEWED_TOOLS:
                             if mcp is None:
                                 raise BackendError("mcp_backend_unavailable")
+                            dispatched = True
                             safe_result, failed = mcp.call(name, args)
                             executed += 1
                         else:
@@ -1135,11 +1164,14 @@ class Agent:
                             else:
                                 if mcp is None:
                                     raise BackendError("mcp_backend_unavailable")
+                                dispatched = True
                                 safe_result, failed = mcp.call(name, args)
                                 executed += 1
                     except (BackendError, ToolPolicyError, ValueError, TypeError) as exc:
                         failed = True
                         safe_result = {"ok": False, "error": str(exc)[:200]}
+                    if dispatched:
+                        failed_calls.record(name, args, failed or (isinstance(safe_result, dict) and safe_result.get("ok") is False))
                     if isinstance(safe_result, dict) and isinstance(
                             safe_result.get("image_data_url"), str):
                         image_data_url = safe_result.pop("image_data_url")
@@ -1195,7 +1227,7 @@ class Agent:
             if isinstance(detail, str) and detail:
                 answer += "\nДеталь провайдера: " + detail[:420]
             return {
-                "answer": answer, "error_code": code,
+                "answer": answer, "execution_failed": True, "error_code": code,
                 "error_type": type(exc).__name__ if code else None,
                 "events": events, "tool_calls": executed,
                 "approval_requests": pending_requests,

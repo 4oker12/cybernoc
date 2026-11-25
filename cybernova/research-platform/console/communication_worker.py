@@ -91,6 +91,14 @@ class CommunicationWorker:
             # The default research agent always receives its persisted scope.
             if self.agent_factory is None:
                 options["scope"] = ResearchScopeStore().load(task_id)
+                options["session_id"] = task_id
+                try:
+                    from .profile_settings import ProfileSettingsStore, user_context_for, mode_instructions_for
+                except ImportError:
+                    from profile_settings import ProfileSettingsStore, user_context_for, mode_instructions_for
+                profile = ProfileSettingsStore().load()
+                options["user_context"] = user_context_for(profile, "researcher")
+                options["profile_instructions"] = mode_instructions_for(profile, "researcher")
             outcome = self._agent_for(task_id).run(history, prompt, **options)
             if not isinstance(outcome, dict):
                 raise ValueError("unexpected_agent_output")
@@ -104,7 +112,7 @@ class CommunicationWorker:
             # Qwen may have called comm_request_review to mark the task needs_review.
             current_status = self.store.get_task(task_id)["status"]
             new_status = (
-                "blocked" if needs_approval else
+                "blocked" if needs_approval or outcome.get("execution_failed") else
                 "needs_review" if current_status == "needs_review" else
                 "completed"
             )
