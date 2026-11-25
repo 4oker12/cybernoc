@@ -302,6 +302,7 @@ class BrowserControlTests(unittest.TestCase):
                 }), patch.dict("os.environ", {
                     "CYBERNOVA_GPT_BROWSER_EPHEMERAL": "",
                     "CYBERNOVA_GPT_BROWSER_RESTORE_SESSION": "0",
+                    "CYBERNOVA_BROWSER_BACKEND": "playwright",
                 }):
                     browser._ensure()
                 self.assertTrue(all(page.closed for page in context.pages[:2]))
