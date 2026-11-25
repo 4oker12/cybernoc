@@ -272,7 +272,7 @@ def _payment_field_kind(meta: dict) -> str | None:
         r"card[ _-]*holder|name[ _-]*on[ _-]*card|card[ _-]*name", text
     ):
         return "cardholder_name"
-    billing_context = "billing" in autocomplete.split() or re.search(r"\\bbilling\\b", text)
+    billing_context = "billing" in autocomplete.split() or re.search(r"\bbilling\b", text)
     if billing_context and (
         "address-line1" in autocomplete or re.search(r"billing[ _-]*(?:address|street)[ _-]*(?:line[ _-]*1|1)?", text)
     ):
