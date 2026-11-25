@@ -217,7 +217,7 @@ class AccountVault:
             db.execute(
                 "INSERT INTO account_vault_entries(record_id,service,account_label,username,"
                 "origin,status,nonce,ciphertext,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,'pending',?,?,?,?,?)",
+                "VALUES(?,?,?,?,?,'pending',?,?,?,?)",
                 (record_id, service, account_label, username, origin, nonce,
                  ciphertext, now, now),
             )
