@@ -26,15 +26,32 @@ class FakeRequest:
         self.method = method
 
 
+class FakeResponse:
+    def __init__(self, status=200, headers=None):
+        self.status = status
+        self.headers = headers or {}
+        self.disposed = False
+    def dispose(self):
+        self.disposed = True
+
+
 class FakeRoute:
-    def __init__(self, url, method="GET"):
+    def __init__(self, url, method="GET", status=200, headers=None):
         self.request = FakeRequest(url, method)
         self.continued = False
         self.aborted = False
+        self.response = FakeResponse(status, headers)
+        self.fetch_args = None
+        self.fulfilled = None
     def continue_(self):
         self.continued = True
     def abort(self, reason="blockedbyclient"):
         self.aborted = True
+    def fetch(self, **kwargs):
+        self.fetch_args = kwargs
+        return self.response
+    def fulfill(self, **kwargs):
+        self.fulfilled = kwargs
 
 
 class BrowserControlTests(unittest.TestCase):
@@ -390,7 +407,13 @@ class BrowserControlTests(unittest.TestCase):
                 browser._allow_post_remaining = 1
                 allowed = FakeRoute("https://forms.example.net/submit", "POST")
                 browser._route(allowed)
-                self.assertTrue(allowed.continued)
+                self.assertFalse(allowed.continued)
+                self.assertIs(allowed.fulfilled["response"], allowed.response)
+                self.assertTrue(allowed.response.disposed)
+                self.assertEqual(allowed.fetch_args["max_redirects"], 0)
+                self.assertEqual(allowed.fetch_args["max_retries"], 0)
+                self.assertEqual(browser._post_http_status, 200)
+                self.assertEqual(browser._post_outcome, "http_response_observed")
                 self.assertEqual(browser._allow_post_remaining, 0)
 
                 second = FakeRoute("https://forms.example.net/confirm", "POST")
@@ -401,6 +424,34 @@ class BrowserControlTests(unittest.TestCase):
                 browser._allow_post_remaining = 1
                 browser._route(cross_origin)
                 self.assertTrue(cross_origin.aborted)
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+
+    def test_form_action_rejects_unrelated_post_and_unsafe_redirect(self):
+        browser = BrowserSession()
+        try:
+            with patch("console.browser_control.validate_public_url",
+                       return_value=("forms.example.net", ["8.8.8.8"])):
+                browser._allow_post_origin = "https://forms.example.net"
+                browser._allow_post_url = "https://forms.example.net/submit"
+                browser._allow_post_remaining = 1
+                unrelated = FakeRoute("https://forms.example.net/other", "POST")
+                browser._route(unrelated)
+                self.assertTrue(unrelated.aborted)
+                self.assertEqual(browser._allow_post_remaining, 1)
+                redirect = FakeRoute(browser._allow_post_url, "POST", status=307,
+                                     headers={"location": "/again"})
+                browser._route(redirect)
+                self.assertEqual(redirect.fulfilled["status"], 409)
+                self.assertEqual(browser._post_http_status, 307)
+                self.assertEqual(browser._post_outcome, "redirect_requires_manual_review")
+                self.assertTrue(redirect.response.disposed)
+                self.assertEqual(browser._allow_post_remaining, 0)
+                browser._allow_post_remaining = 1
+                error = FakeRoute(browser._allow_post_url, "POST", status=400)
+                browser._route(error)
+                self.assertEqual(browser._post_http_status, 400)
+                self.assertEqual(browser._post_outcome, "http_error")
         finally:
             browser._executor.shutdown(wait=False, cancel_futures=True)
 

@@ -597,6 +597,9 @@ class BrowserSession:
         self._dns_cache: dict[str, tuple[float, list[str]]] = {}
         self._blocked: list[dict] = []
         self._allow_post_origin: str | None = None
+        self._allow_post_url: str | None = None
+        self._post_http_status: int | None = None
+        self._post_outcome = "not_observed"
         self._allow_post_remaining = 0
         self._allowed_request_count = 0
         self._payment_submit_authorized = False
@@ -948,7 +951,7 @@ class BrowserSession:
             raise ValueError("browser_button_name_invalid")
         button = self._one("button", button_name)
         form_action = button.evaluate(
-            "el => (el.form && el.form.action) ? el.form.action : ''"
+            "el => el.form ? (el.hasAttribute('formaction') ? el.formAction : el.form.action) : ''"
         )
         submit_target = form_action or self._page.url
         validate_public_url(submit_target, self._authorized_hosts)
@@ -1317,9 +1320,45 @@ class BrowserSession:
             method = req.method.upper()
             if method not in SAFE_METHODS:
                 same_origin = _origin(raw) == self._allow_post_origin
-                if (method == "POST" and same_origin and self._allow_post_remaining > 0):
+                exact_url = (self._allow_post_url is None
+                             or urlsplit(raw)._replace(fragment="").geturl() == self._allow_post_url)
+                if (method == "POST" and same_origin and exact_url
+                        and self._allow_post_remaining > 0):
                     self._allow_post_remaining -= 1
                     self._allowed_request_count += 1
+                    self._post_outcome = "result_unknown"
+                    # Do not let a browser or HTTP client replay the POST on redirects.
+                    try:
+                        response = route.fetch(max_redirects=0, max_retries=0, timeout=9000)
+                    except Exception:
+                        route.fulfill(status=502, content_type="text/plain",
+                                      body="Form result unknown; verify manually before retrying.")
+                        return
+                    try:
+                        status = response.status
+                        self._post_http_status = status
+                        if 300 <= status < 400:
+                            location = response.headers.get("location")
+                            try:
+                                if not location or status not in {301, 302, 303}:
+                                    raise ValueError("unsafe_form_redirect")
+                                destination = urljoin(raw, location)
+                                validate_public_url(destination, self._authorized_hosts)
+                                if _origin(destination) != _origin(raw):
+                                    raise ValueError("unsafe_form_redirect")
+                            except (ValueError, OSError):
+                                self._post_outcome = "redirect_requires_manual_review"
+                                self._blocked.append({"url": _safe_url(raw),
+                                                      "reason": "unsafe_form_redirect"})
+                                route.fulfill(status=409, content_type="text/plain",
+                                              body="Form response requires manual review.")
+                                return
+                        route.fulfill(response=response)
+                        self._post_outcome = ("http_response_observed" if 200 <= status < 400
+                                              else "http_error")
+                    finally:
+                        response.dispose()
+                    return
                 else:
                     self._blocked.append({
                         "url": _safe_url(raw), "method": method,
@@ -1819,7 +1858,7 @@ class BrowserSession:
                 raise ValueError("browser_button_name_invalid")
             button = self._one("button", target)
             form_action = button.evaluate(
-                "el => (el.form && el.form.action) ? el.form.action : ''"
+                "el => el.form ? (el.hasAttribute('formaction') ? el.formAction : el.form.action) : ''"
             )
             if name == "browser_click_button" and (
                     HIGH_IMPACT.search(target) or HIGH_IMPACT.search(form_action)):
@@ -1843,8 +1882,14 @@ class BrowserSession:
                         "message": "Для финансового действия требуется отдельное подтверждение в защищённом диалоге Cybernova.",
                     }
                 self._allow_post_origin = _origin(submit_target)
+                # Native form action is known; keep the existing origin-limited
+                # path for script-driven buttons without a declared form action.
+                self._allow_post_url = (urlsplit(form_action)._replace(fragment="").geturl()
+                                        if form_action else None)
                 self._allow_post_remaining = 1
                 self._allowed_request_count = 0
+                self._post_http_status = None
+                self._post_outcome = "not_observed"
             elif name == "browser_submit_payment":
                 submit_target = form_action or self._page.url
                 validate_public_url(submit_target, self._authorized_hosts)
@@ -1853,8 +1898,14 @@ class BrowserSession:
                 if expected_action_origin != _origin(submit_target):
                     raise ValueError("payment_action_origin_changed")
                 self._allow_post_origin = _origin(submit_target)
+                # Native form action is known; keep the existing origin-limited
+                # path for script-driven buttons without a declared form action.
+                self._allow_post_url = (urlsplit(form_action)._replace(fragment="").geturl()
+                                        if form_action else None)
                 self._allow_post_remaining = 1
                 self._allowed_request_count = 0
+                self._post_http_status = None
+                self._post_outcome = "not_observed"
             try:
                 button.click(timeout=8000)
                 try:
@@ -1868,10 +1919,15 @@ class BrowserSession:
             finally:
                 if name in {"browser_submit", "browser_submit_payment"}:
                     self._allow_post_origin = None
+                    self._allow_post_url = None
                     self._allow_post_remaining = 0
+            post_verified = (self._allowed_request_count == 1
+                             and self._post_outcome == "http_response_observed")
             if name == "browser_submit_payment":
                 return {
-                    "ok": True, "payment_action_submitted": True,
+                    "ok": post_verified, "payment_action_submitted": post_verified,
+                    "post_http_status": self._post_http_status,
+                    "post_outcome": self._post_outcome,
                     "button": target[:180],
                     "approved_submit_origin": _origin(submit_target),
                     "approved_post_requests_allowed": self._allowed_request_count,
@@ -1879,7 +1935,10 @@ class BrowserSession:
                 }
             result = self._snapshot()
             if name == "browser_submit":
-                result["approved_submit"] = True
+                result["approved_submit"] = post_verified
+                result["ok"] = post_verified
+                result["post_http_status"] = self._post_http_status
+                result["post_outcome"] = self._post_outcome
                 result["approved_post_requests_allowed"] = self._allowed_request_count
                 result["approved_submit_origin"] = _origin(submit_target)
                 result["other_write_requests"] = "blocked"
