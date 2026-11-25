@@ -242,7 +242,22 @@
     <div class="run-list" id="runList"><p class="muted">Пока нет вызовов.</p></div>
   </aside>
 </div>
-  <dialog id="profileDialog" class="profile-dialog" aria-labelledby="profileTitle">
+  <dialog id="ownerInputDialog" class="owner-input-dialog" aria-labelledby="ownerInputTitle">
+  <form method="dialog" class="owner-input-shell" onsubmit="return false">
+    <div class="owner-input-heading">
+      <div><h2 id="ownerInputTitle">Требуется ввод владельца</h2><p id="ownerInputPurpose">Агент ожидает защищённые данные.</p></div>
+    </div>
+    <label id="ownerInputFieldLabel" for="ownerInputValue">Значение</label>
+    <input id="ownerInputValue" type="password" maxlength="512" autocomplete="off" spellcheck="false">
+    <p class="owner-input-note">Введённое значение передаётся локальному исполнителю, не добавляется в переписку и не сохраняется на диск. Данные банковской карты здесь не принимаются.</p>
+    <p id="ownerInputError" class="owner-input-error" role="alert"></p>
+    <div class="owner-input-actions">
+      <button type="button" id="ownerInputCancel" class="header-button">Отмена задачи</button>
+      <button type="button" id="ownerInputSubmit" class="profile-save">Передать и продолжить</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="profileDialog" class="profile-dialog" aria-labelledby="profileTitle">
     <div class="profile-shell">
       <div class="profile-heading">
         <div><h2 id="profileTitle">Настройки профиля</h2><p>Общий контекст пользователя и отдельные инструкции для каждого режима.</p></div>
