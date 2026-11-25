@@ -192,6 +192,14 @@ def tool_group_summary(tool_names) -> list[dict]:
     ]
 
 
+def _safe_fill_owner_input(session, label, value, input_type, expected_origin=""):
+    try:
+        return session.fill_owner_input(label, value, input_type, expected_origin)
+    except Exception as exc:
+        # Playwright exception text can echo a form value. Never propagate it.
+        raise ValueError("protected_browser_fill_failed:" + type(exc).__name__) from None
+
+
 def extract_user_targets(messages: list[dict]) -> set[str]:
     """Only allow active host checks against targets explicitly named by the user."""
     text = "\n".join(
@@ -807,8 +815,9 @@ class GPTToolRuntime:
                         input_type, value, expected_origin = owner_input_broker.consume(
                             conversation_key, args.get("request_id")
                         )
-                        result = entry["session"].fill_owner_input(
-                            args.get("field_label"), value, input_type, expected_origin
+                        result = _safe_fill_owner_input(
+                            entry["session"], args.get("field_label"), value,
+                            input_type, expected_origin,
                         )
                         result["owner_input_consumed"] = True
                         return result, not bool(result.get("ok"))
@@ -849,8 +858,8 @@ class GPTToolRuntime:
                             args.get("service"), args.get("username"), password,
                             origin, args.get("account_label", ""),
                         )
-                        result = session.fill_owner_input(
-                            args.get("field_label"), password, "password", origin
+                        result = _safe_fill_owner_input(
+                            session, args.get("field_label"), password, "password", origin
                         )
                         result["credential_record"] = record
                         result["password_generated_locally"] = True
@@ -869,8 +878,9 @@ class GPTToolRuntime:
                         record, password = account_vault()._secret_for_browser_fill(
                             args.get("record_id"), origin
                         )
-                        result = session.fill_owner_input(
-                            args.get("field_label"), password, "password", record["origin"]
+                        result = _safe_fill_owner_input(
+                            session, args.get("field_label"), password,
+                            "password", record["origin"],
                         )
                         result["credential_record"] = record
                         result["saved_credential_filled"] = True
