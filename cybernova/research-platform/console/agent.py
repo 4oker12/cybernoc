@@ -724,7 +724,7 @@ class Agent:
             )
             return "\n".join(lines)
 
-        def result_payload(answer):
+        def result_payload(answer, *, review_tools=True):
             nonlocal history_reasoning_content
             review = {
                 "status": "not_required", "passes": 1,
@@ -732,7 +732,7 @@ class Agent:
             }
             # A second model pass is useful for claims grounded in tool evidence,
             # but it is wasteful and verbose for ordinary conversation turns.
-            if isinstance(answer, str) and answer.strip() and (events or pending_requests):
+            if review_tools and isinstance(answer, str) and answer.strip() and (events or pending_requests):
                 review = {
                     "status": "incomplete", "passes": 1,
                     "scope": "existing_evidence_only",
@@ -1163,7 +1163,7 @@ class Agent:
                         count += 1
                         outcome = result_payload(
                             "Браузер ждёт защищённого ввода. Заполните поле в карточке, "
-                            "затем попросите продолжить действие."
+                            "затем попросите продолжить действие.", review_tools=False,
                         )
                         outcome["protected_input"] = safe_result
                         return outcome
@@ -1180,7 +1180,8 @@ class Agent:
                     events.append(safe_event)
                     if safe_result.get("status") == "human_challenge_required":
                         count += 1
-                        return result_payload("Сайт показал браузерную проверку. Выполнение приостановлено.")
+                        return result_payload("Сайт показал браузерную проверку. Выполнение приостановлено.",
+                                              review_tools=False)
                     context.append({"role": "tool", "tool_name": str(name),
                                     "content": serialized})
                     count += 1

@@ -587,6 +587,30 @@ class BrowserSession:
                         and self._allow_post_remaining > 0):
                     self._allow_post_remaining -= 1
                     self._allowed_request_count += 1
+                    # Chromium can follow a redirect without a second route callback.
+                    # Inspect the result of this exact intercepted request before delivering it.
+                    try:
+                        response = route.fetch(max_redirects=0, max_retries=0, timeout=9000)
+                    except Exception:
+                        route.fulfill(status=502, content_type="text/plain",
+                                      body="The form server did not return a response.")
+                        return
+                    try:
+                        location = response.headers.get("location")
+                        if 300 <= response.status < 400 and location:
+                            destination = urljoin(raw, location)
+                            validate_public_url(destination, self._authorized_hosts)
+                            if (response.status not in {301, 302, 303}
+                                    or _origin(destination) != _origin(raw)):
+                                self._blocked.append({"url": _safe_url(raw),
+                                                      "reason": "unsafe_form_redirect"})
+                                route.fulfill(status=409, content_type="text/plain",
+                                              body="The form returned a redirect requiring manual review.")
+                                return
+                        route.fulfill(response=response)
+                    finally:
+                        response.dispose()
+                    return
                 else:
                     self._blocked.append({
                         "url": _safe_url(raw), "method": method,

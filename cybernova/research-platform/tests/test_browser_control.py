@@ -29,10 +29,21 @@ class FakeRoute:
         self.request = FakeRequest(url, method)
         self.continued = False
         self.aborted = False
+        self.post_status = 200
+        self.post_headers = {}
+        self.fulfilled = None
     def continue_(self):
         self.continued = True
     def abort(self, reason="blockedbyclient"):
         self.aborted = True
+
+    def fetch(self, **kwargs):
+        assert kwargs["max_redirects"] == 0 and kwargs["max_retries"] == 0
+        return type("FakeResponse", (), {"status": self.post_status, "headers": self.post_headers,
+                                         "dispose": lambda _: None})()
+
+    def fulfill(self, **kwargs):
+        self.fulfilled = kwargs
 
 
 class BrowserControlTests(unittest.TestCase):
@@ -365,7 +376,7 @@ class BrowserControlTests(unittest.TestCase):
                 self.assertEqual(browser._allow_post_remaining, 1)
                 allowed = FakeRoute("https://forms.example.net/submit", "POST")
                 browser._route(allowed)
-                self.assertTrue(allowed.continued)
+                self.assertEqual(allowed.fulfilled["response"].status, 200)
                 self.assertEqual(browser._allow_post_remaining, 0)
 
                 second = FakeRoute("https://forms.example.net/submit", "POST")
@@ -376,6 +387,12 @@ class BrowserControlTests(unittest.TestCase):
                 browser._allow_post_remaining = 1
                 browser._route(cross_origin)
                 self.assertTrue(cross_origin.aborted)
+
+                redirect = FakeRoute("https://forms.example.net/submit", "POST")
+                redirect.post_status = 307
+                redirect.post_headers = {"location": "/another-post"}
+                browser._route(redirect)
+                self.assertEqual(redirect.fulfilled["status"], 409)
         finally:
             browser._executor.shutdown(wait=False, cancel_futures=True)
 
