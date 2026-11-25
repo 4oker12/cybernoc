@@ -18,7 +18,7 @@ class DeveloperToolsTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        root = Path(self.tmp.name)
+        root = Path(self.tmp.name).resolve()
         root.chmod(0o755)
         self.repo = root / "source"
         self.ws = root / "workspaces"

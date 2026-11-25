@@ -16,7 +16,7 @@ class NativeInstallerTests(unittest.TestCase):
     def setUp(self):
         t=tempfile.TemporaryDirectory()
         self.addCleanup(t.cleanup)
-        self.data=Path(t.name)/"cybernova-private"
+        self.data=Path(t.name).resolve()/"cybernova-private"
 
     def test_native_local_initialization_is_private_and_scope_closed(self):
         result=native.init(self.data,"ollama","cybernova-security:30b")

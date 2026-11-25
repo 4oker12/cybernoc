@@ -99,7 +99,7 @@ jobs:
           CYBERNOVA_LIVE_BROWSER_SMOKE: '1'
         run: python -m unittest discover -s cybernova/research-platform/tests -p test_patchright_live_smoke.py -v
 
-  windows-unit-and-patchright:
+  windows-unit-tests:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -116,6 +116,16 @@ jobs:
         run: python -m compileall -q cybernova/research-platform
       - name: Run full Windows unit tests
         run: python -m unittest discover -s cybernova/research-platform/tests -p 'test_*.py' -v
+  windows-patchright-live-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime dependencies
+        run: python -m pip install -r cybernova/research-platform/console/requirements.txt
       - name: Install Patchright Chromium
         run: python -m patchright install chromium
       - name: Execute real Windows browser registration smoke
