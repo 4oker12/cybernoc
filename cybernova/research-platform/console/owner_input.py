@@ -140,10 +140,12 @@ class OwnerInputBroker:
                 raise OwnerInputError("owner_input_origin_invalid") from None
         if input_type in {"payment_card", "payment_confirmation"} and not expected_origin:
             raise OwnerInputError("owner_input_origin_required")
-        payment_fields = []
-        payment_field_hosts = {}
-        action_origin = ""
-        action_button = ""
+        if input_type != "payment_card":
+            payment_fields = []
+            payment_field_hosts = {}
+        if input_type != "payment_confirmation":
+            action_origin = ""
+            action_button = ""
         if input_type == "payment_card":
             if offer_vault_save:
                 raise OwnerInputError("payment_card_never_saved")
@@ -368,7 +370,7 @@ class OwnerInputBroker:
             if item is None or item["session_id"] != session_id:
                 return {"ok": True, "cancelled": False}
             item["status"] = "cancelled"
-            item["value"] = None
+            _wipe_mapping(item.get("value"))
             item["event"].set()
             self._drop_locked(request_id)
         return {"ok": True, "cancelled": True}
@@ -387,7 +389,7 @@ class OwnerInputBroker:
         for request_id, item in list(self._requests.items()):
             if now - item["created_at"] > self.TTL_SECONDS:
                 item["status"] = "expired"
-                item["value"] = None
+                _wipe_mapping(item.get("value"))
                 item["event"].set()
                 self._drop_locked(request_id)
 
