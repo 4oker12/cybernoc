@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0",
+  "project": "SIMNET Web/API baseline (EXAMPLE ONLY)",
+  "status": "draft",
+  "approved": false,
+  "authorization": {
+    "reference": null,
+    "approved_by": null,
+    "valid_until": null,
+    "emergency_contact": null,
+    "owner_confirmation": null
+  },
+  "max_mode": "offline",
+  "enable_active": false,
+  "assets": [
+    {
+      "hostname": "simnet.ua",
+      "label": "public marketing site",
+      "in_scope": false,
+      "schemes": [
+        "https"
+      ],
+      "paths": [
+        "/"
+      ],
+      "notes": "Public entrypoint only; example does not imply an audit authorization"
+    },
+    {
+      "hostname": "my.simnet.kiev.ua",
+      "label": "subscriber cabinet candidate",
+      "in_scope": false,
+      "schemes": [
+        "https"
+      ],
+      "paths": [
+        "/"
+      ],
+      "notes": "Requires separate explicit approval and dedicated test identities"
+    },
+    {
+      "hostname": "admin.simnet.kiev.ua",
+      "label": "billing administration candidate",
+      "in_scope": false,
+      "schemes": [
+        "https"
+      ],
+      "paths": [
+        "/"
+      ],
+      "notes": "Sensitive operational target; do not include without written authorization and isolation"
+    }
+  ],
+  "out_of_scope": [
+    "Customer PII and live billing balances",
+    "RADIUS/BNG production operations",
+    "OLTs/ONU and subscriber access networks",
+    "Third-party payments, CDN, hosting and support vendors unless separately authorized",
+    "Denial-of-service, load/stress, exploitation, brute force and credential harvesting",
+    "Any discovered domain not explicitly listed in an approved asset record"
+  ],
+  "execution_controls": {
+    "requests_per_second": 0,
+    "concurrency": 0,
+    "retries": 0,
+    "max_requests": 0,
+    "stop_on_error": true,
+    "allow_redirects": false,
+    "egress_allowlist": [],
+    "data_classification": "restricted"
+  },
+  "test_accounts": [],
+  "test_data_policy": "Only synthetic users, objects and payments in an isolated environment.",
+  "research_goals": [
+    "Create asset inventory with source and confidence",
+    "Map public-facing trust boundaries",
+    "Assess approved OWASP WSTG/ASVS controls",
+    "Produce reviewed findings with evidence and remediation",
+    "Retest fixes with identical safe conditions"
+  ]
+}

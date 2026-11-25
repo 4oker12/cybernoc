@@ -1,0 +1,326 @@
+/* Cybernova UX refinement: responsive, compact and action-oriented. */
+.chat-msg.working .message-body {
+  position: relative;
+  min-height: 34px;
+  color: var(--muted);
+}
+.chat-msg.working .message-body::after {
+  content: "";
+  display: inline-block;
+  width: 24px;
+  height: 5px;
+  margin-left: 8px;
+  vertical-align: middle;
+  background: radial-gradient(circle, #299477 1.8px, transparent 2px) 0 50% / 8px 5px repeat-x;
+  animation: cybernova-pulse 1s ease-in-out infinite;
+}
+@keyframes cybernova-pulse {
+  0%, 100% { opacity: .35; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-2px); }
+}
+html.model-running #sendStatus {
+  color: #16836f;
+  font-weight: 650;
+}
+html.model-running #sendStatus::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #2ba77d;
+  box-shadow: 0 0 0 3px #2ba77d20;
+  animation: cybernova-pulse 1.2s ease-in-out infinite;
+}
+.composer textarea:disabled {
+  opacity: 1;
+  cursor: text;
+}
+
+/* One compact disclosure instead of a vertical wall of tool calls. */
+.inline-tools {
+  margin: 10px 0 4px 36px;
+  max-width: min(680px, calc(100% - 36px));
+  display: block;
+}
+.tool-batch {
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel, #fff);
+  overflow: hidden;
+}
+.tool-batch > summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 38px;
+  padding: 8px 11px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text);
+  font-size: 11px;
+}
+.tool-batch > summary::-webkit-details-marker { display: none; }
+.tool-batch > summary::before {
+  content: "⌘";
+  color: #21866d;
+  font-size: 14px;
+}
+.tool-batch-title { font-weight: 700; }
+.tool-batch-count {
+  min-width: 19px;
+  padding: 1px 6px;
+  border-radius: 20px;
+  background: #e7f2ed;
+  color: #176b57;
+  text-align: center;
+  font-weight: 700;
+}
+.tool-batch-state { color: #248064; }
+.tool-batch-preview {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-batch-list {
+  display: grid;
+  gap: 5px;
+  padding: 0 9px 9px;
+}
+.tool-batch-item {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.tool-batch-item > summary {
+  padding: 7px 9px;
+  font-size: 10px;
+}
+.tool-batch-item pre {
+  max-height: 220px;
+  padding: 9px;
+  font-size: 10px;
+}
+.tool-receipt {
+  margin: 8px 0 0 36px;
+  gap: 6px;
+  font-size: 10px;
+  opacity: .78;
+}
+.inline-tools:has(.tool-batch) + .token-usage-receipt { margin-top: 6px; }
+
+/* Follow-ups read as lightweight next actions, not another message wall. */
+.followup-box {
+  margin: 13px 0 5px 36px;
+  max-width: 700px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+.followup-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .025em;
+}
+.followup-label::before { content: "↳"; color: #27856d; font-size: 14px; }
+.followup-questions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+}
+.followup-question {
+  max-width: min(330px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel, #fff);
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: left;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.followup-question:hover, .followup-question:focus-visible {
+  background: var(--hover);
+  border-color: #83b7a4;
+  outline: none;
+}
+:root[data-theme="light"] .tool-batch,
+:root[data-theme="light"] .tool-batch-item,
+:root[data-theme="light"] .followup-question {
+  background: #fff;
+}
+
+/* Selection action. Uses the selected assistant text as a quoted follow-up. */
+.selection-ask {
+  position: fixed;
+  z-index: 1000;
+  border: 1px solid #167b68;
+  border-radius: 999px;
+  padding: 7px 13px;
+  background: #167b68;
+  color: #fff;
+  box-shadow: 0 8px 26px #102a2440;
+  font-size: 11px;
+  font-weight: 700;
+}
+.selection-ask:hover { background: #0f6657; }
+.selection-ask[hidden] { display: none !important; }
+
+/* Model settings panel. */
+.model-config-panel .profile-help { max-width: 690px; }
+.model-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.model-config-field { min-width: 0; }
+.model-config-field > label {
+  display: block;
+  margin: 0 0 5px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+}
+.model-config-field input,
+.model-config-field select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 10px 11px;
+  font: inherit;
+  font-size: 12px;
+}
+.model-config-field input:focus,
+.model-config-field select:focus {
+  border-color: #6ba994;
+  outline: 0;
+  box-shadow: 0 0 0 3px #2998791c;
+}
+.model-config-key-row { display: flex; gap: 6px; min-width: 0; }
+.model-config-key-row input { flex: 1; min-width: 0; }
+.model-config-reveal {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  padding: 0 9px;
+  font-size: 10px;
+}
+.model-config-key-status,
+.model-config-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.model-config-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.model-config-actions button { margin: 0; }
+:root[data-theme="dark"] .model-config-field input,
+:root[data-theme="dark"] .model-config-field select { background: #202629; color: #e7ece9; }
+:root[data-theme="dark"] .tool-batch-count { background: #263a32; color: #c4ead8; }
+@media(max-width:680px) {
+  .inline-tools, .followup-box { margin-left: 0; max-width: 100%; }
+  .tool-batch-preview { flex-basis: 100%; padding-left: 21px; }
+  .model-config-grid { grid-template-columns: 1fr; }
+  .tool-batch > summary { align-items: flex-start; }
+}
+
+ 
+/* One-click clipboard intake for terminal output. Paste only; sending remains explicit. */
+.paste-output-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #48685a;
+  border-radius: 18px;
+  padding: 6px 10px;
+  background: #25362f;
+  color: #d9eee3;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.paste-output-button:hover {
+  background: #30483d;
+  border-color: #80ad96;
+}
+.paste-output-button:focus-visible {
+  outline: 2px solid #80ad96;
+  outline-offset: 2px;
+}
+.paste-output-button:disabled {
+  opacity: .5;
+  cursor: wait;
+}
+@media(max-width:680px) {
+  .paste-output-button { padding: 6px 8px; font-size: 10px; }
+}
+
+
+/* Compact activity is rendered directly by app.js; keep long batches inside the disclosure. */
+.tool-batch-list {
+  max-height: min(48vh, 440px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.tool-batch-mode {
+  color: var(--muted);
+  font-size: 10px;
+}
+.tool-batch-preview {
+  flex: 1 1 180px;
+}
+.token-usage-receipt {
+  width: fit-content;
+  max-width: calc(100% - 36px);
+  margin: 8px 0 3px 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel, #fff);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.token-usage-receipt strong {
+  color: var(--text);
+  font-weight: 700;
+}
+:root[data-theme="light"] .token-usage-receipt {
+  background: #fff;
+  border-color: #dbe5de;
+  color: #61746a;
+}
+:root[data-theme="light"] .token-usage-receipt strong {
+  color: #30473c;
+}
+@media(max-width:680px) {
+  .token-usage-receipt {
+    max-width: 100%;
+    margin-left: 0;
+  }
+  .tool-batch-list {
+    max-height: 52vh;
+  }
+}

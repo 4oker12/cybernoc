@@ -1,0 +1,15 @@
+{
+  "work": "/workspace/cybernova-updater",
+  "active": "/workspace/cybernova-agent",
+  "deploy_key": "/workspace/cybernova-updater/secrets/deploy_key",
+  "known_hosts": "/workspace/cybernova-updater/secrets/known_hosts",
+  "github_reporting": false,
+  "github_issue_token_file": null,
+  "poll_seconds": 30,
+  "window_seconds": 86400,
+  "source": "cybernova/v10",
+  "repo": "4oker12/cybernoc",
+  "branch": "cybernova-autodeploy",
+  "git_url": "git@github.com:4oker12/cybernoc.git",
+  "test_timeout": 120
+}

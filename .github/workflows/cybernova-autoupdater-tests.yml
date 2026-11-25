@@ -1,0 +1,33 @@
+name: Cybernova Autoupdater Tests
+on:
+  push:
+    branches: [cybernova-autodeploy]
+    paths:
+      - 'cybernova/autoupdater/**'
+      - 'cybernova/v10/**'
+      - '.github/workflows/cybernova-autoupdater-tests.yml'
+  pull_request:
+    paths:
+      - 'cybernova/autoupdater/**'
+      - 'cybernova/v10/**'
+      - '.github/workflows/cybernova-autoupdater-tests.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unit-and-git-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test Cybernova Auto Updater
+        env:
+          PYTHONPATH: cybernova/autoupdater
+        run: python -m unittest discover -s cybernova/autoupdater/tests -v
+      - name: Test Cybernova Agent
+        env:
+          PYTHONPATH: cybernova/v10
+        run: python -m unittest discover -s cybernova/v10/tests -v

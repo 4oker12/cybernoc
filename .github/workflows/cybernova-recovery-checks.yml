@@ -1,0 +1,32 @@
+name: Cybernova recovery verification
+on:
+  push:
+    branches: [cybernova-autodeploy]
+    paths:
+      - 'cybernova/recovery/**'
+      - 'cybernova/bridge/**'
+      - 'cybernova/v10/**'
+      - '.github/workflows/cybernova-recovery-checks.yml'
+  pull_request:
+    paths:
+      - 'cybernova/recovery/**'
+      - 'cybernova/bridge/**'
+      - 'cybernova/v10/**'
+      - '.github/workflows/cybernova-recovery-checks.yml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check bootstrap and Python syntax
+        run: |
+          bash -n cybernova/recovery/install.sh
+          python -m compileall -q cybernova/v10 cybernova/bridge
+      - name: Verify Cybernova agent tests
+        run: |
+          cd cybernova/v10
+          PYTHONPATH=. python -m unittest discover -s tests -v

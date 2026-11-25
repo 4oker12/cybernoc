@@ -1,0 +1,42 @@
+# Runtime evidence and private data
+cases/
+run/
+home/
+*.har
+*.pcap
+*.pcapng
+*.log
+*.sqlite
+*.db
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Credentials and local configuration
+.env
+.env.*
+*.pem
+*.key
+id_ed25519*
+*secret*
+*token*
+*credential*
+
+# Generated environments and caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.cache/
+models/
+
+# Portable local config and encrypted backup exports
+cybernova/research-platform/portable/config/
+cybernova/research-platform/portable/secrets/
+*.cnbk
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm

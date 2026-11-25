@@ -1,0 +1,314 @@
+{
+  "version": "1.0",
+  "source": "WAK practical phases refined for Cybernova. All are plans, not executable playbooks",
+  "default_execution": "deny",
+  "phases": [
+    {
+      "phase": "identify",
+      "title": "Имя организации → сущности, бренды и границы владения",
+      "depends_on": [],
+      "default_mode": "offline",
+      "tools": [
+        "entity_disambiguation",
+        "asset_inventory",
+        "domain_registration_review"
+      ],
+      "inputs": [
+        "organization_name",
+        "candidate_domains",
+        "known_legal_entities"
+      ],
+      "outputs": [
+        "entity_register",
+        "asset_candidates"
+      ],
+      "acceptance": [
+        "Все кандидаты имеют источник и provenance",
+        "Нет автоматического переноса в in_scope"
+      ]
+    },
+    {
+      "phase": "passive",
+      "title": "Публичный OSINT и исторические активы",
+      "depends_on": [
+        "identify"
+      ],
+      "default_mode": "passive_public",
+      "tools": [
+        "certificate_transparency_search",
+        "passive_asset_discovery",
+        "web_archive_search",
+        "recon_search"
+      ],
+      "inputs": [
+        "approved_seed_list"
+      ],
+      "outputs": [
+        "passive_asset_candidates",
+        "source_quality_register"
+      ],
+      "acceptance": [
+        "Все имена помечены candidate/unverified",
+        "Доступ к сторонним API ограничен квотами и правилами источника"
+      ]
+    },
+    {
+      "phase": "resolve",
+      "title": "DNS и принадлежность адресов",
+      "depends_on": [
+        "passive"
+      ],
+      "default_mode": "low_impact_active",
+      "tools": [
+        "dns_lookup",
+        "dns_security_review",
+        "asset_inventory"
+      ],
+      "inputs": [
+        "allowlisted_hostnames"
+      ],
+      "outputs": [
+        "resolved_assets",
+        "ownership_and_cdn_flags"
+      ],
+      "acceptance": [
+        "Нет автоматического расширения scope на найденный IP",
+        "DNS/IP проверены перед каждым активным соединением"
+      ]
+    },
+    {
+      "phase": "live",
+      "title": "HTTP/TLS и признаки технологий",
+      "depends_on": [
+        "resolve"
+      ],
+      "default_mode": "low_impact_active",
+      "tools": [
+        "http_probe",
+        "tls_inspect",
+        "security_header_review",
+        "web_technology_inventory"
+      ],
+      "inputs": [
+        "approved_exact_urls"
+      ],
+      "outputs": [
+        "service_matrix",
+        "http_baselines"
+      ],
+      "acceptance": [
+        "Есть статус, время и источник каждого результата",
+        "Редиректы не переходят за scope"
+      ]
+    },
+    {
+      "phase": "ports",
+      "title": "Инвентарь TCP/UDP по отдельному сетевому разрешению",
+      "depends_on": [
+        "resolve"
+      ],
+      "default_mode": "controlled_active",
+      "tools": [
+        "port_inventory",
+        "service_protocol_review"
+      ],
+      "inputs": [
+        "explicit_network_scope"
+      ],
+      "outputs": [
+        "approved_network_services"
+      ],
+      "acceptance": [
+        "Никакого скана общих IP/CDN без отдельного допуска",
+        "Порт, скорость и протокол строго ограничены"
+      ]
+    },
+    {
+      "phase": "webmap",
+      "title": "Маршруты, формы, JS, API и state-changing операции",
+      "depends_on": [
+        "live"
+      ],
+      "default_mode": "low_impact_active",
+      "tools": [
+        "robots_read",
+        "sitemap_read",
+        "web_crawl",
+        "browser_capture",
+        "web_route_inventory",
+        "client_script_inventory",
+        "api_endpoint_inventory"
+      ],
+      "inputs": [
+        "approved_web_hosts"
+      ],
+      "outputs": [
+        "url_method_role_matrix",
+        "data_flow_map"
+      ],
+      "acceptance": [
+        "Пути, формы и параметры получают provenance",
+        "Не запускаются logout, оплаты и изменения состояния"
+      ]
+    },
+    {
+      "phase": "threat_model",
+      "title": "Потоки данных, роли и границы доверия",
+      "depends_on": [
+        "identify",
+        "webmap"
+      ],
+      "default_mode": "offline",
+      "tools": [
+        "service_dependency_map",
+        "asset_inventory",
+        "plan_build"
+      ],
+      "inputs": [
+        "asset_and_route_inventory",
+        "roles",
+        "business_flows"
+      ],
+      "outputs": [
+        "trust_boundary_map",
+        "hypothesis_graph"
+      ],
+      "acceptance": [
+        "Каждая гипотеза имеет опровержимые условия",
+        "Неизвестные зависимости не объявлены подтверждёнными"
+      ]
+    },
+    {
+      "phase": "vulnerability",
+      "title": "Проверка классов уязвимостей на разрешённой среде",
+      "depends_on": [
+        "webmap",
+        "threat_model"
+      ],
+      "default_mode": "controlled_active",
+      "tools": [
+        "vulnerability_scan",
+        "authorization_matrix_test",
+        "session_management_review",
+        "input_validation_test",
+        "api_contract_test"
+      ],
+      "inputs": [
+        "approved_test_accounts",
+        "scoped_test_plan"
+      ],
+      "outputs": [
+        "candidate_findings"
+      ],
+      "acceptance": [
+        "Engine/template pin и scope guard на каждый запрос",
+        "Никаких реальных денежных или чужих персональных данных"
+      ]
+    },
+    {
+      "phase": "verify",
+      "title": "Минимальное подтверждение / опровержение гипотез",
+      "depends_on": [
+        "vulnerability"
+      ],
+      "default_mode": "controlled_active",
+      "tools": [
+        "finding_correlate",
+        "finding_verify",
+        "evidence_capture",
+        "attack_path_model"
+      ],
+      "inputs": [
+        "candidate_findings",
+        "approved_fixtures"
+      ],
+      "outputs": [
+        "verified_or_rejected_findings",
+        "attack_path_hypotheses"
+      ],
+      "acceptance": [
+        "Контроль false positive и альтернативных объяснений",
+        "Сквозная цепочка без проверенных переходов не объявляется verified"
+      ]
+    },
+    {
+      "phase": "suspicious",
+      "title": "Внешние угрозы, IOC, CT-аномалии и домены-двойники",
+      "depends_on": [
+        "identify"
+      ],
+      "default_mode": "passive_public",
+      "tools": [
+        "threat_intelligence_review",
+        "certificate_transparency_search",
+        "web_archive_search"
+      ],
+      "inputs": [
+        "organization_identifiers",
+        "public_threat_feeds"
+      ],
+      "outputs": [
+        "threat_candidate_register"
+      ],
+      "acceptance": [
+        "Подозрительный не означает вредоносный",
+        "Нет контакта с возможными фишинговыми сайтами без отдельного основания"
+      ]
+    },
+    {
+      "phase": "report",
+      "title": "Покрытие, доказательства, риски и исправления",
+      "depends_on": [
+        "identify",
+        "verify",
+        "suspicious"
+      ],
+      "default_mode": "offline",
+      "tools": [
+        "security_posture_summary",
+        "risk_assess",
+        "report_generate",
+        "evidence_redact"
+      ],
+      "inputs": [
+        "test_matrix",
+        "evidence_records",
+        "verified_findings"
+      ],
+      "outputs": [
+        "coverage_matrix",
+        "risk_register",
+        "executive_and_technical_reports"
+      ],
+      "acceptance": [
+        "Непроверенное не получает высокий security score",
+        "Каждая подтверждённая находка связана с evidence"
+      ]
+    },
+    {
+      "phase": "retest",
+      "title": "Проверка исправлений и регрессий",
+      "depends_on": [
+        "report"
+      ],
+      "default_mode": "controlled_active",
+      "tools": [
+        "retest_track",
+        "finding_verify"
+      ],
+      "inputs": [
+        "fixed_components",
+        "retest_permission",
+        "synthetic_accounts"
+      ],
+      "outputs": [
+        "regression_results",
+        "residual_risk"
+      ],
+      "acceptance": [
+        "Новый разрешённый run, а не наследование старого",
+        "Исходный дефект и повторный тест сопоставлены"
+      ]
+    }
+  ]
+}

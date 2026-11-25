@@ -1,0 +1,60 @@
+name: cybernova
+
+services:
+  cybernova:
+    build:
+      context: ../../..
+      dockerfile: cybernova/research-platform/portable/Dockerfile
+      args:
+        CYBERNOVA_GIT_SHA: ${CYBERNOVA_SOURCE_COMMIT:-unknown}
+    image: cybernova/research-console:local
+    env_file: .env
+    environment:
+      CYBERNOVA_COMM_DB: /data/communications.sqlite3
+      CYBERNOVA_SIWC_DIR: /data/chatgpt-siwc
+      CYBERNOVA_SIWC_CALLBACK_PORT: "18795"
+      CYBERNOVA_BACKUP_KEY_FILE: /data/backup.key
+      CYBERNOVA_ACCESS_SECRET_FILE: /data/web_access.txt
+      CYBERNOVA_ACCESS_HOST: "0.0.0.0"
+      CYBERNOVA_ACCESS_PORT: "18795"
+      CYBERNOVA_MCP_URL: http://127.0.0.1:18792/mcp
+      CYBERNOVA_HTTP_SCOPE_FILE: /app/tool_gateway/scope.json
+      CYBERNOVA_COMM_WORKER: "1"
+    ports:
+      # The ONLY published endpoint: password-authenticated UI.
+      # Loopback on host; remote use via SSH forwarding or tunnel profile.
+      - "127.0.0.1:18795:18795"
+    volumes:
+      - cybernova_data:/data
+      - ./config/scope.json:/app/tool_gateway/scope.json:ro
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+
+  ollama:
+    profiles: ["local-ollama"]
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    # No published 11434; the Cybernova container can reach "ollama" via
+    # Docker Compose internal DNS when CYBERNOVA_OLLAMA_URL points at it.
+    restart: unless-stopped
+
+  cloudflared:
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://cybernova:18795
+    depends_on:
+      cybernova:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  cybernova_data:
+  ollama_models:
