@@ -126,7 +126,7 @@
         <textarea id="messageInput" rows="1" maxlength="10000" placeholder="Спросите что-нибудь или задайте задачу…"></textarea>
         <div class="composer-bottom">
           <div class="composer-left">
-            <a href="/api/diagnostics/export" id="chatDiagnosticsDownload" class="diagnostics-download-button" download="cybernova-diagnostics.jsonl" aria-label="Выгрузить журнал ошибок Cybernova" title="Скачать текущий журнал ошибок и метаданные запусков DeepSeek и Account GPT. Тексты переписки и секреты намеренно не записываются."><span aria-hidden="true">↓</span><span>Выгрузить ошибки</span></a>
+            <a href="/api/diagnostics/export" id="chatDiagnosticsDownload" class="diagnostics-download-button" download="cybernova-diagnostics-task.jsonl" aria-label="Выгрузить журнал текущей задачи Cybernova" title="Действия, результаты и ошибки текущей задачи. Содержимое сообщений, аргументы инструментов и секреты не сохраняются."><span aria-hidden="true">↓</span><span>Журнал задачи</span></a>
             <label for="artifactFile" id="qwenUploadLabel" class="upload-button" title="Импорт HAR, JS, OpenAPI, логов, конфигураций, Python, зависимостей, TLS или PCAP. Файл обрабатывается локально.">📎 Файл</label>
             <input id="artifactFile" class="sr-only" type="file" accept=".har,.js,.py,.json,.log,.txt,.conf,.cfg,.ini,.yaml,.yml,.env,.pcap,.cap,.pem,.crt,.lock,.mod,.toml">
             <button type="button" id="toolPickerToggle" class="tool-picker-toggle"
@@ -185,11 +185,13 @@
       <p class="inspector-note">Терминал: только pwd, list, python --version, git status, git log. Без произвольных команд и Shell.</p>
     </section>
     <button type="button" id="refreshStatus" class="refresh-button">↻ Проверить подключение</button>
-    <section class="scope-settings" aria-label="Журнал ошибок Cybernova">
-      <strong>Диагностика неисправностей</strong>
-      <p class="inspector-note">Ошибки DeepSeek, ChatGPT, MCP, браузера и сервера сохраняются локально. Журнал ограничен по размеру и не содержит тексты переписок намеренно.</p>
-      <a href="/api/diagnostics/export" id="diagnosticsDownload" class="refresh-button" download="cybernova-diagnostics.jsonl">Скачать журнал ошибок (.jsonl)</a>
-      <p class="inspector-note">Выгрузка доступна в авторизованном Web UI на порту 18795. Перед отправкой журнала проверь его содержимое.</p>
+    <section class="scope-settings" aria-label="Журнал выполнения Cybernova">
+      <strong>Журнал выполнения и ошибок</strong>
+      <p class="inspector-note">Записываются действия агентов и браузера, решения владельца, этапы авторизации, результаты и ошибки. Пароли, OTP, номера карт, cookies, сообщения и аргументы инструментов не сохраняются.</p>
+      <a href="/api/diagnostics/export" id="diagnosticsDownload" class="refresh-button" download="cybernova-diagnostics-task.jsonl">Скачать журнал текущей задачи (.jsonl)</a>
+      <a href="/api/diagnostics/export" id="diagnosticsRunDownload" class="refresh-button" download="cybernova-diagnostics-run.jsonl">Скачать текущий запуск (.jsonl)</a>
+      <a href="/api/diagnostics/export" id="diagnosticsDownloadAll" class="refresh-button" download="cybernova-diagnostics-full.jsonl">Полный журнал всех компонентов (.jsonl)</a>
+      <p class="inspector-note">Текущая задача и запуск выгружаются отдельно. Полный журнал включает старые записи из ротаций.</p>
     </section>
     <div class="tool-list" id="toolList"><span class="muted">Проверяем MCP…</span></div>
       <details class="scope-settings" id="scopeSettings">

@@ -13,7 +13,8 @@ import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
-from urllib.parse import urlsplit
+import re
+from urllib.parse import parse_qs, urlsplit
 
 try:
     from .upload_limits import MAX_IMPORT_HTTP_BODY_BYTES, MAX_PROXY_RESPONSE_BYTES
@@ -45,6 +46,23 @@ HOP_HEADERS = frozenset({
     "origin", "content-length", "accept-encoding",
 })
 MAX_NORMAL_REQUEST_BODY = 7_000_000
+
+
+def _diagnostic_filters(path: str) -> dict:
+    query = parse_qs(urlsplit(path).query, keep_blank_values=False)
+    patterns = {
+        "run_id": re.compile(r"[0-9a-f]{32}"),
+        "session_ref": re.compile(r"[0-9a-f]{16}"),
+        "task_ref": re.compile(r"[0-9a-f]{16}"),
+    }
+    if set(query) - set(patterns):
+        raise ValueError("unknown_diagnostics_filter")
+    filters = {}
+    for key, values in query.items():
+        if len(values) != 1 or not patterns[key].fullmatch(values[0]):
+            raise ValueError("invalid_diagnostics_filter")
+        filters[key] = values[0]
+    return filters
 
 
 def read_credentials(path: str | Path) -> tuple[str, str]:
@@ -166,13 +184,22 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return self._send(403, b"Invalid origin\\n")
         if self.command == "GET" and route == "/api/diagnostics/export":
             try:
-                journal = export_jsonl()
+                filters = _diagnostic_filters(self.path)
+                journal = export_jsonl(**filters)
+            except ValueError:
+                return self._send(400, b"Invalid diagnostics filter\\n")
             except Exception as exc:
                 log_failure("access-gateway", "diagnostics_export", exc)
                 return self._send(503, b"Diagnostic journal unavailable\\n")
+            download_name = (
+                "cybernova-diagnostics-full.jsonl" if not filters else
+                "cybernova-diagnostics-task.jsonl" if "task_ref" in filters else
+                "cybernova-diagnostics-session.jsonl" if "session_ref" in filters else
+                "cybernova-diagnostics-run.jsonl"
+            )
             return self._send(
                 200, journal, content_type="application/x-ndjson; charset=utf-8",
-                download_name="cybernova-diagnostics.jsonl",
+                download_name=download_name,
             )
         length_str = self.headers.get("Content-Length")
         if self.command == "POST":

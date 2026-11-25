@@ -63,6 +63,13 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertNotIn(secret, result)
         self.assertIn("Authorization", result)
         self.assertIn("https://example.org/path", result)
+        sensitive = diagnostics.scrub(
+            "otp=482913 card_number=4111 1111 1111 1111 cvv=123 "
+            "AKIAIOSFODNN7EXAMPLE alice@example.com"
+        )
+        for secret in ("482913", "4111 1111 1111 1111", "123",
+                       "AKIAIOSFODNN7EXAMPLE", "alice@example.com"):
+            self.assertNotIn(secret, sensitive)
 
     def test_model_failure_writes_redacted_structured_event(self):
         with self.journal() as folder:
@@ -330,6 +337,54 @@ class DiagnosticsTests(unittest.TestCase):
                 thread.join(timeout=2)
         self.assertTrue(allowed_path("/api/diagnostics/export", "GET"))
         self.assertFalse(allowed_path("/api/diagnostics/export", "POST"))
+
+    def test_action_journal_correlates_and_filters_private_task_and_session_refs(self):
+        with self.journal():
+            session_id = "private-session-value"
+            task_id = "private-task-value"
+            with diagnostics.diagnostic_context(
+                run_id="a" * 32, session_id=session_id, task_id=task_id,
+                agent="deepseek", mode="researcher",
+            ):
+                diagnostics.event("browser_action_start", tool="browser_navigate",
+                                  source="browser", target_host="example.org")
+                diagnostics.event("browser_action_failed", tool="browser_click",
+                                  source="browser", status="failed",
+                                  error_type="TimeoutError")
+            with diagnostics.diagnostic_context(
+                run_id="b" * 32, session_id="other-session", task_id="other-task",
+                agent="qwen", mode="researcher",
+            ):
+                diagnostics.event("tool_call_start", tool="terminal_run")
+            full = diagnostics.export_jsonl().decode("utf-8")
+            self.assertNotIn(session_id, full)
+            self.assertNotIn(task_id, full)
+            target_ref = diagnostics.diagnostic_ref("task", task_id)
+            filtered = diagnostics.export_jsonl(task_ref=target_ref).decode("utf-8")
+            self.assertIn("browser_navigate", filtered)
+            self.assertNotIn("terminal_run", filtered)
+            manifest = json.loads(filtered.splitlines()[0])
+            self.assertEqual(manifest["schema_version"], 3)
+            self.assertEqual(manifest["filters"]["task_ref"], target_ref)
+            run_filtered = diagnostics.export_jsonl(run_id="a" * 32).decode("utf-8")
+            self.assertIn("browser_click", run_filtered)
+            self.assertNotIn("terminal_run", run_filtered)
+
+    def test_export_includes_third_rotated_file(self):
+        with self.temp_folder() as folder:
+            row = {
+                "time": "2026-11-20T00:00:00+00:00",
+                "component": "console",
+                "level": "ERROR",
+                "logger": "test",
+                "message": "oldest-rotation-entry",
+                "process_id": 123,
+            }
+            (folder / "console.jsonl.3").write_text(
+                json.dumps(row) + "\n", encoding="utf-8"
+            )
+            report = diagnostics.export_jsonl().decode("utf-8")
+            self.assertIn("oldest-rotation-entry", report)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """Bounded, local-only Cybernova error journal.
 
-Each service writes its own JSONL file (plus two rotations) because Windows
+Each service writes its own JSONL file (plus three rotations) because Windows
 RotatingFileHandler must not be shared by multiple processes. The authenticated
 access gateway exports a single merged report. No prompts, cookies, passwords,
 tool arguments or response bodies are intentionally recorded.
@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from inspect import signature
 import time
 import json
+import hashlib
 import logging
 from logging.handlers import RotatingFileHandler
 import os
@@ -29,16 +30,23 @@ TIMELINE_LOG = logging.getLogger("cybernova.timeline")
 TIMELINE_LOG.setLevel(logging.INFO)
 TIMELINE_LOG.addHandler(logging.NullHandler())
 RUN_CONTEXT = ContextVar("cybernova_diagnostic_run", default=None)
+SESSION_CONTEXT = ContextVar("cybernova_diagnostic_session", default=None)
+TASK_CONTEXT = ContextVar("cybernova_diagnostic_task", default=None)
+AGENT_CONTEXT = ContextVar("cybernova_diagnostic_agent", default=None)
+MODE_CONTEXT = ContextVar("cybernova_diagnostic_mode", default=None)
 BOOT_ID = os.urandom(8).hex()
+_TIMELINE_KINDS = frozenset({"action", "approval", "error", "model", "session"})
 _TIMELINE_STRINGS = frozenset({
-    "event", "mode", "module", "stage", "status", "tool", "provider", "model",
-    "error_type", "error_code", "method", "session_kind",
+    "event", "kind", "mode", "module", "stage", "status", "tool", "provider", "model",
+    "error_type", "error_code", "method", "session_kind", "agent", "source",
+    "tool_group", "target_host", "resource_type", "shell", "operation",
+    "decision", "action", "component", "result_code", "input_type",
 })
 _TIMELINE_INTS = frozenset({
     "duration_ms", "http_status", "upstream_http_status", "pid", "exit_code",
     "round", "tool_calls", "input_tokens", "output_tokens",
 })
-_TIMELINE_BOOLS = frozenset({"headless"})
+_TIMELINE_BOOLS = frozenset({"headless", "timed_out"})
 _SAFE_LABEL = re.compile(r"[A-Za-z0-9_.:-]{1,160}")
 
 MAX_FILE_BYTES = 512 * 1024
@@ -54,9 +62,19 @@ _CONFIG_LOCK = threading.RLock()
 _SECRET = re.compile(
     r"(?i)(\b(?:authorization|proxy-authorization|access[_-]?token|"
     r"refresh[_-]?token|token|api[_-]?key|password|passwd|cookie|secret|"
-    r"client[_-]?secret|set-cookie)\b\s*[:=]\s*)"
+    r"client[_-]?secret|set-cookie|otp|verification[_-]?code|card[_-]?number|"
+    r"pan|cvv|cvc|security[_-]?code)\b\s*[:=]\s*)"
     r"(?:[\"']?)([^\s\"',;\}\]]{2,})"
 )
+_CARD_ASSIGNMENT = re.compile(
+    r"(?i)(\b(?:card[_-]?number|pan|cvv|cvc|security[_-]?code)\b\s*[:=]\s*)"
+    r"(?:[\"']?)([^\"',;\}\]]{2,})"
+)
+_CARD_NUMBER = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
+_AWS_KEY = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")
+_LONG_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{36,}(?![A-Za-z0-9_-])")
+_EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 _BEARER = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9_.~+/-]{8,}={0,2}")
 _OPENAI_KEY = re.compile(r"\bsk-[A-Za-z0-9_-]{10,}")
 _URL_QUERY = re.compile(r"(https?://[^\s?\"']+)\?[^\s\"']+")
@@ -67,10 +85,15 @@ _NEWLINES = re.compile(r"[\r\n\x00-\x1f]+")
 def scrub(value: object, limit: int = MAX_TEXT) -> str:
     raw = str(value)
     raw = _URL_QUERY.sub(r"\1?[QUERY-REDACTED]", raw)
-    # Remove full bearer/basic credentials *before* generic key=value masking.
+    raw = _CARD_ASSIGNMENT.sub(r"\1[REDACTED]", raw)
+    raw = _CARD_NUMBER.sub("[REDACTED-CARD]", raw)
     raw = _BEARER.sub(r"\1 [REDACTED]", raw)
     raw = _SECRET.sub(r"\1[REDACTED]", raw)
     raw = _OPENAI_KEY.sub("[REDACTED-API-KEY]", raw)
+    raw = _AWS_KEY.sub("[REDACTED-AWS-KEY]", raw)
+    raw = _JWT.sub("[REDACTED-JWT]", raw)
+    raw = _LONG_TOKEN.sub("[REDACTED-TOKEN]", raw)
+    raw = _EMAIL.sub("[REDACTED-EMAIL]", raw)
     raw = _PERSONAL.sub(r"\1[USER]", raw)
     return _NEWLINES.sub(" ", raw)[:limit]
 
@@ -87,6 +110,101 @@ def journal_dir() -> Path:
     return Path.home() / ".cybernova" / "diagnostics"
 
 
+def diagnostic_ref(kind: str, value: str | None) -> str | None:
+    """Stable one-way reference for a private session/task identifier."""
+    if not isinstance(kind, str) or not _SAFE_LABEL.fullmatch(kind):
+        return None
+    if not isinstance(value, str) or not value:
+        return None
+    return hashlib.sha256(("cybernova:" + kind + ":" + value).encode("utf-8")).hexdigest()[:16]
+
+
+def _safe_context_label(value):
+    return value if isinstance(value, str) and _SAFE_LABEL.fullmatch(value) else None
+
+
+def _trace_fields() -> dict:
+    result = {}
+    run_id = RUN_CONTEXT.get()
+    if isinstance(run_id, str) and re.fullmatch(r"[0-9a-f]{16,32}", run_id):
+        result["run_id"] = run_id
+    for key, value in (
+        ("session_ref", SESSION_CONTEXT.get()),
+        ("task_ref", TASK_CONTEXT.get()),
+        ("agent", AGENT_CONTEXT.get()),
+        ("mode", MODE_CONTEXT.get()),
+    ):
+        if isinstance(value, str) and _SAFE_LABEL.fullmatch(value):
+            result[key] = value
+    return result
+
+
+def _clean_trace(value):
+    if not isinstance(value, dict):
+        return None
+    result = {}
+    run_id = value.get("run_id")
+    if isinstance(run_id, str) and re.fullmatch(r"[0-9a-f]{16,32}", run_id):
+        result["run_id"] = run_id
+    for key in ("session_ref", "task_ref"):
+        raw = value.get(key)
+        if isinstance(raw, str) and re.fullmatch(r"[0-9a-f]{16}", raw):
+            result[key] = raw
+    for key in ("agent", "mode"):
+        raw = value.get(key)
+        if isinstance(raw, str) and _SAFE_LABEL.fullmatch(raw):
+            result[key] = raw
+    return result or None
+
+
+def set_context(*, session_id=None, task_id=None, agent=None, mode=None) -> None:
+    """Bind safe correlation metadata until the enclosing chat turn exits."""
+    if session_id is not None:
+        SESSION_CONTEXT.set(diagnostic_ref("session", session_id))
+    if task_id is not None:
+        TASK_CONTEXT.set(diagnostic_ref("task", task_id))
+    if agent is not None:
+        AGENT_CONTEXT.set(_safe_context_label(agent))
+    if mode is not None:
+        MODE_CONTEXT.set(_safe_context_label(mode))
+
+
+@contextmanager
+def diagnostic_context(*, run_id=None, session_id=None, task_id=None, agent=None, mode=None):
+    """Temporarily bind run/session/task metadata across nested and copied contexts."""
+    tokens = []
+    values = (
+        (RUN_CONTEXT, run_id),
+        (SESSION_CONTEXT, diagnostic_ref("session", session_id) if session_id is not None else None),
+        (TASK_CONTEXT, diagnostic_ref("task", task_id) if task_id is not None else None),
+        (AGENT_CONTEXT, _safe_context_label(agent) if agent is not None else None),
+        (MODE_CONTEXT, _safe_context_label(mode) if mode is not None else None),
+    )
+    for variable, value in values:
+        if value is not None:
+            tokens.append((variable, variable.set(value)))
+    try:
+        yield
+    finally:
+        for variable, token in reversed(tokens):
+            variable.reset(token)
+
+
+def _event_kind(name, fields):
+    requested = fields.get("kind")
+    if requested in _TIMELINE_KINDS:
+        return requested
+    if fields.get("status") in {"failed", "error", "blocked", "timeout", "denied", "expired"}:
+        return "error"
+    if isinstance(name, str) and name.startswith(("approval_", "owner_input_")):
+        return "approval"
+    if isinstance(name, str) and name.startswith(("session_", "background_task_")):
+        return "session"
+    if isinstance(name, str) and name.startswith(("chat_", "model_")):
+        return "model"
+    return "action"
+
+
 class JSONLineFormatter(logging.Formatter):
     def __init__(self, component: str):
         super().__init__()
@@ -100,7 +218,13 @@ class JSONLineFormatter(logging.Formatter):
             "logger": scrub(record.name, 100),
             "message": scrub(record.getMessage()),
             "process_id": record.process,
+            "kind": "error" if record.levelno >= logging.ERROR else
+                    "model" if record.name == CHAT_LOG.name else
+                    "action" if record.name == TIMELINE_LOG.name else "runtime",
         }
+        trace = _clean_trace(_trace_fields())
+        if trace is not None:
+            data["trace"] = trace
         if record.name == CHAT_LOG.name and hasattr(record, "chat_turn"):
             data["chat_turn"] = record.chat_turn
         if record.name == TIMELINE_LOG.name and hasattr(record, "timeline"):
@@ -167,6 +291,10 @@ def _clean_timeline(value):
         raw = value.get(key)
         if isinstance(raw, str) and re.fullmatch(r"[0-9a-f]{16,32}", raw):
             result[key] = raw
+    for key in ("session_ref", "task_ref"):
+        raw = value.get(key)
+        if isinstance(raw, str) and re.fullmatch(r"[0-9a-f]{16}", raw):
+            result[key] = raw
     detail = value.get("error_detail")
     if isinstance(detail, str) and detail:
         result["error_detail"] = scrub(detail, 420)
@@ -174,12 +302,19 @@ def _clean_timeline(value):
 
 
 def event(name: str, **fields) -> None:
-    """Single privacy-controlled timeline event, correlated with the active chat turn."""
+    """Write one allowlisted metadata event with private IDs hashed before storage."""
     try:
-        data = {"event": name, "boot_id": BOOT_ID, **fields}
-        run_id = RUN_CONTEXT.get()
-        if isinstance(run_id, str):
-            data["run_id"] = run_id
+        if not isinstance(name, str) or not _SAFE_LABEL.fullmatch(name):
+            return
+        supplied = dict(fields)
+        session_id = supplied.pop("session_id", None)
+        task_id = supplied.pop("task_id", None)
+        if session_id is not None:
+            supplied.setdefault("session_ref", diagnostic_ref("session", session_id))
+        if task_id is not None:
+            supplied.setdefault("task_ref", diagnostic_ref("task", task_id))
+        supplied.setdefault("kind", _event_kind(name, supplied))
+        data = {"event": name, "boot_id": BOOT_ID, **supplied, **_trace_fields()}
         clean = _clean_timeline(data)
         if clean is not None:
             TIMELINE_LOG.info("event %s", clean["event"], extra={"timeline": clean})
@@ -257,6 +392,13 @@ def _export_chat_turn(fields):
     if not isinstance(run_id, str) or not re.fullmatch(r"[0-9a-f]{32}", run_id):
         return None
     result = {"run_id": run_id}
+    for key in ("session_ref", "task_ref"):
+        value = fields.get(key)
+        if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{16}", value):
+            result[key] = value
+    agent = fields.get("agent")
+    if isinstance(agent, str) and _SAFE_LABEL.fullmatch(agent):
+        result["agent"] = agent
     for key in (*_CHAT_TOKEN_FIELDS, "duration_ms", "tool_errors", "http_status", "upstream_http_status"):
         value = fields.get(key)
         result[key] = value if type(value) is int and value >= 0 else None
@@ -286,7 +428,13 @@ def observe_chat(mode, backend, latest_usage):
             start = time.monotonic()
             result = error = None
             run_id = getattr(payload, "run_id", None)
-            token = RUN_CONTEXT.set(run_id if isinstance(run_id, str) else None)
+            context_tokens = [
+                (RUN_CONTEXT, RUN_CONTEXT.set(run_id if isinstance(run_id, str) else None)),
+                (SESSION_CONTEXT, SESSION_CONTEXT.set(None)),
+                (TASK_CONTEXT, TASK_CONTEXT.set(None)),
+                (AGENT_CONTEXT, AGENT_CONTEXT.set("deepseek" if mode == "researcher" else "chatgpt")),
+                (MODE_CONTEXT, MODE_CONTEXT.set(mode)),
+            ]
             event("chat_start", mode=mode)
             try:
                 result = func(payload)
@@ -341,6 +489,7 @@ def observe_chat(mode, backend, latest_usage):
                     for key in _CHAT_TOKEN_FIELDS:
                         value = usage.get(key)
                         fields[key] = value if type(value) is int and value >= 0 else None
+                    fields.update(_trace_fields())
                     if valid_run_id:
                         CHAT_LOG.log(logging.INFO if status == "completed" else logging.ERROR,
                                      "chat turn %s", status, extra={"chat_turn": fields})
@@ -351,24 +500,48 @@ def observe_chat(mode, backend, latest_usage):
                 except Exception:
                     pass  # A broken journal must not break chat.
                 finally:
-                    RUN_CONTEXT.reset(token)
+                    for variable, token in reversed(context_tokens):
+                        variable.reset(token)
         wrapped.__signature__ = signature(func, eval_str=True)
         return wrapped
     return decorate
 
 
-def export_jsonl() -> bytes:
-    """Merge bounded rotated service logs into a single reviewable text file."""
+def _matches_export_filters(item, filters):
+    if not filters:
+        return True
+    contexts = [item.get("trace"), item.get("timeline"), item.get("chat_turn")]
+    return any(
+        isinstance(context, dict)
+        and all(context.get(key) == expected for key, expected in filters.items())
+        for context in contexts
+    )
+
+
+def export_jsonl(*, run_id=None, session_ref=None, task_ref=None) -> bytes:
+    """Merge bounded logs; optional filters isolate one run, session or task."""
+    patterns = {
+        "run_id": re.compile(r"[0-9a-f]{32}"),
+        "session_ref": re.compile(r"[0-9a-f]{16}"),
+        "task_ref": re.compile(r"[0-9a-f]{16}"),
+    }
+    filters = {}
+    for key, value in (("run_id", run_id), ("session_ref", session_ref), ("task_ref", task_ref)):
+        if value is None:
+            continue
+        if not isinstance(value, str) or not patterns[key].fullmatch(value):
+            raise ValueError("invalid_diagnostics_filter")
+        filters[key] = value
+
     folder = journal_dir()
     entries = []
     if folder.is_dir():
         for component in sorted(COMPONENTS):
-            for suffix in (".2", ".1", ""):
+            for suffix in (".3", ".2", ".1", ""):
                 path = folder / (component + ".jsonl" + suffix)
                 try:
                     if not path.is_file():
                         continue
-                    # Max export size remains below the gateway's 7 MB bound.
                     with path.open("r", encoding="utf-8", errors="replace") as source:
                         for line in source:
                             if len(line) > 8192:
@@ -379,16 +552,21 @@ def export_jsonl() -> bytes:
                                 continue
                             if not isinstance(obj, dict):
                                 continue
-                            # Whitelist fields to prevent untrusted extra data in logs.
                             item = {
                                 key: value for key, value in obj.items()
-                                if key in {"time", "component", "level", "logger",
-                                           "message", "process_id", "exception_type",
-                                           "frames", "chat_turn", "timeline"}
+                                if key in {"time", "component", "level", "logger", "message",
+                                           "process_id", "exception_type", "frames", "kind",
+                                           "trace", "chat_turn", "timeline"}
                             }
                             if item.get("component") != component:
                                 continue
                             item["message"] = scrub(item.get("message", ""))
+                            if "trace" in item:
+                                trace = _clean_trace(item.get("trace"))
+                                if trace is None:
+                                    item.pop("trace", None)
+                                else:
+                                    item["trace"] = trace
                             if "chat_turn" in item:
                                 chat_turn = _export_chat_turn(item.pop("chat_turn"))
                                 if component == "console" and chat_turn is not None:
@@ -399,15 +577,19 @@ def export_jsonl() -> bytes:
                                     item["timeline"] = timeline
                             if isinstance(item.get("frames"), list):
                                 item["frames"] = [scrub(v, 150) for v in item["frames"][:16]]
+                            if not _matches_export_filters(item, filters):
+                                continue
                             entries.append(item)
                 except OSError:
-                    continue  # Active Windows file rotation may move a file.
+                    continue
     entries.sort(key=lambda x: str(x.get("time", "")))
     manifest = {
         "kind": "cybernova-diagnostics",
-        "schema_version": 2,
+        "schema_version": 3,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "event_count": len(entries),
+        "filters": filters,
+        "streams": ["action", "approval", "error", "model", "session"],
         "truncated": False,
         "dropped_event_count": 0,
         "notice": "Metadata-only best-effort sanitized journal; inspect before sharing.",
@@ -415,7 +597,6 @@ def export_jsonl() -> bytes:
     lines = [json.dumps(manifest, ensure_ascii=False)]
     lines.extend(json.dumps(item, ensure_ascii=False) for item in entries)
     result = ("\n".join(lines) + "\n").encode("utf-8")
-    # Never allow an oversized journal export to exhaust the gateway response.
     if len(result) > 6_000_000:
         selected = []
         kept = 0

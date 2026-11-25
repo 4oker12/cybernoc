@@ -3,6 +3,7 @@
 const $=id=>document.getElementById(id);
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const state={sessionId:null,taskId:null,lastSeq:0,running:false,qwenRunning:false,gptRunning:false,collabRunning:false,turns:0,
+  diagnostics:{qwen:{session_ref:null,task_ref:null,run_id:null},gpt:{session_ref:null,task_ref:null,run_id:null}},
   uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Активная модель",
   gptThreadId:null,gptConnected:false,gptPlanUsage:false,
   researchScope:{hosts:[],capture_detail:"evidence"},profileSettings:null,
@@ -336,6 +337,7 @@ async function importArtifact(file){
     });
     state.sessionId=result.session_id;
     state.taskId=result.task_id||state.taskId;
+    setDiagnosticsContext(result.diagnostics||{},"qwen");
     void refreshChatGPT();
     void refreshTaskList();
     $("welcome")?.remove();
@@ -528,6 +530,68 @@ function newRunId(){
   }
   throw Error("Secure random generator unavailable");
 }
+
+function activeDiagnosticsContext(){
+  return state.mode==="gpt"?state.diagnostics.gpt:state.diagnostics.qwen;
+}
+function diagnosticsHref(scope,context=activeDiagnosticsContext()){
+  const params=new URLSearchParams();
+  if(scope==="task"&&context.task_ref)params.set("task_ref",context.task_ref);
+  else if(scope==="session"&&context.session_ref)params.set("session_ref",context.session_ref);
+  else if(scope==="run"&&context.run_id)params.set("run_id",context.run_id);
+  const query=params.toString();
+  return "/api/diagnostics/export"+(query?"?"+query:"");
+}
+function setDiagnosticsContext(value,mode=state.mode){
+  const key=mode==="gpt"?"gpt":"qwen";
+  const source=value&&typeof value==="object"?value:{};
+  state.diagnostics[key]={
+    session_ref:typeof source.session_ref==="string"?source.session_ref:null,
+    task_ref:typeof source.task_ref==="string"?source.task_ref:null,
+    run_id:typeof source.run_id==="string"?source.run_id:null
+  };
+  updateDiagnosticsLinks();
+}
+function updateDiagnosticsLinks(){
+  const context=activeDiagnosticsContext();
+  const scope=context.task_ref?"task":context.session_ref?"session":context.run_id?"run":null;
+  const href=scope?diagnosticsHref(scope,context):null;
+  for(const id of ["chatDiagnosticsDownload","diagnosticsDownload"]){
+    const link=$(id);
+    if(!link)continue;
+    if(href){
+      link.href=href;
+      link.removeAttribute("aria-disabled");
+      link.download=scope==="task"?"cybernova-diagnostics-task.jsonl":
+        scope==="session"?"cybernova-diagnostics-session.jsonl":"cybernova-diagnostics-run.jsonl";
+    }else{
+      link.removeAttribute("href");
+      link.setAttribute("aria-disabled","true");
+    }
+    if(id==="diagnosticsDownload"){
+      link.textContent=scope==="task"?"Скачать журнал текущей задачи (.jsonl)":
+        scope==="session"?"Скачать журнал текущей сессии (.jsonl)":
+        scope==="run"?"Скачать журнал текущего запуска (.jsonl)":
+        "Сначала запусти задачу для выгрузки журнала";
+    }
+  }
+  const runLink=$("diagnosticsRunDownload");
+  if(runLink){
+    if(context.run_id){
+      runLink.href=diagnosticsHref("run",context);
+      runLink.removeAttribute("aria-disabled");
+    }else{
+      runLink.removeAttribute("href");
+      runLink.setAttribute("aria-disabled","true");
+    }
+  }
+  const fullLink=$("diagnosticsDownloadAll");
+  if(fullLink){
+    fullLink.href="/api/diagnostics/export";
+    fullLink.removeAttribute("aria-disabled");
+  }
+}
+
 async function watchUsageProgress(runId,mode="qwen"){
   const isRunning=()=>mode==="gpt"?state.gptRunning:state.qwenRunning;
   const started=Date.now();
@@ -781,6 +845,7 @@ async function send(){
   resizeComposer();
   const pending=renderMessage("assistant",(state.qwenModel||"Модель")+" формирует ответ…",true);
   const runId=newRunId();
+  setDiagnosticsContext({...state.diagnostics.qwen,run_id:runId},"qwen");
   state.sessionId=state.sessionId||newRunId();
   startOwnerInputPolling();
   busy(true,"qwen");
@@ -792,6 +857,7 @@ async function send(){
     });
     state.sessionId=result.session_id;
     state.taskId=result.task_id||state.taskId;
+    setDiagnosticsContext(result.diagnostics||{run_id:runId},"qwen");
     state.lastSeq=Math.max(state.lastSeq,result.event_seq||0);
     state.turns=result.turn||state.turns+1;
     pending.wrap.classList.remove("working");
@@ -834,6 +900,7 @@ function gptWelcome(){
 function setMode(mode){
   if((mode==="collab"&&(state.qwenRunning||state.gptRunning||state.collabRunning)) || (state.collabRunning&&mode!=="collab") || !["qwen","gpt","collab"].includes(mode))return;
   state.mode=mode;
+  updateDiagnosticsLinks();
   const qwen=mode==="qwen", gpt=mode==="gpt", collab=mode==="collab";
   for(const [id,isActive] of [
     ["modeQwen",qwen],["modeChatGPT",gpt],["modeCollab",collab]
@@ -897,6 +964,7 @@ async function openGPTThread(threadId){
     const data=await response.json();
     if(!response.ok)throw Error(data.detail||"Не удалось загрузить диалог");
     state.gptThreadId=threadId;
+    setDiagnosticsContext(data.diagnostics||{session_ref:null},"gpt");
     resetUsage("gpt");
     $("gptMessages").replaceChildren();
     const savedToolEvents=data.tool_events||[];
@@ -936,6 +1004,7 @@ async function sendGPT(){
   resizeComposer();
   const pending=renderMessage("chatgpt","ChatGPT формирует ответ…",true,"gptMessages");
   const runId=newRunId();
+  setDiagnosticsContext({...state.diagnostics.gpt,run_id:runId},"gpt");
   busy(true,"gpt");
   const usageWatch=watchUsageProgress(runId,"gpt");
   try{
@@ -944,6 +1013,7 @@ async function sendGPT(){
       tools_enabled:state.toolsEnabled,run_id:runId
     });
     state.gptThreadId=result.thread_id;
+    setDiagnosticsContext(result.diagnostics||{run_id:runId},"gpt");
     pending.wrap.classList.remove("working");
     setFormatted(pending.body,result.answer||"Ответ модели пуст.");
     recordUsage(result.usage,"gpt",pending);
@@ -1072,6 +1142,7 @@ async function resumeTask(taskId){
     const result=await requestJson("/api/comm/resume",{task_id:taskId});
     state.sessionId=result.session_id;
     state.taskId=result.task.task_id;
+    setDiagnosticsContext(result.diagnostics||{},"qwen");
     showResearchScope(result.scope);
     lastGptReview=null;
     $("chatgptToQwen").disabled=true;
@@ -1318,6 +1389,7 @@ async function disconnectChatGPT(){
     lastGptReview=null;
     $("chatgptToQwen").disabled=true;
     state.gptThreadId=null;
+    setDiagnosticsContext({},"gpt");
     gptWelcome();
     await refreshChatGPT();
     if(result.remote_revocation_warning)
@@ -1422,6 +1494,7 @@ async function reset(){
   }
   if(state.mode==="gpt"){
     state.gptThreadId=null;
+    setDiagnosticsContext({},"gpt");
     resetUsage("gpt");
     gptWelcome();
     $("messageInput").value="";
@@ -1437,6 +1510,7 @@ async function reset(){
   }
   state.sessionId=null;
   state.taskId=null;
+  setDiagnosticsContext({},"qwen");
   resetUsage("qwen");
   showResearchScope({hosts:[],capture_detail:"evidence"});
   lastGptReview=null;
@@ -1857,6 +1931,7 @@ function init(){
   }catch(_){state.toolGroups=[];savedEnabled="true";}
   state.toolsEnabled=savedEnabled===null?true:savedEnabled==="true";
   renderToolPicker([]);
+  updateDiagnosticsLinks();
   $("toolPickerToggle").addEventListener("click",()=>{
     toolPickerOpen($("toolPicker").hidden);
   });

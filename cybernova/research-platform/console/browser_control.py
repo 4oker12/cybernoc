@@ -394,12 +394,54 @@ class BrowserSession:
         self._request_started: dict[int, float] = {}
         self._attached_pages: set[int] = set()
 
+    def _dispatch_observed(self, name: str, args: dict) -> dict:
+        started = time.monotonic()
+        target = args.get("url") if isinstance(args, dict) else None
+        if not isinstance(target, str):
+            try:
+                target = self._page.url if self._page is not None else ""
+            except Exception:
+                target = ""
+        try:
+            target_host = (urlsplit(target).hostname or "").lower() if target else ""
+        except ValueError:
+            target_host = ""
+        diagnostic_event("browser_action_start", kind="action", tool=name,
+                         source="browser", target_host=target_host)
+        try:
+            result = self._dispatch(name, args)
+        except Exception as exc:
+            diagnostic_event(
+                "browser_action_failed", kind="error", tool=name, source="browser",
+                target_host=target_host, status="failed",
+                duration_ms=round((time.monotonic() - started) * 1000),
+                error_type=type(exc).__name__,
+            )
+            raise
+        succeeded = not (isinstance(result, dict) and result.get("ok") is False)
+        fields = {
+            "tool": name, "source": "browser", "target_host": target_host,
+            "status": "ok" if succeeded else "blocked",
+            "duration_ms": round((time.monotonic() - started) * 1000),
+        }
+        if isinstance(result, dict) and isinstance(result.get("reason"), str):
+            fields["result_code"] = result["reason"].split(":", 1)[0][:120]
+        diagnostic_event(
+            "browser_action_completed" if succeeded else "browser_action_blocked",
+            kind="action", **fields,
+        )
+        return result
+
     def call(self, name: str, args: dict) -> dict:
         if self._closed:
             raise ValueError("browser_session_closed")
         try:
-            return self._executor.submit(copy_context().run, self._dispatch, name, args).result(timeout=45)
+            return self._executor.submit(
+                copy_context().run, self._dispatch_observed, name, args
+            ).result(timeout=45)
         except FutureTimeout:
+            diagnostic_event("browser_action_timeout", kind="error",
+                             tool=name, source="browser", status="timeout")
             raise ValueError("browser_action_timeout") from None
 
     def current_origin(self) -> str:
@@ -956,6 +998,16 @@ class BrowserSession:
             "safe_response_headers": safe_headers,
         })
         self._network_events = self._network_events[-200:]
+        if int(response.status) >= 400:
+            try:
+                host = (urlsplit(response.url).hostname or "").lower()
+            except ValueError:
+                host = ""
+            diagnostic_event(
+                "browser_http_error", kind="error", source="browser",
+                target_host=host, method=req.method, resource_type=req.resource_type,
+                http_status=int(response.status), status="failed",
+            )
 
     def _on_request_failed(self, req):
         started = self._request_started.pop(id(req), None)
@@ -967,6 +1019,15 @@ class BrowserSession:
             "failure": _redact_text(req.failure or "request_failed"),
         })
         self._network_events = self._network_events[-200:]
+        try:
+            host = (urlsplit(req.url).hostname or "").lower()
+        except ValueError:
+            host = ""
+        diagnostic_event(
+            "browser_request_failed", kind="error", source="browser",
+            target_host=host, method=req.method, resource_type=req.resource_type,
+            status="failed",
+        )
 
     def _host_is_public(self, host: str) -> bool:
         now = time.monotonic()

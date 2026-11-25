@@ -9,8 +9,10 @@ from urllib.parse import urlsplit
 
 try:
     from .account_vault import account_vault, AccountVaultError
+    from .diagnostics import event as diagnostic_event
 except ImportError:
     from account_vault import account_vault, AccountVaultError
+    from diagnostics import event as diagnostic_event
 
 
 class OwnerInputError(ValueError):
@@ -240,13 +242,27 @@ class OwnerInputBroker:
             }
             self._requests[request_id] = item
             self._by_session[session_id] = request_id
+        try:
+            target_host = urlsplit(expected_origin).hostname.lower() if expected_origin else ""
+        except (TypeError, ValueError):
+            target_host = ""
+        diagnostic_event("owner_input_requested", kind="approval", session_id=session_id,
+                         input_type=input_type, target_host=target_host, status="pending")
         signalled = item["event"].wait(max(1, min(int(timeout), self.TTL_SECONDS)))
         with self._lock:
             current = self._requests.get(request_id)
             if not signalled or current is None or current["status"] != "submitted":
+                final_status = current["status"] if current is not None else "expired"
+                if not signalled and final_status == "pending":
+                    final_status = "timeout"
                 if current is not None:
                     self._drop_locked(request_id)
+                diagnostic_event("owner_input_wait_finished", kind="approval",
+                                 session_id=session_id, input_type=input_type,
+                                 status=final_status)
                 return {"ok": False, "status": "owner_input_cancelled_or_expired"}
+            diagnostic_event("owner_input_wait_finished", kind="approval",
+                             session_id=session_id, input_type=input_type, status="submitted")
             result = {"ok": True, "status": "owner_input_ready",
                       "request_id": request_id, "input_type": input_type,
                       "field_label": field_label}
@@ -335,6 +351,9 @@ class OwnerInputBroker:
                 item["value"] = value
             item["status"] = "submitted"
             item["event"].set()
+        decision_label = ("confirmed" if decision else "declined") if kind == "payment_confirmation" else "submitted"
+        diagnostic_event("owner_input_submitted", kind="approval", session_id=session_id,
+                         input_type=kind, status="submitted", decision=decision_label)
         return {"ok": True, "accepted": True}
 
     def consume(self, session_id, request_id):
@@ -399,6 +418,8 @@ class OwnerInputBroker:
             _wipe_mapping(item.get("value"))
             item["event"].set()
             self._drop_locked(request_id)
+        diagnostic_event("owner_input_cancelled", kind="approval", session_id=session_id,
+                         status="cancelled")
         return {"ok": True, "cancelled": True}
 
     def _drop_locked(self, request_id, *, clear_value=True):
