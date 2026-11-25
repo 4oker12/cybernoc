@@ -696,6 +696,7 @@ function stopOwnerInputPolling(){
 async function submitOwnerInput(){
   if(!state.sessionId||!state.ownerInputRequestId)return;
   const type=state.ownerInputType;
+  let paymentCardPayload=null;
   let payload={session_id:state.sessionId,request_id:state.ownerInputRequestId};
   if(type==="payment_card"){
     const card={};
@@ -713,7 +714,8 @@ async function submitOwnerInput(){
       $("ownerInputError").textContent="Подтверди платёжный домен "+notApproved.dataset.paymentFrameHost+" или отмени передачу данных.";
       return;
     }
-    payload.payment_card=card;
+    paymentCardPayload=card;
+    payload.payment_card=paymentCardPayload;
     payload.approved_frame_hosts=frameChecks.map(item=>item.dataset.paymentFrameHost);
   }else if(type==="payment_confirmation"){
     payload.decision=true;
@@ -739,7 +741,14 @@ async function submitOwnerInput(){
     payload=null;
   }catch(error){
     $("ownerInputError").textContent=String(error.message||error);
-  }finally{$("ownerInputSubmit").disabled=false;}
+  }finally{
+    if(paymentCardPayload){
+      for(const key of Object.keys(paymentCardPayload))paymentCardPayload[key]="";
+      Object.keys(paymentCardPayload).forEach(key=>delete paymentCardPayload[key]);
+      paymentCardPayload=null;
+    }
+    $("ownerInputSubmit").disabled=false;
+  }
 }
 async function cancelOwnerInput(){
   if(!state.sessionId||!state.ownerInputRequestId)return;
