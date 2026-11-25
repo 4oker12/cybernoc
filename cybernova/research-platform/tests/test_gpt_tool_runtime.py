@@ -192,6 +192,7 @@ class GPTToolRuntimeTests(unittest.TestCase):
                 {"service": "AWS", "username": "owner@example.net",
                  "account_label": "personal", "field_label": "Password"},
                 conversation_key="deepseek:" + "a" * 32, enabled_groups=["browser"],
+                user_messages=[{"role": "user", "content": "Create an AWS account"}],
             )
             self.assertFalse(failed)
             self.assertTrue(generated["password_generated_locally"])
@@ -209,6 +210,19 @@ class GPTToolRuntimeTests(unittest.TestCase):
             self.assertNotIn("ExistingSavedPassword!456", str(saved))
             self.assertEqual(session.filled[-1][1], "ExistingSavedPassword!456")
             self.assertEqual(session.filled[-1][3], "https://signin.aws.amazon.com")
+
+    def test_generated_password_requires_explicit_account_creation_intent(self):
+        runtime = GPTToolRuntime()
+        result, failed = runtime.call(
+            "browser_generate_and_fill_password",
+            {"service": "AWS", "username": "owner@example.net",
+             "account_label": "personal", "field_label": "Password"},
+            conversation_key="deepseek:" + "b" * 32,
+            enabled_groups=["browser"],
+            user_messages=[{"role": "user", "content": "Inspect this login page"}],
+        )
+        self.assertTrue(failed)
+        self.assertEqual(result["error"], "account_creation_intent_required")
 
     def test_account_vault_metadata_tools_do_not_expose_passwords(self):
         class FakeVault:
