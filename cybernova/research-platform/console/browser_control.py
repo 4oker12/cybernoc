@@ -36,7 +36,7 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 SENSITIVE_LABEL = re.compile(
     r"(?i)(password|passwd|passcode|secret|token|api.?key|card.?number|cvv|"
     r"cvc|security.?code|one.?time.?code|verification.?code|authentication.?code|"
-    r"\\botp\\b|\\bpin\\b|парол|код.?безопас|номер.?карты|секрет)"
+    r"\botp\b|\bpin\b|парол|код.?безопас|номер.?карты|секрет)"
 )
 HIGH_IMPACT = re.compile(
     r"(?i)(pay|payment|purchase|buy\s+now|place\s+order|checkout|"
@@ -85,13 +85,13 @@ BROWSER_CONTROL_TOOLS = [
           {"name": {**STRING, "description": "Exact visible/accessibility name of one link"}}, ["name"]),
     _tool("browser_fill",
           "Fill one visible editable non-sensitive field in the main document or an iframe. Locate it by label, placeholder, id, name, aria-label, autocomplete, data-agent-id, CSS/XPath selector, or bounded viewport coordinates. Optional human-like keyboard events and clear/append behavior are supported. Passwords, OTPs, tokens and payment-card fields are refused; use protected Owner Input for secrets. Filling does not intentionally submit the form.",
-          {"label": {**STRING, "description": "Legacy exact label or placeholder; kept for compatibility"},
-           "target": {**STRING, "description": "Field label, data-agent-id, id/name/aria-label/autocomplete value, or explicit CSS/XPath selector"},
+          {"label": {"type": ["string", "null"], "description": "Legacy exact label or placeholder; kept for compatibility"},
+           "target": {"type": ["string", "null"], "description": "Field label, data-agent-id, id/name/aria-label/autocomplete value, or explicit CSS/XPath selector"},
            "value": {**STRING, "description": "Text to enter; never written to diagnostics"},
-           "coords": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2,
+           "coords": {"type": ["array", "null"], "items": {"type": "number"}, "minItems": 2, "maxItems": 2,
                       "description": "Optional [x,y] viewport point on a visible editable field; mutually exclusive with label/target"},
-           "clear": {"type": "boolean", "description": "Clear the field before typing (default true)"},
-           "human_like": {"type": "boolean", "description": "Send keyboard events with small randomized delays (default true)"}}, ["value"]),
+           "clear": {"type": ["boolean", "null"], "description": "Clear the field before typing (default true)"},
+           "human_like": {"type": ["boolean", "null"], "description": "Send keyboard events with small randomized delays (default true)"}}, ["label", "target", "value", "coords", "clear", "human_like"]),
     _tool("browser_select",
           "Choose an option in one visible select field by exact label and option label/value. Does not submit the form.",
           {"label": {**STRING, "description": "Exact select label"},
@@ -376,6 +376,7 @@ def _browser_field_metadata(locator) -> dict:
             role: el.getAttribute('role') || '',
             labels,
             data_agent_id: el.getAttribute('data-agent-id') || '',
+            contenteditable: !!el.isContentEditable,
             disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
             read_only: !!el.readOnly || el.getAttribute('aria-readonly') === 'true',
             content_editable: !!el.isContentEditable,
@@ -421,7 +422,7 @@ def _locate_across_frames(page, target: str):
     xpath_value = _xpath_literal(target)
     explicit_selector = (
         target.startswith(("#", ".", "[", "//", "css=", "xpath="))
-        or bool(re.match(r"^[A-Za-z][A-Za-z0-9_-]*(?:\\[|#|\\.|:|>)", target))
+        or bool(re.match(r"^[A-Za-z][A-Za-z0-9_-]*(?:\[|#|\.|:|>)", target))
     )
     strategies = []
     if explicit_selector:
@@ -1321,6 +1322,7 @@ class BrowserSession:
             aria_label: el.getAttribute('aria-label') || '',
             autocomplete: el.getAttribute('autocomplete') || '',
             data_agent_id: el.getAttribute('data-agent-id') || '',
+            contenteditable: !!el.isContentEditable,
             readonly: !!el.readOnly || el.getAttribute('aria-readonly') === 'true'
         }))"""
         for frame_index, frame in enumerate(frames):
@@ -1542,16 +1544,17 @@ class BrowserSession:
             if set(args) - allowed or "value" not in args:
                 raise ValueError("browser_arguments_invalid")
             value = args["value"]
-            target = args.get("target", args.get("label"))
+            target_values = [item for item in (args.get("target"), args.get("label")) if item not in (None, "")]
+            if len(set(target_values)) > 1:
+                raise ValueError("browser_fill_target_conflict")
+            target = args.get("target") or args.get("label")
             coords = args.get("coords")
-            clear_first = args.get("clear", True)
-            human_like = args.get("human_like", True)
+            clear_first = True if args.get("clear") is None else args.get("clear")
+            human_like = True if args.get("human_like") is None else args.get("human_like")
             if not isinstance(value, str) or len(value) > 1200:
                 raise ValueError("browser_fill_arguments_invalid")
             if type(clear_first) is not bool or type(human_like) is not bool:
                 raise ValueError("browser_fill_options_invalid")
-            if "target" in args and "label" in args and args["target"] != args["label"]:
-                raise ValueError("browser_fill_target_conflict")
             if target is not None and coords is not None:
                 raise ValueError("browser_fill_target_or_coords_required")
             if target is None and coords is None:

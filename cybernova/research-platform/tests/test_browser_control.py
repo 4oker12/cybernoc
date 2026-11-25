@@ -16,7 +16,7 @@ from console.browser_control import (
     HIGH_IMPACT, IRREVERSIBLE_SUBMIT_TARGET, PAYMENT_SUBMIT_TARGET,
     _payment_field_kind, _redact_text, _safe_url, validate_public_url,
     _disable_profile_session_restore, _locate_across_frames,
-    _browser_field_is_sensitive, BROWSER_CONTROL_TOOLS,
+    _browser_field_is_sensitive,
 )
 
 
