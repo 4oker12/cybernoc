@@ -92,6 +92,15 @@ class AccountVaultTests(unittest.TestCase):
                 "http://signin.aws.amazon.com",
             )
 
+    def test_missing_key_with_existing_entries_fails_closed(self):
+        self.vault.store_password(
+            "AWS", "owner@example.net", "LongRandomPassword!123",
+            "https://signin.aws.amazon.com",
+        )
+        self.key.unlink()
+        with self.assertRaisesRegex(AccountVaultError, "key_missing_existing_records"):
+            AccountVault(self.db, self.key)
+
     def test_reopen_uses_same_key_and_database(self):
         entry = self.vault.store_password(
             "AWS", "owner@example.net", "LongRandomPassword!123",
