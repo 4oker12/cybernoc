@@ -50,7 +50,7 @@ try:
     from .developer_tools import DEV_TOOLS
     from .communication_worker import CommunicationWorker
     from .evidence import EvidenceJournal
-    from .diagnostics import configure as configure_diagnostics, failure as log_failure, observe_chat, adapter_error_code
+    from .diagnostics import CHAT_PROGRESS_SINK, configure as configure_diagnostics, failure as log_failure, observe_chat, adapter_error_code
     from .upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from .siwc import connection as chatgpt_connection, SIWCError
     from .siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
@@ -86,7 +86,7 @@ except ImportError:
     from developer_tools import DEV_TOOLS
     from communication_worker import CommunicationWorker
     from evidence import EvidenceJournal
-    from diagnostics import configure as configure_diagnostics, failure as log_failure, observe_chat, adapter_error_code
+    from diagnostics import CHAT_PROGRESS_SINK, configure as configure_diagnostics, failure as log_failure, observe_chat, adapter_error_code
     from upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from siwc import connection as chatgpt_connection, SIWCError
     from siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
@@ -1107,12 +1107,22 @@ class ChatJobRequest(ChatRequest, ChatJobReceipt):
 
 
 def _complete_chat_job(payload: ChatJobRequest):
+    def publish(event):
+        if event["event"] not in {"model_request_start", "tool_call_start", "tool_call_completed"}:
+            return
+        progress = {key: event[key] for key in ("event", "tool", "status") if key in event}
+        with chat_jobs_lock:
+            chat_jobs[payload.receipt]["progress"] = progress
+
+    token = CHAT_PROGRESS_SINK.set(publish)
     try:
         result = {"status": "completed", "result": chat(payload)}
     except HTTPException as exc:
         result = {"status": "failed", "detail": exc.detail}
     except Exception:
         result = {"status": "failed", "detail": "chat_job_failed"}
+    finally:
+        CHAT_PROGRESS_SINK.reset(token)
     with chat_jobs_lock:
         chat_jobs[payload.receipt].update(result)
 

@@ -29,6 +29,7 @@ TIMELINE_LOG = logging.getLogger("cybernova.timeline")
 TIMELINE_LOG.setLevel(logging.INFO)
 TIMELINE_LOG.addHandler(logging.NullHandler())
 RUN_CONTEXT = ContextVar("cybernova_diagnostic_run", default=None)
+CHAT_PROGRESS_SINK = ContextVar("cybernova_chat_progress_sink", default=None)
 BOOT_ID = os.urandom(8).hex()
 _TIMELINE_STRINGS = frozenset({
     "event", "mode", "module", "stage", "status", "tool", "provider", "model",
@@ -184,6 +185,9 @@ def event(name: str, **fields) -> None:
         clean = _clean_timeline(data)
         if clean is not None:
             TIMELINE_LOG.info("event %s", clean["event"], extra={"timeline": clean})
+            sink = CHAT_PROGRESS_SINK.get()
+            if sink is not None:
+                sink(clean)
     except Exception:
         pass  # Diagnostics must never affect tool execution.
 

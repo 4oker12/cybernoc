@@ -584,7 +584,16 @@ async function requestChatTurn(data,pending){
     }
     if(job.status==="completed")return job.result;
     if(job.status==="failed")throw Error(job.detail||"Выполнение задачи завершилось ошибкой");
-    if(!accepted||failures)pending.body.textContent="Задача принята. Ожидаем результат…";
+    const progress=job.progress;
+    if(progress?.event==="model_request_start"){
+      pending.body.textContent="Ожидаем ответ модели…";
+    }else if(progress?.event==="tool_call_start"&&progress.tool){
+      pending.body.textContent="Выполняется инструмент "+progress.tool+"…";
+    }else if(progress?.event==="tool_call_completed"&&progress.tool){
+      pending.body.textContent=progress.tool+(progress.status==="ok"?" завершил работу.":" завершился с ошибкой.");
+    }else if(!accepted||failures){
+      pending.body.textContent="Задача принята. Ожидаем результат…";
+    }
     accepted=true;
     failures=0;
   }
