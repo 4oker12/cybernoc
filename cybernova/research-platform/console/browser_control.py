@@ -260,7 +260,7 @@ def _payment_field_kind(meta: dict) -> str | None:
         return "expiry_year"
     if autocomplete == "cc-exp" or re.search(
         r"(?:cc[ _-]*)?(?:exp|expiry|expiration)[ _-]*(?:date)?|valid[ _-]*thru|"
-        r"\\bmm\\s*/\\s*yy(?:yy)?\\b", text
+        r"\bmm\s*/\s*yy(?:yy)?\b", text
     ):
         return "expiry"
     if autocomplete == "cc-name" or re.search(
