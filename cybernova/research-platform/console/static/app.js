@@ -561,11 +561,11 @@ function updateDiagnosticsLinks(){
     if(!link)continue;
     if(href){
       link.href=href;
-      link.removeAttribute("aria-disabled");
+      link.setAttribute("aria-disabled","false");
       link.download=scope==="task"?"cybernova-diagnostics-task.jsonl":
         scope==="session"?"cybernova-diagnostics-session.jsonl":"cybernova-diagnostics-run.jsonl";
     }else{
-      link.removeAttribute("href");
+      link.href="";
       link.setAttribute("aria-disabled","true");
     }
     if(id==="diagnosticsDownload"){
@@ -579,16 +579,16 @@ function updateDiagnosticsLinks(){
   if(runLink){
     if(context.run_id){
       runLink.href=diagnosticsHref("run",context);
-      runLink.removeAttribute("aria-disabled");
+      runLink.setAttribute("aria-disabled","false");
     }else{
-      runLink.removeAttribute("href");
+      runLink.href="";
       runLink.setAttribute("aria-disabled","true");
     }
   }
   const fullLink=$("diagnosticsDownloadAll");
   if(fullLink){
     fullLink.href="/api/diagnostics/export";
-    fullLink.removeAttribute("aria-disabled");
+    fullLink.setAttribute("aria-disabled","false");
   }
 }
 

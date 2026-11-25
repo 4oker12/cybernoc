@@ -73,7 +73,6 @@ _CARD_ASSIGNMENT = re.compile(
 _CARD_NUMBER = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
 _AWS_KEY = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")
-_LONG_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{36,}(?![A-Za-z0-9_-])")
 _EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 _BEARER = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9_.~+/-]{8,}={0,2}")
 _OPENAI_KEY = re.compile(r"\bsk-[A-Za-z0-9_-]{10,}")
@@ -92,7 +91,6 @@ def scrub(value: object, limit: int = MAX_TEXT) -> str:
     raw = _OPENAI_KEY.sub("[REDACTED-API-KEY]", raw)
     raw = _AWS_KEY.sub("[REDACTED-AWS-KEY]", raw)
     raw = _JWT.sub("[REDACTED-JWT]", raw)
-    raw = _LONG_TOKEN.sub("[REDACTED-TOKEN]", raw)
     raw = _EMAIL.sub("[REDACTED-EMAIL]", raw)
     raw = _PERSONAL.sub(r"\1[USER]", raw)
     return _NEWLINES.sub(" ", raw)[:limit]

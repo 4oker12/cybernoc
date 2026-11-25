@@ -1082,6 +1082,7 @@ def owner_input_submit(payload: OwnerInputSubmitRequest):
     try:
         with diagnostic_context(session_id=payload.session_id, task_id=state.get("task_id"),
                                 agent="owner", mode="owner_input"):
+            pending = {}
             try:
                 pending = owner_input_broker.pending("deepseek:" + payload.session_id) or {}
                 result = owner_input_broker.submit(

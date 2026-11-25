@@ -243,7 +243,10 @@ class OwnerInputBroker:
             self._requests[request_id] = item
             self._by_session[session_id] = request_id
         try:
-            target_host = urlsplit(expected_origin).hostname.lower() if expected_origin else ""
+            try:
+            target_host = (urlsplit(expected_origin).hostname or "").lower() if expected_origin else ""
+        except (TypeError, ValueError):
+            target_host = ""
         except (TypeError, ValueError):
             target_host = ""
         diagnostic_event("owner_input_requested", kind="approval", session_id=session_id,

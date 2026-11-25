@@ -129,7 +129,9 @@ class UXEnhancementTests(unittest.TestCase):
         )[0]
         self.assertIn('id="chatDiagnosticsDownload"', composer)
         self.assertIn('href="/api/diagnostics/export"', composer)
-        self.assertIn('download="cybernova-diagnostics.jsonl"', composer)
+        self.assertIn('download="cybernova-diagnostics-task.jsonl"', composer)
+        self.assertIn('id="diagnosticsDownloadAll"', html)
+        self.assertIn('download="cybernova-diagnostics-full.jsonl"', html)
         self.assertTrue(allowed_path("/api/diagnostics/export", "GET"))
         self.assertIn(".sidebar #gptSidebar", css)
         self.assertIn(".sidebar .sidebar-more[open]>.task-list", css)
