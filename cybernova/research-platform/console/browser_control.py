@@ -272,6 +272,23 @@ def _payment_field_kind(meta: dict) -> str | None:
         r"card[ _-]*holder|name[ _-]*on[ _-]*card|card[ _-]*name", text
     ):
         return "cardholder_name"
+    billing_context = "billing" in autocomplete.split() or re.search(r"\\bbilling\\b", text)
+    if billing_context and (
+        "address-line1" in autocomplete or re.search(r"billing[ _-]*(?:address|street)[ _-]*(?:line[ _-]*1|1)?", text)
+    ):
+        return "billing_address_line1"
+    if billing_context and (
+        "address-level2" in autocomplete or re.search(r"billing[ _-]*city", text)
+    ):
+        return "billing_city"
+    if billing_context and (
+        "address-level1" in autocomplete or re.search(r"billing[ _-]*(?:state|region|province)", text)
+    ):
+        return "billing_region"
+    if billing_context and (
+        "country" in autocomplete or re.search(r"billing[ _-]*country", text)
+    ):
+        return "billing_country"
     if autocomplete == "cc-postal-code" or re.search(
         r"(?:billing[ _-]*)?(?:postal|zip)[ _-]*(?:code)?", text
     ):
@@ -531,8 +548,12 @@ class BrowserSession:
         expected_keys = {"card_number", "expiry_month", "expiry_year", "cvv"}
         if "cardholder_name" in field_hosts:
             expected_keys.add("cardholder_name")
-        if "billing_postal_code" in field_hosts:
-            expected_keys.add("billing_postal_code")
+        for field in (
+            "billing_address_line1", "billing_city", "billing_region",
+            "billing_country", "billing_postal_code",
+        ):
+            if field in field_hosts:
+                expected_keys.add(field)
         if set(card) != expected_keys:
             raise ValueError("payment_card_fields_mismatch")
 
@@ -589,8 +610,12 @@ class BrowserSession:
                         year = year[-2:]
                 fill_kind("expiry_year", year)
             fill_kind("cvv", card["cvv"])
-            if "billing_postal_code" in field_hosts:
-                fill_kind("billing_postal_code", card["billing_postal_code"])
+            for field in (
+                "billing_address_line1", "billing_city", "billing_region",
+                "billing_country", "billing_postal_code",
+            ):
+                if field in field_hosts:
+                    fill_kind(field, card[field])
         except Exception:
             for locator in reversed(filled):
                 try:
