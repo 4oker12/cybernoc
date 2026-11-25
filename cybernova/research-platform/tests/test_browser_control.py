@@ -438,7 +438,10 @@ class BrowserControlTests(unittest.TestCase):
         fill = next(item for item in BROWSER_CONTROL_TOOLS if item["name"] == "browser_fill")
         properties = fill["inputSchema"]["properties"]
         self.assertTrue({"label", "target", "value", "coords", "clear", "human_like"}.issubset(properties))
-        self.assertEqual(fill["inputSchema"]["required"], ["value"])
+        self.assertEqual(
+            fill["inputSchema"]["required"],
+            ["label", "target", "value", "coords", "clear", "human_like"],
+        )
 
     def test_browser_fill_locator_searches_nested_frames_and_data_agent_id(self):
         class Element:

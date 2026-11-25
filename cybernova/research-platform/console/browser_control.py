@@ -1036,7 +1036,10 @@ class BrowserSession:
         ).casefold()
         if tag != "input":
             raise ValueError("owner_browser_field_type_invalid")
-        if _payment_field_kind(metadata) is not None or re.search(
+        if _payment_field_kind(metadata) in {
+            "card_number", "cvv", "expiry", "expiry_month",
+            "expiry_year", "cardholder_name",
+        } or re.search(
             r"(?i)(card|credit|debit|cvv|cvc|security.?code|expiry|expiration|номер.?карты)",
             label_text,
         ):
