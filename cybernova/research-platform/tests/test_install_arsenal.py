@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import install_arsenal
 
 ROOT = Path(__file__).resolve().parents[1]
-M = json.loads((ROOT / "engines" / "manifest.json").read_text())
+M = json.loads((ROOT / "engines" / "manifest.json").read_text(encoding="utf-8"))
 
 
 class InstallerTests(unittest.TestCase):

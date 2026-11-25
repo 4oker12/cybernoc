@@ -6,7 +6,7 @@ Secrets are returned only to in-process browser-fill code, never to model tools.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from functools import lru_cache
 import os
@@ -78,7 +78,7 @@ def _protect_key(key: bytes) -> bytes:
         return RAW_MAGIC + key
     try:
         import win32crypt
-        _description, protected = win32crypt.CryptProtectData(
+        protected = win32crypt.CryptProtectData(
             key, "Cybernova account vault", None, None, None, 0,
         )
         return DPAPI_MAGIC + protected
@@ -132,7 +132,7 @@ class AccountVault:
         if not self.path.exists():
             return False
         try:
-            with sqlite3.connect(str(self.path), timeout=5) as db:
+            with closing(sqlite3.connect(str(self.path), timeout=5)) as db, db:
                 table = db.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_vault_entries'"
                 ).fetchone()

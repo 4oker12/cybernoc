@@ -1,4 +1,5 @@
 """Offline tests for durable account mission checkpoints."""
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -75,7 +76,7 @@ class AccountMissionStoreTests(unittest.TestCase):
             "Enter verification code",
             "https://example.com/verify/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?token=secret",
         )
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             rows = db.execute(
                 "SELECT goal FROM account_missions UNION ALL "
                 "SELECT summary FROM account_mission_steps"

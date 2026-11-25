@@ -10,6 +10,7 @@ import base64
 import json
 import os
 import shutil
+from contextlib import closing
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,8 +71,8 @@ def backup_db():
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(fd)
     try:
-        with sqlite3.connect("file:" + str(DB) + "?mode=ro", uri=True) as source:
-            with sqlite3.connect(str(target)) as dest:
+        with closing(sqlite3.connect(DB.resolve().as_uri() + "?mode=ro", uri=True)) as source, source:
+            with closing(sqlite3.connect(str(target))) as dest, dest:
                 source.backup(dest)
                 integrity = dest.execute("PRAGMA integrity_check").fetchone()[0]
                 if integrity != "ok":

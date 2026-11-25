@@ -56,7 +56,7 @@ class DeveloperToolsTests(unittest.TestCase):
             "path":"README.md","old":"research platform","content":"agent developer"})
         self.assertTrue(edit["ok"])
         self.assertIn("README.md", self.call("dev_diff")["stat"])
-        self.assertEqual((self.repo/"README.md").read_text(),"Cybernova research platform\n")
+        self.assertEqual((self.repo/"README.md").read_text(encoding="utf-8"),"Cybernova research platform\n")
         commit=self.call("dev_commit", {"message":"feat(agent): implement coding tools"})
         self.assertTrue(commit["ok"],commit)
         self.assertEqual(len(commit["commit"]),40)
@@ -83,6 +83,13 @@ class DeveloperToolsTests(unittest.TestCase):
             self.call("dev_edit",{"path":"README.md","content":"overwrite without old"})
 
     def test_tests_and_custom_execution_are_non_root(self):
+        if os.name == "nt":
+            # Preserve the unprivileged-execution boundary on unsupported Windows.
+            with self.assertRaisesRegex(dev.DeveloperError, "unprivileged_execution_unavailable_on_windows"):
+                self.call("dev_test")
+            with self.assertRaisesRegex(dev.DeveloperError, "unprivileged_execution_unavailable_on_windows"):
+                self.call("dev_command", {"argv": [sys.executable, "-c", "print(1)"], "timeout": 15})
+            return
         result=self.call("dev_test")
         self.assertTrue(result["ok"],result)
         self.assertIn("unittest_non_root",result["runner"])

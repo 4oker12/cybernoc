@@ -13,8 +13,8 @@ from core.research import (
 )
 from core.workflow import load_phases, validate_workflow, plan_workflow
 
-CATALOG = json.loads((ROOT / "tools" / "catalog.json").read_text())
-DRAFT = json.loads((ROOT / "profiles" / "simnet.example.json").read_text())
+CATALOG = json.loads((ROOT / "tools" / "catalog.json").read_text(encoding="utf-8"))
+DRAFT = json.loads((ROOT / "profiles" / "simnet.example.json").read_text(encoding="utf-8"))
 
 
 class ResearchTests(unittest.TestCase):

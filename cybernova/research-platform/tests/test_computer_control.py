@@ -290,7 +290,7 @@ class ComputerControlTests(unittest.TestCase):
         ))
 
     def test_archive_path_traversal_and_windows_ads_are_blocked(self):
-        root = Path("/tmp/cybernova-archive-test")
+        root = Path("/tmp/cybernova-archive-test").resolve()
         for name in ("../escape.txt", r"..\\escape.txt", r"C:\\Windows\\evil.dll",
                      r"\\\\server\\share\\evil.dll", "folder/secret.key"):
             with self.subTest(name=name):

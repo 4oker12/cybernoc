@@ -1,5 +1,6 @@
 """Offline tests for encrypted local account credential storage."""
 import os
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -21,6 +22,16 @@ class AccountVaultTests(unittest.TestCase):
         self.key = self.root / "account-vault.key"
         self.vault = AccountVault(self.db, self.key)
 
+    @unittest.skipUnless(os.name == "nt", "Windows DPAPI required")
+    def test_real_dpapi_round_trip_uses_bytes_contract(self):
+        import secrets
+        from console.account_vault import _protect_key, _unprotect_key, DPAPI_MAGIC
+        key = secrets.token_bytes(32)
+        blob = _protect_key(key)
+        self.assertTrue(blob.startswith(DPAPI_MAGIC))
+        self.assertNotEqual(blob[len(DPAPI_MAGIC):], key)
+        self.assertEqual(_unprotect_key(blob), key)
+
     def test_password_is_encrypted_and_metadata_never_returns_secret(self):
         entry = self.vault.store_password(
             "AWS", "owner@example.net", "LongRandomPassword!123",
@@ -28,7 +39,7 @@ class AccountVaultTests(unittest.TestCase):
         )
         self.assertEqual(entry["status"], "pending")
         self.assertNotIn("password", entry)
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             row = db.execute(
                 "SELECT ciphertext FROM account_vault_entries WHERE record_id=?",
                 (entry["record_id"],),
@@ -68,7 +79,7 @@ class AccountVaultTests(unittest.TestCase):
             "AWS", "owner@example.net", "LongRandomPassword!123",
             "https://signin.aws.amazon.com",
         )
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             row = db.execute(
                 "SELECT ciphertext FROM account_vault_entries WHERE record_id=?",
                 (entry["record_id"],),
