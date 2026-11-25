@@ -89,7 +89,9 @@ class BrowserControlTests(unittest.TestCase):
             "browser_console", "browser_network", "browser_submit_payment",
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
-        self.assertIn("latest user message explicitly asks", submit["description"])
+        self.assertIn("active user task explicitly authorizes", submit["description"])
+        self.assertIn("Task-level authorization remains valid", submit["description"])
+        self.assertNotIn("latest user message explicitly asks", submit["description"])
 
     def test_payment_submit_tool_is_blocked_without_protected_chat_approval(self):
         session = BrowserSession.__new__(BrowserSession)
