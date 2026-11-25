@@ -578,6 +578,12 @@ async function pollOwnerInput(){
     input.maxLength=item.input_type==="otp"?8:512;
     input.autocomplete="off";
     $("ownerInputError").textContent="";
+    const vaultOption=$("ownerInputVaultOption");
+    vaultOption.hidden=!(item.input_type==="password"&&item.vault_save_available===true);
+    $("ownerInputSaveToVault").checked=false;
+    $("ownerInputVaultLabel").textContent=item.account_label?
+      "Сохранить пароль для "+item.account_label+" в зашифрованном хранилище Cybernova":
+      "Сохранить пароль в зашифрованном хранилище Cybernova";
     $("ownerInputDialog").showModal();
     input.focus();
   }catch(_){}
@@ -596,12 +602,14 @@ async function submitOwnerInput(){
   try{
     const response=await fetch("/api/owner-input/submit",{
       method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({session_id:state.sessionId,request_id:state.ownerInputRequestId,value})
+      body:JSON.stringify({session_id:state.sessionId,request_id:state.ownerInputRequestId,value,
+        save_to_vault:$("ownerInputSaveToVault").checked})
     });
     const data=await response.json();
     if(!response.ok)throw Error(data.detail||"Не удалось передать данные");
     $("ownerInputDialog").close();
     $("ownerInputValue").value="";
+    $("ownerInputSaveToVault").checked=false;
     state.ownerInputRequestId=null;
   }catch(error){
     $("ownerInputError").textContent=String(error.message||error);
