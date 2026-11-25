@@ -247,13 +247,27 @@
     <div class="owner-input-heading">
       <div><h2 id="ownerInputTitle">Требуется ввод владельца</h2><p id="ownerInputPurpose">Агент ожидает защищённые данные.</p></div>
     </div>
-    <label id="ownerInputFieldLabel" for="ownerInputValue">Значение</label>
-    <input id="ownerInputValue" type="password" maxlength="512" autocomplete="off" spellcheck="false">
+    <div id="ownerInputSingleField" class="owner-input-single-field">
+      <label id="ownerInputFieldLabel" for="ownerInputValue">Значение</label>
+      <input id="ownerInputValue" type="password" maxlength="512" autocomplete="off" spellcheck="false">
+    </div>
+    <div id="ownerInputPaymentFields" class="owner-payment-fields" hidden></div>
+    <div id="ownerInputPaymentFrames" class="owner-payment-frames" hidden>
+      <p>Платёжная форма использует отдельные домены. Разреши только те, которые относятся к текущему платёжному провайдеру:</p>
+      <div id="ownerInputPaymentFrameList"></div>
+    </div>
+    <div id="ownerInputConfirmationPanel" class="owner-input-confirmation" hidden>
+      <p class="owner-input-confirmation-intro">Проверь действие перед отправкой. Без нажатия кнопки ниже ничего не произойдёт.</p>
+      <div><span>Сайт</span><strong id="ownerInputMerchantOrigin"></strong></div>
+      <div><span>Кнопка</span><strong id="ownerInputActionButton"></strong></div>
+      <div><span>Адрес формы</span><strong id="ownerInputActionOrigin"></strong></div>
+      <div><span>Описание</span><strong id="ownerInputActionSummary"></strong></div>
+    </div>
     <label id="ownerInputVaultOption" class="owner-input-vault-option" hidden>
       <input id="ownerInputSaveToVault" type="checkbox">
       <span id="ownerInputVaultLabel">Сохранить пароль в зашифрованном хранилище Cybernova</span>
     </label>
-    <p class="owner-input-note">Введённое значение передаётся локальному исполнителю и не добавляется в переписку. Сохранение пароля в зашифрованное хранилище возможно только при явном выборе выше. Данные банковской карты здесь не принимаются.</p>
+    <p id="ownerInputNote" class="owner-input-note">Введённое значение передаётся локальному исполнителю и не добавляется в переписку.</p>
     <p id="ownerInputError" class="owner-input-error" role="alert"></p>
     <div class="owner-input-actions">
       <button type="button" id="ownerInputCancel" class="header-button">Отмена задачи</button>
