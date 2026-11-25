@@ -23,7 +23,7 @@ try:
     from .evidence import EvidenceJournal
     from .traffic_tools import TrafficToolClient
     from .research_scope import ResearchScopeStore
-    from .gpt_tool_runtime import runtime as shared_local_tool_runtime
+    from .gpt_tool_runtime import deepseek_runtime as shared_local_tool_runtime
 except ImportError:
     from agent import Agent, MCPClient
     from communication import CommunicationStore
@@ -31,7 +31,7 @@ except ImportError:
     from evidence import EvidenceJournal
     from traffic_tools import TrafficToolClient
     from research_scope import ResearchScopeStore
-    from gpt_tool_runtime import runtime as shared_local_tool_runtime
+    from gpt_tool_runtime import deepseek_runtime as shared_local_tool_runtime
 
 
 def _history_from_dialog(messages: list[dict]) -> tuple[list[dict], str] | None:
@@ -107,7 +107,8 @@ class CommunicationWorker:
                 options["memory_context"] = relevant_memory(profile, prompt)
                 if text_only:
                     options.update(tools_enabled=False, force_tools=False, public_get=False, scope={})
-            outcome = self._agent_for(task_id).run(history, prompt, **options)
+            current_agent = self._agent_for(task_id)
+            outcome = current_agent.run(history, prompt, **options)
             if not isinstance(outcome, dict):
                 raise ValueError("unexpected_agent_output")
             answer = str(outcome.get("answer") or "").strip()[:12000]
@@ -124,8 +125,16 @@ class CommunicationWorker:
                 "needs_review" if current_status == "needs_review" else
                 "completed"
             )
+            continuation = outcome.get("_history_reasoning_content")
+            client = getattr(current_agent, "ollama", None)
+            provider_state = None
+            if isinstance(continuation, str) and getattr(client, "model", None):
+                provider_state = {"provider": str(getattr(client, "provider", "configured")),
+                                  "model": str(client.model), "endpoint": str(getattr(client, "endpoint", "")),
+                                  "reasoning_content": continuation}
             result = self.store.append(
                 task_id, "qwen", "result", answer, status=new_status,
+                provider_state=provider_state,
             )
             if needs_approval:
                 self.store.append(
@@ -163,7 +172,7 @@ class CommunicationWorker:
             self._stop.wait(self.interval)
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
+        if any(thread and thread.is_alive() for thread in [self._thread, *self._text_threads]):
             return
         # Fail closed: a prior process might have died after an active tool.
         self.store.recover_interrupted()
@@ -182,7 +191,8 @@ class CommunicationWorker:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2)
-            self._thread = None
+            if not self._thread.is_alive():
+                self._thread = None
         for thread in self._text_threads:
             thread.join(timeout=2)
-        self._text_threads = []
+        self._text_threads = [thread for thread in self._text_threads if thread.is_alive()]

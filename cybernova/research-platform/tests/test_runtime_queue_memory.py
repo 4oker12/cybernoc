@@ -27,9 +27,19 @@ class RuntimeQueueMemoryTests(unittest.TestCase):
                 store.send_feedback(first["task_id"], "duplicate queue")
 
     def test_schedule_gateway_routes(self):
+        self.assertTrue(allowed_path("/api/usage-progress?run_id=" + "a"*32, "GET"))
         self.assertTrue(allowed_path("/api/comm/schedule", "POST"))
         self.assertTrue(allowed_path("/api/comm/cancel-scheduled", "POST"))
         self.assertFalse(allowed_path("/api/comm/schedule", "GET"))
+
+    def test_running_normal_task_cannot_be_requeued(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=CommunicationStore(Path(tmp)/"state.sqlite")
+            task=store.create_task("Working")["task_id"]
+            store.append(task,"human","instruction","work",status="running",require_available=True)
+            with self.assertRaises(CommunicationError):
+                store.send_feedback(task,"duplicate")
+            self.assertIsNone(store.claim_queued())
 
     def test_latest_history(self):
         with tempfile.TemporaryDirectory() as tmp:

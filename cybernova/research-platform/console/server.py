@@ -1016,6 +1016,7 @@ def chat(payload: ChatRequest):
             )["task_id"]
             research_scope_store().save(state["task_id"], state["scope"])
         task_id = state["task_id"]
+        run_client = agent.ollama
         # Include ChatGPT feedback and background Qwen results which arrived
         # while the browser was open, instead of using stale in-memory history.
         previous = store.recent_dialog(task_id, limit=100)["messages"]
@@ -1030,12 +1031,12 @@ def chat(payload: ChatRequest):
             elif message["actor"] == "qwen" and message["kind"] == "result":
                 history_item = {"role": "assistant", "content": message["body"]}
                 persisted_history.append(_attach_provider_state(
-                    store, task_id, message, history_item, agent.ollama,
+                    store, task_id, message, history_item, run_client,
                 ))
         if persisted_history:
             state["history"] = _restore_reasoning_history(
                 persisted_history[-MAX_HISTORY:], state["history"],
-                provider_identity=_provider_identity(agent.ollama),
+                provider_identity=_provider_identity(run_client),
             )
         try:
             selected_tool_groups = normalize_tool_groups(payload.tool_groups)
@@ -1051,7 +1052,7 @@ def chat(payload: ChatRequest):
         run_status = "failed"
         try:
             current_agent = Agent(
-                ollama=agent.ollama,
+                ollama=run_client,
                 mcp_factory=lambda: CommunicationToolClient(
                     TrafficToolClient(MCPClient(), state["traffic_artifacts"], scope=state["scope"]),
                     store, task_id,
@@ -1099,7 +1100,7 @@ def chat(payload: ChatRequest):
         assistant_history = {"role": "assistant", "content": outcome["answer"][:16000]}
         if isinstance(history_reasoning_content, str):
             assistant_history["reasoning_content"] = history_reasoning_content
-            assistant_history["_provider_identity"] = _provider_identity(agent.ollama)
+            assistant_history["_provider_identity"] = _provider_identity(run_client)
         state["history"].append(assistant_history)
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
@@ -1109,7 +1110,7 @@ def chat(payload: ChatRequest):
         event = store.append(
             task_id, "qwen", "result", outcome["answer"][:12000],
             status=final_status,
-            provider_state=_provider_state_payload(agent.ollama, history_reasoning_content),
+            provider_state=_provider_state_payload(run_client, history_reasoning_content),
         )
     return {"session_id": sid, "task_id": task_id, "event_seq": event["seq"],
             "turn": state["turns"], "run_id": payload.run_id, "task_status": final_status, **outcome}
@@ -1137,10 +1138,11 @@ def approve(payload: ApprovalRequest):
             )
             return {"ok": True, "decision": "denied", "message": "Действие отклонено; "
                     "инструмент не запускался", "tool_calls": 0}
+        run_client = agent.ollama
         try:
             # The reviewed agent checks the latest MCP schema before execution.
             current_agent = Agent(
-                ollama=agent.ollama,
+                ollama=run_client,
                 mcp_factory=lambda: CommunicationToolClient(
                     TrafficToolClient(MCPClient(), state["traffic_artifacts"]),
                     communication_store(), state["task_id"]),
@@ -1158,7 +1160,7 @@ def approve(payload: ApprovalRequest):
         assistant_history = {"role": "assistant", "content": result["answer"][:16000]}
         if isinstance(history_reasoning_content, str):
             assistant_history["reasoning_content"] = history_reasoning_content
-            assistant_history["_provider_identity"] = _provider_identity(agent.ollama)
+            assistant_history["_provider_identity"] = _provider_identity(run_client)
         state["history"].append(assistant_history)
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
@@ -1171,7 +1173,7 @@ def approve(payload: ApprovalRequest):
         communication_store().append(
             state["task_id"], "qwen", "result", str(result["answer"])[:12000],
             status="completed",
-            provider_state=_provider_state_payload(agent.ollama, history_reasoning_content),
+            provider_state=_provider_state_payload(run_client, history_reasoning_content),
         )
         return {"ok": True, "decision": "approved", "session_id": payload.session_id,
                 "task_id": state["task_id"],

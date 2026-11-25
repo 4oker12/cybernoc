@@ -948,6 +948,9 @@ class Agent:
                         assistant_reasoning_content = candidate["reasoning_content"]
                     record_usage(candidate)
                     publish_usage()
+                    if usage_totals["input_reports"] and usage_totals["input_tokens"] >= input_budget:
+                        context.append({"role": "system", "content": "Достигнут мягкий бюджет входных токенов после выбора инструментов. Не выполняй новые вызовы; подведи итог."})
+                        return result_payload(finalize_answer())
                     try:
                         suggested = json.loads(candidate.get("content", "{}")).get("calls", [])
                         if isinstance(suggested, list):

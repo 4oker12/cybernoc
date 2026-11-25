@@ -246,8 +246,11 @@ class CommunicationStore:
                 if current is None or current["status"] in {"running", "queued"}:
                     raise CommunicationError("task_busy")
             if status == "queued":
+                current = db.execute("SELECT status FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+                if current is not None and current["status"] == "running":
+                    raise CommunicationError("task_busy")
                 scheduled = db.execute("SELECT t.status FROM tasks t JOIN scheduled_text_tasks s USING(task_id) WHERE t.task_id=?", (task_id,)).fetchone()
-                if scheduled is not None and scheduled["status"] in {"running", "queued"}:
+                if scheduled is not None and scheduled["status"] == "queued":
                     raise CommunicationError("scheduled_task_busy")
             db.execute(
                 "INSERT INTO messages(message_id,task_id,actor,kind,body,"
