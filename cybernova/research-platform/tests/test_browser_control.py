@@ -72,6 +72,16 @@ class BrowserControlTests(unittest.TestCase):
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
         self.assertIn("latest user message explicitly asks", submit["description"])
 
+    def test_payment_submit_tool_is_blocked_without_protected_chat_approval(self):
+        session = BrowserSession.__new__(BrowserSession)
+        session._closed = False
+        session._payment_submit_authorized = False
+        session._ensure = lambda: None
+        with self.assertRaisesRegex(ValueError, "payment_submit_requires_chat_confirmation"):
+            session._dispatch(
+                "browser_submit_payment", {"name": "Verify payment method"},
+            )
+
     def test_payment_field_detection_uses_autocomplete_and_accessible_metadata(self):
         self.assertEqual(
             _payment_field_kind({"autocomplete": "cc-number"}), "card_number",
