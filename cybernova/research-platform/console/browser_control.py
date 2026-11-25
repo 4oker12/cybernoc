@@ -388,7 +388,8 @@ class BrowserSession:
         self._allow_post_remaining = 0
         self._allowed_request_count = 0
         self._payment_submit_authorized = False
-        self._console_events: list[dict] = []
+        self._payment_filled_fields: list[tuple[str, str]] = []
+        self._console_events: list[dict] =
         self._network_events: list[dict] = []
         self._request_started: dict[int, float] = {}
         self._attached_pages: set[int] = set()
@@ -627,6 +628,7 @@ class BrowserSession:
                 except Exception:
                     pass
             raise
+        self._payment_filled_fields = list(field_hosts.items())
         return {
             "ok": True, "payment_card_filled": True,
             "filled_fields": sorted(field_hosts),
@@ -634,6 +636,41 @@ class BrowserSession:
             "payment_frame_hosts": sorted(set(field_hosts.values()) - {urlsplit(expected_origin).hostname.lower()}),
             "card_data_saved": False,
         }
+
+    def clear_payment_form(self) -> dict:
+        if self._closed:
+            return {"ok": False, "cleared_fields": []}
+        try:
+            return self._executor.submit(
+                copy_context().run, self._clear_payment_form
+            ).result(timeout=15)
+        except FutureTimeout:
+            raise ValueError("browser_action_timeout") from None
+
+    def _clear_payment_form(self) -> dict:
+        self._ensure()
+        tracked = list(self._payment_filled_fields)
+        self._payment_filled_fields = []
+        candidates = self._payment_candidates()
+        cleared = []
+        for kind, host in tracked:
+            matches = [
+                item for item in candidates.get(kind, [])
+                if item[2] == host
+            ]
+            if len(matches) != 1:
+                continue
+            frame, index, _host, meta = matches[0]
+            locator = frame.locator("input,select").nth(index)
+            try:
+                if meta.get("tag") == "select":
+                    locator.select_option(value="", timeout=3000)
+                else:
+                    locator.fill("", timeout=3000)
+                cleared.append(kind)
+            except Exception:
+                continue
+        return {"ok": True, "cleared_fields": cleared}
 
     def inspect_submit_target(self, button_name: str) -> dict:
         if self._closed:
@@ -700,6 +737,10 @@ class BrowserSession:
                 expected_action_origin=expected_action_origin,
             )
         finally:
+            try:
+                self._clear_payment_form()
+            except Exception:
+                self._payment_filled_fields = []
             self._payment_submit_authorized = False
 
     def fill_owner_input(
