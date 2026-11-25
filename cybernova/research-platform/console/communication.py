@@ -224,10 +224,6 @@ class CommunicationStore:
         message_id = "msg_" + secrets.token_urlsafe(18)
         with self._lock, self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            if require_available:
-                current = db.execute("SELECT status FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-                if current is None or current["status"] in {"running", "queued"}:
-                    raise CommunicationError("task_busy")
             if event_key:
                 row = db.execute(
                     "SELECT * FROM messages WHERE task_id=? AND actor=? AND event_key=?",
@@ -245,6 +241,14 @@ class CommunicationStore:
                         )
                     db.commit()
                     return self._message(row)
+            if require_available:
+                current = db.execute("SELECT status FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+                if current is None or current["status"] in {"running", "queued"}:
+                    raise CommunicationError("task_busy")
+            if status == "queued":
+                scheduled = db.execute("SELECT t.status FROM tasks t JOIN scheduled_text_tasks s USING(task_id) WHERE t.task_id=?", (task_id,)).fetchone()
+                if scheduled is not None and scheduled["status"] in {"running", "queued"}:
+                    raise CommunicationError("scheduled_task_busy")
             db.execute(
                 "INSERT INTO messages(message_id,task_id,actor,kind,body,"
                 "evidence_refs,created_at,event_key) VALUES(?,?,?,?,?,?,?,?)",

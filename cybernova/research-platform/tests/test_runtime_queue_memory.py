@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from console.communication import CommunicationStore, CommunicationError
 from console.profile_settings import default_settings, normalize_settings, relevant_memory
+from console.tunnel_access import allowed_path
 
 class RuntimeQueueMemoryTests(unittest.TestCase):
     def test_schedule_isolated_and_claimed_once(self):
@@ -22,6 +23,13 @@ class RuntimeQueueMemoryTests(unittest.TestCase):
             self.assertIsNone(store.claim_queued(text_only=True))
             with self.assertRaises(CommunicationError):
                 store.append(first["task_id"], "human", "instruction", "duplicate", status="running", require_available=True)
+            with self.assertRaises(CommunicationError):
+                store.send_feedback(first["task_id"], "duplicate queue")
+
+    def test_schedule_gateway_routes(self):
+        self.assertTrue(allowed_path("/api/comm/schedule", "POST"))
+        self.assertTrue(allowed_path("/api/comm/cancel-scheduled", "POST"))
+        self.assertFalse(allowed_path("/api/comm/schedule", "GET"))
 
     def test_latest_history(self):
         with tempfile.TemporaryDirectory() as tmp:

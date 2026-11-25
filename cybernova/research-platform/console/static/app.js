@@ -862,6 +862,7 @@ async function resumeTask(taskId){
     const result=await requestJson("/api/comm/resume",{task_id:taskId});
     state.sessionId=result.session_id;
     state.taskId=result.task.task_id;
+    resetUsage("qwen");
     showResearchScope(result.scope);
     lastGptReview=null;
     $("chatgptToQwen").disabled=true;

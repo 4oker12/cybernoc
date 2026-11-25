@@ -35,6 +35,7 @@ ALLOWED_GET = frozenset({"/api/status", "/api/comm/tasks", "/api/comm/events",
 ALLOWED_POST = frozenset({
     "/api/chat", "/api/import", "/api/approve", "/api/followups",
     "/api/reset", "/api/research/scope", "/api/comm/resume", "/api/comm/reviewer-feedback",
+    "/api/comm/schedule", "/api/comm/cancel-scheduled",
     "/api/siwc/start", "/api/siwc/disconnect", "/api/siwc/review", "/api/siwc/chat",
     "/api/profile-settings", "/api/model-config", "/api/collab/start", "/api/collab/step",
     "/api/collab/stop", "/api/collab/resume", "/api/collab/finish", "/api/tools/run",

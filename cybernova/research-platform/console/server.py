@@ -1038,14 +1038,14 @@ def chat(payload: ChatRequest):
                 provider_identity=_provider_identity(agent.ollama),
             )
         try:
+            selected_tool_groups = normalize_tool_groups(payload.tool_groups)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        try:
             store.append(task_id, "human", "instruction", payload.message,
                          status="running", require_available=True)
         except CommunicationError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        try:
-            selected_tool_groups = normalize_tool_groups(payload.tool_groups)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from None
         _begin_usage_progress(payload.run_id)
         outcome = None
         run_status = "failed"
