@@ -83,6 +83,7 @@ _TOOL_NAMES = frozenset(
     "account_mission_create", "account_mission_checkpoint", "account_mission_get",
     "account_mission_list", "account_mission_resume",
     "browser_generate_and_fill_password", "browser_fill_saved_credential",
+    "browser_request_and_fill_payment_card",
     "account_vault_list", "account_vault_mark_verified",
 } | COMPUTER_TOOL_NAMES | GITHUB_NAMES | GITHUB_WRITE_NAMES
 
@@ -198,6 +199,23 @@ def _safe_fill_owner_input(session, label, value, input_type, expected_origin=""
     except Exception as exc:
         # Playwright exception text can echo a form value. Never propagate it.
         raise ValueError("protected_browser_fill_failed:" + type(exc).__name__) from None
+
+
+def _safe_fill_payment_card(session, card, expected_origin, field_hosts, approved_hosts):
+    try:
+        return session.fill_owner_payment_card(
+            card, expected_origin, field_hosts, approved_hosts,
+        )
+    except Exception as exc:
+        # Payment data must never be copied into an exception, event or model result.
+        raise ValueError("protected_payment_fill_failed:" + type(exc).__name__) from None
+
+
+def _wipe_payment_card(card):
+    if isinstance(card, dict):
+        for key in list(card):
+            card[key] = ""
+        card.clear()
 
 
 def extract_user_targets(messages: list[dict]) -> set[str]:
@@ -369,6 +387,13 @@ def build_tool_catalog() -> list[dict]:
                 "request_id": {"type": "string", "maxLength": 80},
                 "field_label": {"type": "string", "maxLength": 120},
             }, "required": ["request_id", "field_label"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "browser_request_and_fill_payment_card",
+            "When a user-requested account registration or payment reaches a card form, inspect the visible payment fields and request card details in Cybernova's protected in-chat dialog. The owner sees the merchant and any cross-origin payment-frame hosts and explicitly approves those hosts. Card number, expiry, CVV and cardholder data stay in memory only, are filled directly into the current HTTPS form, are never returned to the model, and are never saved. Do not use for a purchase or subscription.",
+            {"type": "object", "properties": {
+                "purpose": {"type": "string", "maxLength": 240},
+            }, "required": ["purpose"], "additionalProperties": False},
         ),
         _function_tool(
             "browser_generate_and_fill_password",
@@ -805,6 +830,101 @@ class GPTToolRuntime:
                     account_label=args.get("account_label", ""),
                 )
                 return result, not bool(result.get("ok"))
+            if name == "browser_request_and_fill_payment_card":
+                user_text = " ".join(
+                    str(message.get("content") or "")
+                    for message in (user_messages or [])
+                    if isinstance(message, dict) and message.get("role") == "user"
+                )
+                if not re.search(
+                    r"(?i)(?:create.{0,50}account|register|sign[ -]?up|"
+                    r"создай.{0,50}аккаунт|зарегистр|регай|заведи.{0,50}аккаунт|"
+                    r"оплат|платеж|payment|checkout|purchase)",
+                    user_text,
+                ):
+                    return {"ok": False, "error": "explicit_account_or_payment_intent_required"}, True
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "browser_conversation_required"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        session = entry["session"]
+                        session.set_authorized_hosts(authorized_targets or set())
+                        form_info = session.inspect_payment_form()
+                finally:
+                    self._browser_pool.release(key, entry)
+                request = owner_input_broker.request_and_wait(
+                    conversation_key, args.get("purpose"), "payment_card",
+                    "Данные банковской карты", timeout=300,
+                    expected_origin=form_info["origin"],
+                    payment_fields=form_info["fields"],
+                    payment_field_hosts=form_info["field_hosts"],
+                )
+                if not request.get("ok"):
+                    return request, True
+                card = None
+                try:
+                    card, origin, field_hosts, approved_hosts = owner_input_broker.consume_payment_card(
+                        conversation_key, request["request_id"]
+                    )
+                    key, entry = self._browser_pool.acquire(conversation_key)
+                    try:
+                        with entry["call_lock"]:
+                            session = entry["session"]
+                            session.set_authorized_hosts(authorized_targets or set())
+                            result = _safe_fill_payment_card(
+                                session, card, origin, field_hosts, approved_hosts,
+                            )
+                            result["owner_input_consumed"] = True
+                            return result, not bool(result.get("ok"))
+                    finally:
+                        self._browser_pool.release(key, entry)
+                finally:
+                    _wipe_payment_card(card)
+            if name == "browser_submit_payment":
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "browser_conversation_required"}, True
+                button_name = args.get("name")
+                purpose = args.get("purpose")
+                if not isinstance(purpose, str) or not purpose.strip() or len(purpose) > 240:
+                    return {"ok": False, "error": "payment_confirmation_summary_required"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        session = entry["session"]
+                        session.set_authorized_hosts(authorized_targets or set())
+                        target = session.inspect_submit_target(button_name)
+                finally:
+                    self._browser_pool.release(key, entry)
+                if not target.get("payment_target"):
+                    return {"ok": False, "error": "payment_submit_target_not_recognized"}, True
+                request = owner_input_broker.request_and_wait(
+                    conversation_key, purpose, "payment_confirmation",
+                    button_name, timeout=300,
+                    expected_origin=target["merchant_origin"],
+                    action_origin=target["action_origin"],
+                    action_button=button_name,
+                )
+                if not request.get("ok"):
+                    return request, True
+                decision, origin, action_origin, approved_button = (
+                    owner_input_broker.consume_payment_confirmation(
+                        conversation_key, request["request_id"]
+                    )
+                )
+                if not decision:
+                    return {"ok": False, "status": "owner_declined_payment_action"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        session = entry["session"]
+                        session.set_authorized_hosts(authorized_targets or set())
+                        result = session.submit_payment_after_owner_approval(
+                            approved_button, origin, action_origin,
+                        )
+                        return result, not bool(result.get("ok"))
+                finally:
+                    self._browser_pool.release(key, entry)
             if name == "browser_fill_owner_input":
                 if not isinstance(conversation_key, str) or not conversation_key:
                     return {"ok": False, "error": "owner_input_session_unavailable"}, True
