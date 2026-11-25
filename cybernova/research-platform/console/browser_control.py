@@ -380,7 +380,7 @@ def _browser_field_metadata(locator) -> dict:
             disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
             read_only: !!el.readOnly || el.getAttribute('aria-readonly') === 'true',
             content_editable: !!el.isContentEditable,
-            editable: tag === 'input' || tag === 'textarea' || !!el.isContentEditable
+            editable: tag === 'input' || tag === 'textarea' || !!el.isContentEditable || el.getAttribute('role') === 'textbox'
         };
     }""")
 
@@ -490,7 +490,7 @@ def _coordinate_field_metadata(page, x: float, y: float) -> dict | None:
         const hit = document.elementFromPoint(x, y);
         const label = hit && hit.closest ? hit.closest('label') : null;
         const el = hit && hit.closest
-            ? hit.closest('input,textarea,[contenteditable="true"]')
+            ? hit.closest('input,textarea,[contenteditable="true"],[role="textbox"]')
             : null;
         const target = el || (label && label.control) || null;
         if (!target) return null;
@@ -512,7 +512,7 @@ def _coordinate_field_metadata(page, x: float, y: float) -> dict | None:
             disabled: !!target.disabled || target.getAttribute('aria-disabled') === 'true',
             read_only: !!target.readOnly || target.getAttribute('aria-readonly') === 'true',
             content_editable: !!target.isContentEditable,
-            editable: tag === 'input' || tag === 'textarea' || !!target.isContentEditable
+            editable: tag === 'input' || tag === 'textarea' || !!target.isContentEditable || target.getAttribute('role') === 'textbox'
         };
     }""", {"x": x, "y": y})
 
@@ -1357,7 +1357,7 @@ class BrowserSession:
                             "name": label, "type": item.get("type") or "button",
                             **frame_info,
                         })
-                elif item["tag"] in {"input", "textarea", "select"} or item.get("contenteditable"):
+                elif item["tag"] in {"input", "textarea", "select"} or item.get("contenteditable") or item.get("role") == "textbox":
                     fields.append({
                         "label": label or "unlabelled",
                         "type": _redact_text(item.get("type") or item["tag"])[:40],
@@ -1547,7 +1547,10 @@ class BrowserSession:
             if set(args) - allowed or "value" not in args:
                 raise ValueError("browser_arguments_invalid")
             value = args["value"]
-            target_values = [item for item in (args.get("target"), args.get("label")) if item not in (None, "")]
+            raw_targets = (args.get("target"), args.get("label"))
+            if any(item is not None and not isinstance(item, str) for item in raw_targets):
+                raise ValueError("browser_fill_target_invalid")
+            target_values = [item for item in raw_targets if item not in (None, "")]
             if len(set(target_values)) > 1:
                 raise ValueError("browser_fill_target_conflict")
             target = args.get("target") or args.get("label")
@@ -1580,21 +1583,34 @@ class BrowserSession:
                     raise ValueError("browser_sensitive_field_refused")
                 if not metadata.get("editable") or metadata.get("disabled") or metadata.get("read_only"):
                     raise ValueError("browser_field_not_unique_or_interactable")
+                locator_supports_fill = (
+                    metadata.get("tag") in {"input", "textarea"}
+                    or metadata.get("content_editable")
+                )
                 if human_like:
                     if clear_first:
-                        locator.fill("", timeout=7000)
+                        if locator_supports_fill:
+                            locator.fill("", timeout=7000)
+                        else:
+                            locator.focus(timeout=5000)
+                            self._page.keyboard.press("ControlOrMeta+A")
+                            self._page.keyboard.press("Backspace")
                     locator.focus(timeout=5000)
                     _keyboard_type_text(self._page.keyboard, value, True)
-                elif clear_first:
+                elif clear_first and locator_supports_fill:
                     locator.fill(value, timeout=12000)
                 else:
                     locator.focus(timeout=5000)
+                    if clear_first:
+                        self._page.keyboard.press("ControlOrMeta+A")
+                        self._page.keyboard.press("Backspace")
                     _keyboard_type_text(self._page.keyboard, value, False)
                 return self._snapshot()
 
             if (not isinstance(coords, (list, tuple)) or len(coords) != 2
-                    or any(isinstance(point, bool) or not isinstance(point, (int, float))
-                           or not math.isfinite(float(point)) for point in coords)):
+                    or any(type(point) not in (int, float) or abs(point) > 100000
+                           or (type(point) is float and not math.isfinite(point))
+                           for point in coords)):
                 raise ValueError("browser_coordinates_invalid")
             x, y = float(coords[0]), float(coords[1])
             viewport = self._page.evaluate(

@@ -593,5 +593,36 @@ class BrowserControlTests(unittest.TestCase):
         finally:
             session._executor.shutdown(wait=False, cancel_futures=True)
 
+
+    def test_browser_fill_locator_supports_aria_textbox_controls(self):
+        class Element:
+            metadata = {
+                "tag": "div", "type": "text", "editable": True,
+                "content_editable": False, "disabled": False, "read_only": False,
+                "id": "custom-email", "name": "", "placeholder": "",
+                "aria_label": "Email address", "autocomplete": "",
+                "role": "textbox", "labels": "", "data_agent_id": "",
+            }
+        class Locator:
+            def __init__(self, elements=None): self.elements = list(elements or [])
+            def count(self): return len(self.elements)
+            def nth(self, index): return Locator([self.elements[index]])
+            def is_visible(self): return True
+            def is_enabled(self): return True
+            def evaluate(self, _script): return self.elements[0].metadata
+        class Frame:
+            def __init__(self): self.roles = {}
+            def locator(self, _selector): return Locator()
+            def get_by_label(self, _name, exact=True): return Locator()
+            def get_by_placeholder(self, _name, exact=True): return Locator()
+            def get_by_role(self, role, name=None, exact=True):
+                return self.roles.get((role, name, exact), Locator())
+        frame = Frame()
+        page = type("FakePage", (), {"main_frame": frame, "frames": [frame]})()
+        element = Element()
+        frame.roles[("textbox", "Email", False)] = Locator([element])
+        found = _locate_across_frames(page, "Email")
+        self.assertIs(found.elements[0], element)
+
 if __name__ == "__main__":
     unittest.main()
