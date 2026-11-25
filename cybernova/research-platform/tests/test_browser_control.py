@@ -13,7 +13,8 @@ sys.path.insert(0, str(ROOT))
 
 from console.browser_control import (
     BROWSER_CONTROL_TOOLS, BROWSER_CONTROL_NAMES, BrowserSession,
-    HIGH_IMPACT, IRREVERSIBLE_SUBMIT_TARGET, _redact_text, _safe_url, validate_public_url,
+    HIGH_IMPACT, IRREVERSIBLE_SUBMIT_TARGET, PAYMENT_SUBMIT_TARGET,
+    _payment_field_kind, _redact_text, _safe_url, validate_public_url,
     _disable_profile_session_restore,
 )
 
@@ -66,10 +67,33 @@ class BrowserControlTests(unittest.TestCase):
             "browser_forward", "browser_reload", "browser_tabs",
             "browser_new_tab", "browser_switch_tab", "browser_close_tab",
             "browser_press", "browser_scroll", "browser_screenshot",
-            "browser_console", "browser_network",
+            "browser_console", "browser_network", "browser_submit_payment",
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
         self.assertIn("latest user message explicitly asks", submit["description"])
+
+    def test_payment_field_detection_uses_autocomplete_and_accessible_metadata(self):
+        self.assertEqual(
+            _payment_field_kind({"autocomplete": "cc-number"}), "card_number",
+        )
+        self.assertEqual(
+            _payment_field_kind({"autocomplete": "cc-csc"}), "cvv",
+        )
+        self.assertEqual(
+            _payment_field_kind({"name": "expMonth"}), "expiry_month",
+        )
+        self.assertEqual(
+            _payment_field_kind({"placeholder": "MM/YY"}), "expiry",
+        )
+        self.assertEqual(
+            _payment_field_kind({"labels": "Name on card"}), "cardholder_name",
+        )
+        self.assertEqual(
+            _payment_field_kind({"autocomplete": "cc-postal-code"}),
+            "billing_postal_code",
+        )
+        self.assertTrue(PAYMENT_SUBMIT_TARGET.search("Verify payment method"))
+        self.assertFalse(PAYMENT_SUBMIT_TARGET.search("Delete account"))
 
     def test_browser_tools_are_shared_with_the_deepseek_agent(self):
         from console.agent import Agent
