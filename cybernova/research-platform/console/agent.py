@@ -1135,34 +1135,6 @@ class Agent:
                                     "message": "Это действие не запрошено напрямую в текущей задаче. Продолжи безопасные части работы; не запрашивай отдельное подтверждение для рутинных шагов.",
                                 }
                             else:
-                                    request_id = secrets.token_urlsafe(24)
-                                    approval_details = action_description(
-                                        name,
-                                        "Действие не было прямо запрошено в текущем сообщении; требуется одноразовое разрешение владельца.",
-                                        args,
-                                        description=description,
-                                    )
-                                    pending_requests.append({
-                                        "request_id": request_id,
-                                        "tool": name,
-                                        "args": args,
-                                        "schema_hash": schema_digest(descriptors[name]),
-                                        "created_at": time.time(),
-                                    })
-                                    kind = "approval_required"
-                                    safe_result = {
-                                        "status": "approval_required",
-                                        "execution": "not_started",
-                                        "message": "Действие не запускалось. Ожидается одноразовое решение пользователя.",
-                                    }
-                                    event = {
-                                        "request_id": request_id,
-                                        "purpose": approval_details["purpose"],
-                                        "tool_description": approval_details["tool_description"],
-                                        "reason": approval_details["reason"],
-                                        "arguments": approval_details["arguments"],
-                                    }
-                            else:
                                 if mcp is None:
                                     raise BackendError("mcp_backend_unavailable")
                                 safe_result, failed = mcp.call(name, args)
