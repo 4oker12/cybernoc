@@ -47,8 +47,7 @@ HIGH_IMPACT = re.compile(
 )
 IRREVERSIBLE_SUBMIT_TARGET = re.compile(
     r"(?i)(pay(?:ment)?|purchase|buy\s+now|place\s+order|checkout|"
-    r"\bbook(?:\s+now)?\b|\breserve\b|\border\b|register|sign\s*up|"
-    r"create\s+account|new\s+account|\bjoin\b|\bdelete\b|\bremove\b|"
+    r"\bbook(?:\s+now)?\b|\breserve\b|\border\b|\bdelete\b|\bremove\b|"
     r"unsubscribe|\bcancel\b|\brevoke\b|\bdisable\b|\bdeactivate\b|"
     r"\blog\s*out\b|\bsign\s*out\b|\breset\b|\bdisconnect\b|"
     r"\bterminate\b|\berase\b|\bdestroy\b|"
@@ -111,7 +110,7 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers."),
     _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
-          "Submit one visible form/button only when the latest user message explicitly asks to send, submit, save, apply, publish or post that form. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Unrelated writes, DELETE, other write methods, payment, purchase, account registration, deletion and account-removal actions remain blocked.",
+          "Submit one visible form/button only when the latest user message explicitly asks for the relevant action. User-requested account sign-up/registration is permitted. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Payment, purchase, deletion and account-removal actions remain blocked.",
           {"name": {**STRING, "description": "Exact accessible name of the visible form submit button"}}, ["name"]),
 ]
 BROWSER_CONTROL_NAMES = frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS)
@@ -338,6 +337,51 @@ class BrowserSession:
             return self._executor.submit(copy_context().run, self._dispatch, name, args).result(timeout=45)
         except FutureTimeout:
             raise ValueError("browser_action_timeout") from None
+
+    def fill_owner_input(self, label: str, value: str, input_type: str) -> dict:
+        if self._closed:
+            raise ValueError("browser_session_closed")
+        try:
+            return self._executor.submit(
+                copy_context().run, self._fill_owner_input, label, value, input_type
+            ).result(timeout=45)
+        except FutureTimeout:
+            raise ValueError("browser_action_timeout") from None
+
+    def _fill_owner_input(self, label: str, value: str, input_type: str) -> dict:
+        if (not isinstance(label, str) or not label.strip() or len(label) > 120
+                or not isinstance(value, str) or not value or len(value) > 512):
+            raise ValueError("owner_browser_fill_arguments_invalid")
+        if input_type not in {"otp", "password", "contact"}:
+            raise ValueError("owner_browser_fill_type_invalid")
+        self._ensure()
+        locator = self._page.get_by_label(label.strip(), exact=True)
+        if locator.count() == 0:
+            locator = self._page.get_by_placeholder(label.strip(), exact=True)
+        if locator.count() != 1 or not locator.is_visible() or not locator.is_enabled():
+            raise ValueError("owner_browser_field_not_unique_or_interactable")
+        tag = str(locator.evaluate("el => el.tagName")).lower()
+        field_type = str(locator.get_attribute("type") or "text").lower()
+        label_text = (label + " " + str(locator.get_attribute("name") or "") + " " +
+                      str(locator.get_attribute("autocomplete") or "")).casefold()
+        if tag != "input":
+            raise ValueError("owner_browser_field_type_invalid")
+        if re.search(r"(?i)(card|credit|debit|cvv|cvc|security.?code|expiry|expiration|номер.?карты)", label_text):
+            raise ValueError("payment_card_data_must_use_provider_hosted_form")
+        if input_type == "password" and field_type != "password":
+            raise ValueError("owner_password_requires_password_field")
+        if input_type == "otp":
+            if field_type not in {"text", "tel", "number"} or not re.search(
+                r"(?i)(verification|security|one.?time|otp|auth|confirm|code|подтверж|код)",
+                label_text,
+            ):
+                raise ValueError("owner_otp_field_not_recognized")
+            if not re.fullmatch(r"\d{4,8}", value.strip()):
+                raise ValueError("owner_otp_format_invalid")
+        if input_type == "contact" and field_type not in {"text", "email", "tel"}:
+            raise ValueError("owner_contact_field_type_invalid")
+        locator.fill(value, timeout=7000)
+        return self._snapshot()
 
     def set_authorized_hosts(self, hosts):
         clean = set()
