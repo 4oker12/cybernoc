@@ -201,6 +201,39 @@ def _safe_fill_owner_input(session, label, value, input_type, expected_origin=""
         raise ValueError("protected_browser_fill_failed:" + type(exc).__name__) from None
 
 
+def _user_messages_text(messages) -> str:
+    """Return bounded user-authored task context, excluding model/tool output."""
+    parts = []
+    for message in messages or []:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content[:12000])
+        elif isinstance(content, list):
+            parts.append(" ".join(
+                str(part.get("text") or "")[:4000]
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            ))
+    return "\n".join(parts)[-48000:]
+
+
+_ACCOUNT_CREATION_INTENT = re.compile(
+    r"(?i)(?:\bcreate\b.{0,50}\baccount\b|\bregister\b|\bsign[\s-]?up\b|"
+    r"создай.{0,50}аккаунт|зарегистр|регай|заведи.{0,50}аккаунт)"
+)
+_PAYMENT_ACTION_INTENT = re.compile(
+    r"(?i)(?:\bpay(?:\s+now)?\b|\bmake\s+(?:a\s+)?payment\b|\bpurchase\b|"
+    r"\bbuy(?:\s+now)?\b|\bcheckout\b|\bsubscribe\b|\bplace\s+order\b|"
+    r"оплат\w*|куп\w*|приобрест\w*|оформить\s+заказ|подпис\w*)"
+)
+_PAYMENT_ACTION_DENIAL = re.compile(
+    r"(?i)(?:\bне\s+(?:оплачивай|оплачивать|покупай|покупать|подписывайся)\b|"
+    r"\b(?:do\s+not|don't|never)\s+(?:pay|purchase|buy|checkout|subscribe)\b)"
+)
+
+
 def _safe_fill_payment_card(session, card, expected_origin, field_hosts, approved_hosts):
     try:
         return session.fill_owner_payment_card(
@@ -838,11 +871,7 @@ class GPTToolRuntime:
                 )
                 return result, not bool(result.get("ok"))
             if name == "browser_request_and_fill_payment_card":
-                user_text = " ".join(
-                    str(message.get("content") or "")
-                    for message in (user_messages or [])
-                    if isinstance(message, dict) and message.get("role") == "user"
-                )
+                user_text = _user_messages_text(user_messages)
                 if not re.search(
                     r"(?i)(?:create.{0,50}account|register|sign[ -]?up|"
                     r"создай.{0,50}аккаунт|зарегистр|регай|заведи.{0,50}аккаунт|"
@@ -896,6 +925,16 @@ class GPTToolRuntime:
                 purpose = args.get("purpose")
                 if not isinstance(purpose, str) or not purpose.strip() or len(purpose) > 240:
                     return {"ok": False, "error": "payment_confirmation_summary_required"}, True
+                user_text = _user_messages_text(user_messages)
+                registration_authorized = task_intent_matches(
+                    "browser_submit",
+                    "Submit the account registration or its payment-method verification form.",
+                    user_text,
+                )
+                explicit_payment_action = bool(
+                    _PAYMENT_ACTION_INTENT.search(user_text)
+                    and not _PAYMENT_ACTION_DENIAL.search(user_text)
+                )
                 key, entry = self._browser_pool.acquire(conversation_key)
                 try:
                     with entry["call_lock"]:
@@ -906,46 +945,39 @@ class GPTToolRuntime:
                     self._browser_pool.release(key, entry)
                 if not target.get("payment_target"):
                     return {"ok": False, "error": "payment_submit_target_not_recognized"}, True
-                request = owner_input_broker.request_and_wait(
-                    conversation_key, purpose, "payment_confirmation",
-                    button_name, timeout=300,
-                    expected_origin=target["merchant_origin"],
-                    action_origin=target["action_origin"],
-                    action_button=button_name,
-                )
-                if not request.get("ok"):
-                    key, entry = self._browser_pool.acquire(conversation_key)
-                    try:
-                        with entry["call_lock"]:
-                            session = entry["session"]
-                            session.set_authorized_hosts(authorized_targets or set())
-                            _clear_payment_form_for_owner(session)
-                    finally:
-                        self._browser_pool.release(key, entry)
-                    return request, True
-                decision, origin, action_origin, approved_button = (
-                    owner_input_broker.consume_payment_confirmation(
-                        conversation_key, request["request_id"]
+
+                verification_in_registration = bool(
+                    registration_authorized
+                    and not target.get("payment_commitment_target")
+                    and (
+                        target.get("payment_verification_target")
+                        or target.get("registration_context")
                     )
                 )
-                if not decision:
-                    key, entry = self._browser_pool.acquire(conversation_key)
-                    try:
-                        with entry["call_lock"]:
-                            session = entry["session"]
-                            session.set_authorized_hosts(authorized_targets or set())
-                            _clear_payment_form_for_owner(session)
-                    finally:
-                        self._browser_pool.release(key, entry)
-                    return {"ok": False, "status": "owner_declined_payment_action"}, True
+                if not (verification_in_registration or explicit_payment_action):
+                    return {
+                        "ok": False, "status": "task_intent_required",
+                        "error": "payment_action_not_authorized_by_active_task",
+                        "message": (
+                            "Платёжная форма не отправлена: исходное поручение должно "
+                            "охватывать проверку платёжного метода или само платёжное действие."
+                        ),
+                    }, True
+
                 key, entry = self._browser_pool.acquire(conversation_key)
                 try:
                     with entry["call_lock"]:
                         session = entry["session"]
                         session.set_authorized_hosts(authorized_targets or set())
                         result = session.submit_payment_after_owner_approval(
-                            approved_button, origin, action_origin,
+                            button_name, target["merchant_origin"], target["action_origin"],
                         )
+                        if isinstance(result, dict):
+                            result["task_authorized"] = True
+                            result["authorization_scope"] = (
+                                "account_registration_payment_verification"
+                                if verification_in_registration else "explicit_payment_action"
+                            )
                         return result, not bool(result.get("ok"))
                 finally:
                     self._browser_pool.release(key, entry)
@@ -968,11 +1000,7 @@ class GPTToolRuntime:
                 finally:
                     self._browser_pool.release(key, entry)
             if name == "browser_generate_and_fill_password":
-                user_text = " ".join(
-                    str(message.get("content") or "")
-                    for message in (user_messages or [])
-                    if isinstance(message, dict) and message.get("role") == "user"
-                )
+                user_text = _user_messages_text(user_messages)
                 if not re.search(
                     r"(?i)(?:\bcreate\b.{0,50}\baccount\b|\bregister\b|"
                     r"\bsign[\s-]?up\b|создай.{0,50}аккаунт|зарегистр|регай|"
@@ -1043,24 +1071,13 @@ class GPTToolRuntime:
             # thread. They never hold the runtime-wide lock while Playwright runs.
             if name.startswith("browser_"):
                 if name == "browser_submit":
-                    latest_user = ""
-                    for message in reversed(user_messages or []):
-                        if isinstance(message, dict) and message.get("role") == "user":
-                            content = message.get("content")
-                            if isinstance(content, str):
-                                latest_user = content
-                            elif isinstance(content, list):
-                                latest_user = " ".join(
-                                    str(part.get("text") or "") for part in content
-                                    if isinstance(part, dict) and part.get("type") == "text"
-                                )
-                            break
+                    task_user_text = _user_messages_text(user_messages)
                     description = str(self.tool_map[name].get("description") or "")
-                    if not task_intent_matches(name, description, latest_user):
+                    if not task_intent_matches(name, description, task_user_text):
                         return {
                             "ok": False, "status": "task_intent_required",
                             "error": "browser_submit_requires_explicit_user_intent",
-                            "message": "Отправка формы не выполнялась: последнее сообщение пользователя должно прямо просить отправить, сохранить, применить или передать эту форму.",
+                            "message": "Отправка формы не выполнялась: в активной задаче нет разрешения на это действие либо пользователь отменил его.",
                         }, True
                 key, entry = self._browser_pool.acquire(conversation_key)
                 try:

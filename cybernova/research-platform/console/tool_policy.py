@@ -210,32 +210,35 @@ def tool_requires_task_intent(name: str, description: str = "") -> bool:
 
 
 def task_intent_matches(name: str, description: str, user_text: str) -> bool:
-    """Check that the current user task directly asks for the high-impact action."""
+    """Match the active task's authorization; do not require approval on every step."""
     text = str(user_text or "")
-    if re.search(
-        r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотмена\b|"
-        r"\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)",
-        text,
-    ):
-        # A request such as "зарегистрируй аккаунт, не спрашивай меня" is
-        # positive registration intent; only negation of the action itself
-        # must suppress the submit.
-        registration_intent = re.search(
-            r"(?i)(зарегистр|регай|создай.{0,20}аккаунт|заведи.{0,20}аккаунт|"
-            r"register|sign.?up|create.{0,20}account)", text,
-        )
-        registration_negated = re.search(
-            r"(?i)(?:не\s+(?:зарегистр|регист|созда|отправ|делай)|"
-            r"(?:do\s+not|don't)\s+(?:register|sign.?up|create.{0,20}account|submit|send))",
-            text,
-        )
-        benign_owner_prompt = re.search(
-            r"(?i)(?:не\s+(?:спрашивай|дергай|уточняй|мешай)|"
-            r"(?:do\s+not|don't)\s+ask)", text,
-        )
-        if not (registration_intent and not registration_negated and benign_owner_prompt):
-            return False
+    if not text.strip():
+        return False
     definition = (str(name) + " " + str(description)).casefold()
+
+    # Only an explicit cancellation of the relevant action revokes task intent.
+    # Phrases such as "don't ask me again" or "without a separate confirmation"
+    # describe the approval workflow; they do not cancel the task itself.
+    denials = (
+        (r"(?:register|sign.?up|create.{0,20}account)",
+         r"(?i)(?:\b(?:cancel|stop|abort)\s+(?:the\s+)?(?:registration|sign.?up|account creation)\b|"
+         r"\bне\s+(?:регистрируй|зарегистрируй|создавай|создай)\b)"),
+        (r"(?:send|submit|publish|comment|email)",
+         r"(?i)(?:\bне\s+(?:отправляй|отправлять|отправить)\s+(?:эту\s+)?(?:форму|заявку|сообщение|письмо)\b|"
+         r"\b(?:do\s+not|don't|never)\s+(?:submit|send)\s+(?:the\s+)?(?:form|request|message|email)\b)"),
+        (r"(?:delete|remove|destroy|drop|purge|format)",
+         r"(?i)(?:\bне\s+(?:удаляй|удалять|уничтожай|форматируй)\b|\b(?:do\s+not|don't|never)\s+(?:delete|remove|destroy|drop|purge|format)\b)"),
+        (r"(?:uninstall|install|package)",
+         r"(?i)(?:\bне\s+(?:устанавливай|устанавливать|обновляй|обновлять)\b|\b(?:do\s+not|don't|never)\s+(?:install|uninstall|upgrade)\b)"),
+        (r"(?:shell|terminal|command|exec)",
+         r"(?i)(?:\bне\s+(?:запускай|запускать|выполняй|выполнять)\b|\b(?:do\s+not|don't|never)\s+(?:run|execute)\b)"),
+        (r"(?:shutdown|restart|kill|terminate)",
+         r"(?i)(?:\bне\s+(?:выключай|останавливай|перезапускай|завершай)\b|\b(?:do\s+not|don't|never)\s+(?:shutdown|restart|kill|terminate)\b)"),
+    )
+    for definition_pattern, denial_pattern in denials:
+        if re.search(definition_pattern, definition) and re.search(denial_pattern, text):
+            return False
+
     groups = (
         (r"(?:delete|remove|destroy|drop|purge|format)", r"(?:удал|delete|remove|destroy|drop|purge|форматир)"),
         (r"(?:uninstall|install|package)", r"(?:установ|install|uninstall|поставь|upgrade|обнови)"),
@@ -252,7 +255,6 @@ def task_intent_matches(name: str, description: str, user_text: str) -> bool:
         if re.search(definition_pattern, definition) and re.search(intent_pattern, text, re.IGNORECASE):
             return True
     return False
-
 
 def schema_digest(tool: dict) -> str:
     canonical = json.dumps(

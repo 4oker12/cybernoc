@@ -55,6 +55,17 @@ PAYMENT_SUBMIT_TARGET = re.compile(
     r"add\s+(?:a\s+)?card|verify\s+(?:a\s+)?card|payment method|"
     r"оплат|платеж|покуп|привязать карту|добавить карту|проверить карту)"
 )
+PAYMENT_VERIFICATION_TARGET = re.compile(
+    r"(?i)(?:verify|verification|validate|confirm.{0,30}(?:card|payment method)|"
+    r"authori[sz]e.{0,20}card|test charge|"
+    r"провер\w*.{0,30}(?:карт|платежн)|подтверд\w*.{0,30}(?:карт|платежн)|"
+    r"верифиц\w*)"
+)
+PAYMENT_COMMITMENT_TARGET = re.compile(
+    r"(?i)(?:\bpay(?:\s+now)?\b|\bmake\s+(?:a\s+)?payment\b|purchase|"
+    r"buy\s+now|place\s+order|checkout|subscribe|\border\b|"
+    r"оплат|купить|оформить\s+заказ|подписаться|списать)"
+)
 IRREVERSIBLE_SUBMIT_TARGET = re.compile(
     r"(?i)(pay(?:ment)?|purchase|buy\s+now|place\s+order|checkout|"
     r"\bbook(?:\s+now)?\b|\breserve\b|\border\b|\bdelete\b|\bremove\b|"
@@ -129,12 +140,12 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers. Patchright disables Console API capture; set CYBERNOVA_BROWSER_BACKEND=playwright before starting a new session when full console messages are required."),
     _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
-          "Submit one visible form/button only when the latest user message explicitly asks for the relevant action. User-requested account sign-up/registration is permitted. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Payment, purchase, deletion and account-removal actions remain blocked.",
+          "Submit one visible form/button when the active user task explicitly authorizes the action. Task-level authorization remains valid across follow-up turns and protected owner-input steps; it does not require a new approval for every submit. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Payment-verification, purchase, deletion and account-removal forms use their dedicated policy checks.",
           {"name": {**STRING, "description": "Exact accessible name of the visible form submit button"}}, ["name"]),
     _tool("browser_submit_payment",
-          "Request explicit owner confirmation inside Cybernova's protected chat dialog, then submit exactly one visible payment or payment-verification form. The dialog shows the merchant origin, button and purpose. Never use for purchases or subscriptions unless the owner confirms the exact action in that dialog.",
+          "Submit one visible payment-method verification form when it is part of an explicitly authorized account-registration task, or submit a payment action when that payment is explicitly included in the active user task. No second confirmation is requested for an action already authorized by the task. Payment-card data is still collected only through the protected owner-input dialog. Permits exactly one observed same-origin POST; redirects and unrelated writes remain blocked.",
           {"name": {**STRING, "description": "Exact accessible name of the visible payment or payment-verification submit button"},
-           "purpose": {**STRING, "description": "Concise factual summary of the visible payment action, including amount and recurring terms when shown; say when unknown"}}, ["name", "purpose"]),
+           "purpose": {**STRING, "description": "Concise factual summary of the observed payment or verification action"}}, ["name", "purpose"]),
 ]
 BROWSER_CONTROL_NAMES = frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS)
 APPROVAL_TOOL_NAMES = frozenset({"browser_submit"})
@@ -965,14 +976,25 @@ class BrowserSession:
                     and len(candidates.get("expiry_year", [])) == 1)
             )
         )
+        payment_text = button_name + " " + submit_target
+        page_context = self._page.url + " " + self._page.title()
         return {
             "ok": True, "button": button_name.strip(),
             "merchant_origin": self._current_origin(),
             "action_origin": _origin(submit_target),
             "payment_target": bool(
-                PAYMENT_SUBMIT_TARGET.search(button_name + " " + submit_target)
-                or has_card_form
+                PAYMENT_SUBMIT_TARGET.search(payment_text) or has_card_form
             ),
+            "payment_verification_target": bool(
+                PAYMENT_VERIFICATION_TARGET.search(payment_text)
+            ),
+            "payment_commitment_target": bool(
+                PAYMENT_COMMITMENT_TARGET.search(payment_text)
+            ),
+            "registration_context": bool(re.search(
+                r"(?i)(?:sign[/-]?up|signup|register|registration|create[-_/ ]?account)",
+                page_context,
+            )),
         }
 
     def submit_payment_after_owner_approval(

@@ -875,6 +875,10 @@ class Agent:
             if isinstance(item, dict) and item.get("role") in {"user", "assistant"}
             and isinstance(item.get("content"), str)
         ] + [{"role": "user", "content": text}]
+        task_intent_text = "\n".join(
+            str(item.get("content") or "") for item in task_messages
+            if isinstance(item, dict) and item.get("role") == "user"
+        )
         authorized_targets = extract_user_targets(task_messages)
         authorized_targets.update(
             str(host).lower().rstrip(".") for host in scope_hosts
@@ -1166,7 +1170,7 @@ class Agent:
                             # this is task authorization, not a separate confirmation prompt.
                             description = descriptors[name].get("description", "")
                             if (tool_requires_task_intent(name, description)
-                                    and not task_intent_matches(name, description, text)):
+                                    and not task_intent_matches(name, description, task_intent_text)):
                                 kind = "task_intent_required"
                                 failed = True
                                 safe_result = {
