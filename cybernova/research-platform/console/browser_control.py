@@ -1178,6 +1178,9 @@ class BrowserSession:
                     _launch_context
                 )
             except Exception as exc:
+                message = str(exc).lower()
+                if "chromium_not_installed" in message or "executable doesn't exist" in message or "please run the following command" in message:
+                    raise ValueError("chromium_not_installed") from None
                 raise ValueError(
                     "browser_backend_launch_failed:" + type(exc).__name__
                 ) from None
@@ -1913,7 +1916,7 @@ def browser_control_call(name: str, args: dict, session: BrowserSession) -> tupl
         return result, not bool(result.get("ok", False))
     except (OSError, ValueError, RuntimeError) as exc:
         message = str(exc).lower()
-        if "executable doesn't exist" in message or "please run the following command" in message:
+        if "chromium_not_installed" in message or "executable doesn't exist" in message or "please run the following command" in message:
             return {
                 "ok": False, "error": "chromium_not_installed",
                 "hint": "Run native.py --data-dir <existing-data-dir> install-browser",
@@ -1921,7 +1924,7 @@ def browser_control_call(name: str, args: dict, session: BrowserSession) -> tupl
         return {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}, True
     except Exception as exc:
         message = str(exc).lower()
-        if "executable doesn't exist" in message or "please run the following command" in message:
+        if "chromium_not_installed" in message or "executable doesn't exist" in message or "please run the following command" in message:
             return {
                 "ok": False, "error": "chromium_not_installed",
                 "hint": "Run native.py --data-dir <existing-data-dir> install-browser",
