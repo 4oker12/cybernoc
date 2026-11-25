@@ -579,7 +579,7 @@ function renderOwnerPaymentFields(item){
   const available=new Set(item.payment_fields||[]);
   const configs=[
     ["cardholder_name","Имя владельца карты","text","text",80],
-    ["card_number","Номер банковской карты","text","numeric",23],
+    ["card_number","Номер банковской карты","password","numeric",23],
     ["expiry_month","Месяц окончания (MM)","text","numeric",2],
     ["expiry_year","Год окончания (YY или YYYY)","text","numeric",4],
     ["cvv","CVV / CVC","password","numeric",4],
