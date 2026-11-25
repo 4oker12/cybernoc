@@ -123,8 +123,26 @@ class AccountVault:
             self.path.parent.chmod(0o700)
             self.key_path.parent.chmod(0o700)
         self._lock = RLock()
+        if not self.key_path.exists() and self._has_existing_records():
+            raise AccountVaultError("vault_key_missing_existing_records")
         self._key = self._load_or_create_key()
         self._setup()
+
+    def _has_existing_records(self) -> bool:
+        if not self.path.exists():
+            return False
+        try:
+            with sqlite3.connect(str(self.path), timeout=5) as db:
+                table = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_vault_entries'"
+                ).fetchone()
+                if not table:
+                    return False
+                return db.execute(
+                    "SELECT 1 FROM account_vault_entries LIMIT 1"
+                ).fetchone() is not None
+        except sqlite3.Error:
+            raise AccountVaultError("vault_database_unreadable") from None
 
     def _load_or_create_key(self) -> bytes:
         if self.key_path.exists():
