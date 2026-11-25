@@ -32,13 +32,14 @@ ALLOWED_GET = frozenset({"/api/status", "/api/comm/tasks", "/api/comm/events",
     "/api/comm/review-packet", "/api/comm/evidence", "/api/siwc/status",
     "/api/siwc/models", "/api/siwc/chats", "/api/siwc/chat", "/api/research/scope", "/api/profile-settings", "/api/model-config",
     "/api/collab/runs", "/api/collab/run", "/auth/callback",
-    "/api/diagnostics/export"})
+    "/api/diagnostics/export", "/api/usage-progress", "/api/owner-input/pending"})
 ALLOWED_POST = frozenset({
     "/api/chat", "/api/chat/start", "/api/chat/result", "/api/import", "/api/approve", "/api/followups",
     "/api/reset", "/api/research/scope", "/api/comm/resume", "/api/comm/reviewer-feedback",
     "/api/siwc/start", "/api/siwc/disconnect", "/api/siwc/review", "/api/siwc/chat",
     "/api/profile-settings", "/api/model-config", "/api/collab/start", "/api/collab/step",
     "/api/collab/stop", "/api/collab/resume", "/api/collab/finish", "/api/tools/run",
+    "/api/owner-input/submit", "/api/owner-input/cancel",
 })
 HOP_HEADERS = frozenset({
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
