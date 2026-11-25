@@ -624,5 +624,99 @@ class BrowserControlTests(unittest.TestCase):
         found = _locate_across_frames(page, "Email")
         self.assertIs(found.elements[0], element)
 
+
+    def test_browser_fill_supports_guarded_viewport_coordinates(self):
+        class Element:
+            metadata = {
+                "tag": "input", "type": "text", "editable": True,
+                "content_editable": False, "disabled": False, "read_only": False,
+                "id": "email", "name": "email", "placeholder": "",
+                "aria_label": "", "autocomplete": "email", "role": "textbox",
+                "labels": "Email", "data_agent_id": "",
+            }
+        class Locator:
+            def __init__(self, element): self.element = element
+            def count(self): return 1
+            def evaluate(self, _script): return self.element.metadata
+        class Keyboard:
+            def __init__(self): self.inserted = []
+            def insert_text(self, value): self.inserted.append(value)
+            def press(self, _key): pass
+        class Mouse:
+            def __init__(self): self.clicked = None
+            def click(self, x, y): self.clicked = (x, y)
+        element = Element()
+        class Page:
+            url = "https://example.net/signup"
+            def __init__(self):
+                self.keyboard = Keyboard()
+                self.mouse = Mouse()
+            def evaluate(self, _script, arg=None):
+                return {"width": 640, "height": 480} if arg is None else element.metadata
+            def locator(self, selector):
+                return Locator(element) if selector == ":focus" else type("Empty", (), {"count": lambda self: 0})()
+        page = Page()
+        session = BrowserSession(headless=True)
+        try:
+            session._ensure = lambda: None
+            session._page = page
+            session._snapshot = lambda: {"ok": True}
+            result = session._dispatch("browser_fill", {
+                "coords": [24, 36], "value": "operator@example.net",
+                "clear": False, "human_like": False,
+            })
+            self.assertTrue(result["ok"])
+            self.assertEqual(page.mouse.clicked, (24.0, 36.0))
+            self.assertEqual(page.keyboard.inserted, ["operator@example.net"])
+        finally:
+            session._executor.shutdown(wait=False, cancel_futures=True)
+
+    def test_owner_input_refuses_sensitive_field_in_cross_origin_iframe(self):
+        class Element:
+            def __init__(self):
+                self.metadata = {
+                    "tag": "input", "type": "password", "editable": True,
+                    "content_editable": False, "disabled": False, "read_only": False,
+                    "id": "password", "name": "password", "placeholder": "",
+                    "aria_label": "Password", "autocomplete": "current-password",
+                    "role": "textbox", "labels": "Password", "data_agent_id": "",
+                    "origin": "https://third-party.example",
+                }
+                self.filled = None
+        class Locator:
+            def __init__(self, element): self.element = element
+            def count(self): return 1
+            def nth(self, index): return self
+            def is_visible(self): return True
+            def is_enabled(self): return True
+            def evaluate(self, _script): return self.element.metadata
+            def fill(self, value, timeout=None): self.element.filled = value
+        class Frame:
+            def __init__(self, locator): self.locator_item = locator
+            def locator(self, _selector): return type("Empty", (), {"count": lambda self: 0})()
+            def get_by_label(self, name, exact=True):
+                return self.locator_item if name == "Password" and exact else type("Empty", (), {"count": lambda self: 0})()
+            def get_by_placeholder(self, _name, exact=True): return type("Empty", (), {"count": lambda self: 0})()
+            def get_by_role(self, _role, name=None, exact=True): return type("Empty", (), {"count": lambda self: 0})()
+        element = Element()
+        frame = Frame(Locator(element))
+        class Page:
+            url = "https://accounts.example/signup"
+            main_frame = frame
+            frames = [frame]
+            def evaluate(self, _script): return "https://accounts.example"
+        session = BrowserSession(headless=True)
+        try:
+            session._ensure = lambda: None
+            session._page = Page()
+            with self.assertRaisesRegex(ValueError, "owner_browser_origin_mismatch"):
+                session._fill_owner_input(
+                    "Password", "not-a-real-secret", "password",
+                    "https://accounts.example",
+                )
+            self.assertIsNone(element.filled)
+        finally:
+            session._executor.shutdown(wait=False, cancel_futures=True)
+
 if __name__ == "__main__":
     unittest.main()

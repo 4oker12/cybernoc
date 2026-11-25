@@ -367,6 +367,7 @@ def _browser_field_metadata(locator) -> dict:
             .filter(Boolean).join(' ').slice(0, 180);
         return {
             tag,
+            origin: window.location.origin,
             type: (el.getAttribute('type') || (tag === 'textarea' ? 'textarea' : 'text')).toLowerCase(),
             id: el.getAttribute('id') || '',
             name: el.getAttribute('name') || '',
@@ -1027,6 +1028,12 @@ class BrowserSession:
         if locator is None:
             raise ValueError("owner_browser_field_not_unique_or_interactable")
         metadata = _browser_field_metadata(locator)
+        try:
+            main_origin = self._page.evaluate("() => window.location.origin")
+        except Exception:
+            main_origin = ""
+        if not main_origin or metadata.get("origin") != main_origin:
+            raise ValueError("owner_browser_origin_mismatch")
         tag = str(metadata.get("tag") or "").lower()
         field_type = str(metadata.get("type") or "text").lower()
         label_text = " ".join(
