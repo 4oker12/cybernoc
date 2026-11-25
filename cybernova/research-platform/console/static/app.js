@@ -14,7 +14,7 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,qwenRunning:fals
   },
   lastUsage:{qwen:null,gpt:null},
   collabRun:null,collabLooping:false,collabStopRequested:false,
-  ownerInputTimer:null,ownerInputRequestId:null,ownerInputType:null};
+  ownerInputRequestId:null,ownerInputType:null};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка Console API / MCP",
@@ -592,29 +592,45 @@ function updateDiagnosticsLinks(){
   }
 }
 
-async function watchUsageProgress(runId,mode="qwen"){
+function showUsageProgress(progress,mode){
+  if(!progress||state.mode!==mode)return;
+  const usage=progress.usage||{};
+  if(usage.available===true){
+    $("tokenUsageStatus").textContent=
+      (progress.status==="running"?"Сейчас · ":"Токены · ")+
+      "вход "+formatTokens(usage.input_tokens)+" · выход "+
+      formatTokens(usage.output_tokens)+" · всего "+formatTokens(usage.total_tokens);
+    $("tokenUsageStatus").title="Промежуточный usage от провайдера "+
+      (usage.provider||"")+". "+(usage.complete===false?"Учёт частичный.":"");
+  }else if(progress.status==="running"){
+    $("tokenUsageStatus").textContent="Модель работает · ждём usage провайдера";
+  }
+}
+async function watchUsageProgress(runId,mode="gpt"){
   const isRunning=()=>mode==="gpt"?state.gptRunning:state.qwenRunning;
   const started=Date.now();
-  while(isRunning()&&Date.now()-started<180000){
-    await new Promise(resolve=>setTimeout(resolve,650));
+  let failures=0,delay=1200;
+  while(isRunning()){
+    await new Promise(resolve=>setTimeout(resolve,delay));
     if(!isRunning())break;
     try{
       const response=await fetch("/api/usage-progress?run_id="+encodeURIComponent(runId),
-        {cache:"no-store",headers:{"Accept":"application/json"}});
-      if(!response.ok)continue;
-      const progress=await response.json(),usage=progress.usage||{};
-      if(state.mode===mode&&usage.available===true){
-        $("tokenUsageStatus").textContent=
-          (progress.status==="running"?"Сейчас · ":"Токены · ")+
-          "вход "+formatTokens(usage.input_tokens)+" · выход "+
-          formatTokens(usage.output_tokens)+" · всего "+formatTokens(usage.total_tokens);
-        $("tokenUsageStatus").title="Промежуточный usage от провайдера "+
-          (usage.provider||"")+". "+(usage.complete===false?"Учёт частичный.":"");
-      }else if(state.mode===mode&&progress.status==="running"){
-        $("tokenUsageStatus").textContent="Модель работает · ждём usage провайдера";
+        {cache:"no-store",headers:{"Accept":"application/json"},signal:AbortSignal.timeout(8000)});
+      if(!response.ok){
+        if(response.status===404&&Date.now()-started<10000)continue;
+        throw Object.assign(Error("HTTP "+response.status),{permanent:response.status<500});
       }
+      const progress=await response.json();
+      showUsageProgress(progress,mode);
+      failures=0;delay=1500;
       if(progress.status!=="running")break;
-    }catch(_){}
+    }catch(error){
+      failures++;
+      delay=Math.min(8000,1500*Math.pow(2,Math.min(failures,3)));
+      if(state.mode===mode&&(error.permanent||failures>=3))
+        $("tokenUsageStatus").textContent="Учёт токенов недоступен: "+String(error.message||error);
+      if(error.permanent)break;
+    }
   }
 }
 async function requestJson(path,data,signal){
@@ -631,15 +647,16 @@ async function requestChatTurn(data,pending){
   const receipt=newRunId();
   const deadline=Date.now()+15*60*1000;
   let accepted=false, failures=0;
+  const request={...data,receipt};
   try{
-    await requestJson("/api/chat/start",{...data,receipt},AbortSignal.timeout(10000));
+    await requestJson("/api/chat/start",request,AbortSignal.timeout(10000));
     accepted=true;
   }catch(exc){
     if(!(exc instanceof TypeError)&&exc.name!=="TimeoutError"&&!(exc.status>=500))throw exc;
   }
-  pending.body.textContent=accepted?"Задача принята. Ожидаем результат…":"Проверяем, принял ли сервер задачу…";
+  pending.body.textContent=accepted?"Задача в очереди…":"Проверяем, принял ли сервер задачу…";
   while(Date.now()<deadline){
-    await new Promise(resolve=>setTimeout(resolve,1000));
+    await new Promise(resolve=>setTimeout(resolve,Math.min(8000,1000*Math.pow(2,Math.min(failures,3)))));
     let job;
     try{
       job=await requestJson("/api/chat/result",{receipt},AbortSignal.timeout(10000));
@@ -647,13 +664,27 @@ async function requestChatTurn(data,pending){
       const transient=exc instanceof TypeError||exc.name==="TimeoutError"||
         exc.status>=500||(!accepted&&exc.status===404);
       if(!transient||++failures>=15)throw exc;
+      if(!accepted&&exc.status===404&&failures>=2){
+        try{
+          await requestJson("/api/chat/start",request,AbortSignal.timeout(10000));
+          accepted=true;
+        }catch(startError){
+          if(startError.status===409||startError.status===422)throw startError;
+        }
+      }
       pending.body.textContent="Связь прервалась. Проверяем статус задачи…";
       continue;
     }
+    showUsageProgress(job.usage_progress,"qwen");
+    renderOwnerInput(job.owner_input);
     if(job.status==="completed")return job.result;
     if(job.status==="failed")throw Error(job.detail||"Выполнение задачи завершилось ошибкой");
     const progress=job.progress;
-    if(progress?.event==="model_request_start"){
+    if(job.state==="waiting_for_owner_input"){
+      pending.body.textContent="Ожидаем защищённый ввод владельца…";
+    }else if(job.state==="queued"){
+      pending.body.textContent="Задача в очереди…";
+    }else if(progress?.event==="model_request_start"){
       pending.body.textContent="Ожидаем ответ модели…";
     }else if(progress?.event==="tool_call_start"&&progress.tool){
       pending.body.textContent="Выполняется инструмент "+progress.tool+"…";
@@ -742,12 +773,7 @@ function renderOwnerPaymentFrames(item){
     list.append(label);
   }
 }
-async function pollOwnerInput(){
-  if(!state.sessionId)return;
-  try{
-    const response=await fetch("/api/owner-input/pending?session_id="+encodeURIComponent(state.sessionId),{cache:"no-store"});
-    if(!response.ok)return;
-    const data=await response.json(),item=data.pending;
+function renderOwnerInput(item){
     if(!item||item.request_id===state.ownerInputRequestId)return;
     state.ownerInputRequestId=item.request_id;
     state.ownerInputType=item.input_type;
@@ -796,15 +822,8 @@ async function pollOwnerInput(){
       $("ownerInputSubmit").textContent="Передать и продолжить";
       input.focus();
     }
+    if($("ownerInputDialog").open)$("ownerInputDialog").close();
     $("ownerInputDialog").showModal();
-  }catch(_){}
-}
-function startOwnerInputPolling(){
-  if(state.ownerInputTimer)clearInterval(state.ownerInputTimer);
-  state.ownerInputTimer=setInterval(pollOwnerInput,900);
-}
-function stopOwnerInputPolling(){
-  if(state.ownerInputTimer){clearInterval(state.ownerInputTimer);state.ownerInputTimer=null;}
 }
 async function submitOwnerInput(){
   if(!state.sessionId||!state.ownerInputRequestId)return;
@@ -864,18 +883,21 @@ async function submitOwnerInput(){
   }
 }
 async function cancelOwnerInput(){
-  if(!state.sessionId||!state.ownerInputRequestId)return;
+  if(!state.sessionId||!state.ownerInputRequestId||$("ownerInputCancel").disabled)return;
+  $("ownerInputCancel").disabled=true;
   try{
-    await fetch("/api/owner-input/cancel",{
-      method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({session_id:state.sessionId,request_id:state.ownerInputRequestId}),
-      cache:"no-store",credentials:"same-origin",referrerPolicy:"no-referrer"
-    });
-  }catch(_){}
-  $("ownerInputDialog").close();
-  resetOwnerInputValues();
-  state.ownerInputRequestId=null;
-  state.ownerInputType=null;
+    await requestJson("/api/owner-input/cancel",{
+      session_id:state.sessionId,request_id:state.ownerInputRequestId
+    },AbortSignal.timeout(10000));
+    $("ownerInputDialog").close();
+    resetOwnerInputValues();
+    state.ownerInputRequestId=null;
+    state.ownerInputType=null;
+  }catch(error){
+    $("ownerInputError").textContent="Отмена не подтверждена: "+String(error.message||error);
+  }finally{
+    $("ownerInputCancel").disabled=false;
+  }
 }
 async function send(){
   if(state.mode==="gpt")return sendGPT();
@@ -889,9 +911,7 @@ async function send(){
   const runId=newRunId();
   setDiagnosticsContext({...state.diagnostics.qwen,run_id:runId},"qwen");
   state.sessionId=state.sessionId||newRunId();
-  startOwnerInputPolling();
   busy(true,"qwen");
-  const usageWatch=watchUsageProgress(runId,"qwen");
   try{
     const result=await requestChatTurn({
       session_id:state.sessionId,message:text,tool_groups:state.toolGroups,
@@ -929,11 +949,10 @@ async function send(){
     pending.body.textContent="Ошибка: "+String(exc.message||exc)+" | ID: "+runId;
     $("sendStatus").textContent="Ошибка подключения";
   }finally{
-    stopOwnerInputPolling();
     if($("ownerInputDialog").open)$("ownerInputDialog").close();
     $("ownerInputValue").value="";
     state.ownerInputRequestId=null;
-    busy(false,"qwen");await usageWatch;$("messageInput").focus();toBottom();
+    busy(false,"qwen");$("messageInput").focus();toBottom();
   }
 }
 function gptWelcome(){
@@ -973,6 +992,7 @@ function setMode(mode){
   $("sendStatus").textContent=!qwen&&!state.gptConnected?
     "Подключи ChatGPT через «Аккаунт GPT»":"Готов";
   $("sidebar").classList.remove("open");
+  if(qwen){void refreshTaskList();void pollTask();}
   if(gpt)void refreshGPTThreads();
   if(collab)void refreshCollabRuns();
   if(!collab)updateTokenUsageStatus(mode);
@@ -1130,10 +1150,13 @@ function taskStatusLabel(status){
   };
   return labels[String(status||"idle").toLowerCase()]||"Неизвестный статус";
 }
+let taskListInFlight=false,taskPollInFlight=false,collabListInFlight=false;
 async function refreshTaskList(){
+  if(taskListInFlight)return true;
+  taskListInFlight=true;
   try{
-    const response=await fetch("/api/comm/tasks",{cache:"no-store"});
-    if(!response.ok)return;
+    const response=await fetch("/api/comm/tasks",{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    if(!response.ok)throw Error("HTTP "+response.status);
     const body=await response.json();
     const list=$("taskList");
     list.replaceChildren();
@@ -1155,7 +1178,12 @@ async function refreshTaskList(){
       list.append(button);
     }
     if(!list.childNodes.length)list.append(node("p","muted","Пока нет исследований."));
-  }catch(_){}
+    return true;
+  }catch(error){
+    if(state.mode==="qwen"&&!state.qwenRunning)
+      $("sendStatus").textContent="Не удалось обновить задачи: "+String(error.message||error);
+    return false;
+  }finally{taskListInFlight=false;}
 }
 function showTaskStatus(status){
   $("commState").textContent=status==="needs_review"?
@@ -1212,12 +1240,13 @@ async function resumeTask(taskId){
   }
 }
 async function pollTask(){
-  if(!state.sessionId||!state.taskId||state.qwenRunning)return;
+  if(!state.sessionId||!state.taskId||state.qwenRunning||taskPollInFlight)return true;
+  taskPollInFlight=true;
   const sid=state.sessionId,task=state.taskId;
   try{
     const response=await fetch("/api/comm/events?session_id="+encodeURIComponent(sid)+
-      "&after_seq="+state.lastSeq,{cache:"no-store"});
-    if(!response.ok)return;
+      "&after_seq="+state.lastSeq,{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    if(!response.ok)throw Error("HTTP "+response.status);
     const data=await response.json();
     if(state.sessionId!==sid||state.taskId!==task||state.qwenRunning)return;
     for(const message of data.messages||[]){
@@ -1226,7 +1255,11 @@ async function pollTask(){
     }
     showTaskStatus(data.task?.status);
     if((data.messages||[]).length)void refreshTaskList();
-  }catch(_){}
+    return true;
+  }catch(error){
+    if(state.mode==="qwen")$("commState").textContent="Ошибка обновления задачи: "+String(error.message||error);
+    return false;
+  }finally{taskPollInFlight=false;}
 }
 
 async function copyReviewPacket(){
@@ -1818,9 +1851,11 @@ function renderCollabRun(run){
   toBottom();
 }
 async function refreshCollabRuns(){
+  if(collabListInFlight)return true;
+  collabListInFlight=true;
   try{
-    const response=await fetch("/api/collab/runs",{cache:"no-store"});
-    if(!response.ok)return;
+    const response=await fetch("/api/collab/runs",{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    if(!response.ok)throw Error("HTTP "+response.status);
     const data=await response.json();
     const list=$("collabRunList");
     list.replaceChildren();
@@ -1834,7 +1869,34 @@ async function refreshCollabRuns(){
       list.append(button);
     }
     if(!list.childNodes.length)list.append(node("p","muted","Пока нет совместных диалогов."));
-  }catch(_){}
+    return true;
+  }catch(error){
+    if(state.mode==="collab")$("collabStatus").textContent="Ошибка обновления диалогов: "+String(error.message||error);
+    return false;
+  }finally{collabListInFlight=false;}
+}
+let backgroundTimer=null,backgroundPolling=false,backgroundFailures=0;
+async function pollBackground(){
+  if(backgroundPolling)return;
+  backgroundPolling=true;
+  let ok=true;
+  try{
+    if(document.visibilityState!=="hidden"){
+      if(state.mode==="qwen"){
+        if(state.taskId)ok=(await pollTask())!==false&&ok;
+        ok=(await refreshTaskList())!==false&&ok;
+      }else if(state.mode==="collab"){
+        ok=(await refreshCollabRuns())!==false&&ok;
+      }
+    }
+  }finally{
+    backgroundPolling=false;
+    backgroundFailures=ok?0:Math.min(4,backgroundFailures+1);
+    const base=document.visibilityState==="hidden"?60000:
+      state.mode==="qwen"&&state.taskId?10000:30000;
+    backgroundTimer=setTimeout(()=>{void pollBackground();},
+      Math.min(60000,base*Math.pow(2,backgroundFailures)));
+  }
 }
 async function openCollabRun(taskId){
   if(state.collabLooping)return;
@@ -2063,11 +2125,13 @@ function init(){
   });
   status();
   void refreshTaskList();
-  void refreshGPTThreads();
-  void refreshCollabRuns();
-  window.setInterval(()=>{void pollTask();},5000);
-  window.setInterval(()=>{void refreshTaskList();},15000);
-  window.setInterval(()=>{if(state.mode==="collab")void refreshCollabRuns();},15000);
+  backgroundTimer=setTimeout(()=>{void pollBackground();},15000);
+  document.addEventListener("visibilitychange",()=>{
+    if(document.visibilityState!=="hidden"&&!backgroundPolling){
+      clearTimeout(backgroundTimer);
+      backgroundTimer=setTimeout(()=>{void pollBackground();},0);
+    }
+  });
 }
 window.addEventListener("cybernova:model-config-applied",event=>{
   state.qwenModel=displayModelName(event.detail?.model||state.qwenModel);

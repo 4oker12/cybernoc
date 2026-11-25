@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 from console.browser_control import (
     BROWSER_CONTROL_TOOLS, BROWSER_CONTROL_NAMES, BrowserSession,
     HIGH_IMPACT, IRREVERSIBLE_SUBMIT_TARGET, PAYMENT_SUBMIT_TARGET,
+    PAYMENT_VERIFICATION_TARGET, PAYMENT_COMMITMENT_TARGET,
     _payment_field_kind, _redact_text, _safe_url, validate_public_url,
     _disable_profile_session_restore, _locate_across_frames,
     _browser_field_is_sensitive,
@@ -88,7 +89,9 @@ class BrowserControlTests(unittest.TestCase):
             "browser_console", "browser_network", "browser_submit_payment",
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
-        self.assertIn("latest user message explicitly asks", submit["description"])
+        self.assertIn("active user task explicitly authorizes", submit["description"])
+        self.assertIn("Task-level authorization remains valid", submit["description"])
+        self.assertNotIn("latest user message explicitly asks", submit["description"])
 
     def test_payment_submit_tool_is_blocked_without_protected_chat_approval(self):
         session = BrowserSession.__new__(BrowserSession)
@@ -137,6 +140,9 @@ class BrowserControlTests(unittest.TestCase):
             "billing_country",
         )
         self.assertTrue(PAYMENT_SUBMIT_TARGET.search("Verify payment method"))
+        self.assertTrue(PAYMENT_VERIFICATION_TARGET.search("Verify payment method"))
+        self.assertFalse(PAYMENT_COMMITMENT_TARGET.search("Verify payment method"))
+        self.assertTrue(PAYMENT_COMMITMENT_TARGET.search("Pay now"))
         self.assertFalse(PAYMENT_SUBMIT_TARGET.search("Delete account"))
 
     def test_browser_tools_are_shared_with_the_deepseek_agent(self):
@@ -188,8 +194,16 @@ class BrowserControlTests(unittest.TestCase):
         self.assertFalse(task_intent_matches(
             "browser_submit", description, "Изучи форму регистрации, ничего не отправляй."
         ))
+        self.assertTrue(task_intent_matches(
+            "browser_submit", description,
+            "Зарегистрируй аккаунт, не спрашивай подтверждение перед каждым шагом."
+        ))
+        self.assertTrue(task_intent_matches(
+            "browser_submit_payment", "Submit a payment form",
+            "Оплати счет на 10 долларов."
+        ))
 
-    def test_browser_submit_requires_explicit_current_user_intent_and_dispatches_when_requested(self):
+    def test_browser_submit_uses_active_task_authorization_across_follow_up_turns(self):
         from console.gpt_tool_runtime import GPTToolRuntime
         runtime = GPTToolRuntime()
 
@@ -213,13 +227,153 @@ class BrowserControlTests(unittest.TestCase):
                   return_value=({"ok": True, "approved_post_requests_allowed": 1}, False)) as dispatch,
         ):
             result, failed = runtime._call_impl(
-                "browser_submit", {"name": "Send"},
-                user_messages=[{"role": "user", "content": "Сохрани заполненную форму."}],
+                "browser_submit", {"name": "Verify email address"},
+                user_messages=[
+                    {"role": "user", "content": "Зарегистрируй аккаунт AWS."},
+                    {"role": "assistant", "content": "Email requested through protected input."},
+                    {"role": "user", "content": "Email was supplied through the protected dialog."},
+                ],
                 conversation_key="browser-submit-test",
             )
         self.assertFalse(failed)
         self.assertTrue(result["ok"])
-        dispatch.assert_called_once_with("browser_submit", {"name": "Send"}, entry["session"])
+        dispatch.assert_called_once_with(
+            "browser_submit", {"name": "Verify email address"}, entry["session"]
+        )
+
+        denied, failed = runtime._call_impl(
+            "browser_submit", {"name": "Verify email address"},
+            user_messages=[
+                {"role": "user", "content": "Зарегистрируй аккаунт AWS."},
+                {"role": "user", "content": "Не отправляй эту форму. Отмени регистрацию."},
+            ],
+            conversation_key="browser-submit-test",
+        )
+        self.assertTrue(failed)
+        self.assertEqual(denied["error"], "browser_submit_requires_explicit_user_intent")
+
+    def test_account_registration_authorizes_payment_verification_without_second_confirmation(self):
+        from console.gpt_tool_runtime import GPTToolRuntime
+        runtime = GPTToolRuntime()
+
+        class FakeSession:
+            def __init__(self):
+                self.submitted = None
+            def set_authorized_hosts(self, hosts):
+                self.authorized_hosts = set(hosts or [])
+            def inspect_submit_target(self, button):
+                return {
+                    "payment_target": True,
+                    "payment_verification_target": True,
+                    "payment_commitment_target": False,
+                    "registration_context": True,
+                    "merchant_origin": "https://signin.aws.amazon.com",
+                    "action_origin": "https://signin.aws.amazon.com",
+                }
+            def submit_payment_after_owner_approval(self, button, origin, action_origin):
+                self.submitted = (button, origin, action_origin)
+                return {"ok": True, "payment_action_submitted": True}
+
+        session = FakeSession()
+        entry = {"session": session, "call_lock": RLock()}
+        with (
+            patch.object(runtime._browser_pool, "acquire", return_value=("test", entry)),
+            patch.object(runtime._browser_pool, "release"),
+            patch("console.gpt_tool_runtime.owner_input_broker.request_and_wait") as approval,
+        ):
+            result, failed = runtime._call_impl(
+                "browser_submit_payment",
+                {"name": "Verify payment method", "purpose": "AWS account registration verification"},
+                user_messages=[
+                    {"role": "user", "content": "Зарегистрируй аккаунт AWS для получения стартового кредита."},
+                    {"role": "user", "content": "Если я разрешил задачу один раз, не запрашивай разрешение повторно."},
+                ],
+                conversation_key="aws-registration-test",
+            )
+        self.assertFalse(failed)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["task_authorized"])
+        self.assertEqual(result["authorization_scope"], "account_registration_payment_verification")
+        self.assertEqual(
+            session.submitted,
+            ("Verify payment method", "https://signin.aws.amazon.com", "https://signin.aws.amazon.com"),
+        )
+        approval.assert_not_called()
+
+    def test_registration_authorization_does_not_authorize_a_purchase(self):
+        from console.gpt_tool_runtime import GPTToolRuntime
+        runtime = GPTToolRuntime()
+
+        class FakeSession:
+            def set_authorized_hosts(self, hosts):
+                self.authorized_hosts = set(hosts or [])
+            def inspect_submit_target(self, button):
+                return {
+                    "payment_target": True,
+                    "payment_verification_target": False,
+                    "payment_commitment_target": True,
+                    "registration_context": True,
+                    "merchant_origin": "https://signin.aws.amazon.com",
+                    "action_origin": "https://signin.aws.amazon.com",
+                }
+
+        entry = {"session": FakeSession(), "call_lock": RLock()}
+        with (
+            patch.object(runtime._browser_pool, "acquire", return_value=("test", entry)),
+            patch.object(runtime._browser_pool, "release"),
+            patch("console.gpt_tool_runtime.owner_input_broker.request_and_wait",
+                  return_value={"ok": False, "status": "owner_input_cancelled"}) as approval,
+        ):
+            result, failed = runtime._call_impl(
+                "browser_submit_payment",
+                {"name": "Pay now", "purpose": "AWS service purchase"},
+                user_messages=[{"role": "user", "content": "Зарегистрируй аккаунт AWS."}],
+                conversation_key="aws-registration-test",
+            )
+        self.assertTrue(failed)
+        self.assertEqual(result["status"], "owner_input_cancelled")
+        approval.assert_called_once()
+
+    def test_explicit_payment_task_authorizes_its_payment_submit_without_second_prompt(self):
+        from console.gpt_tool_runtime import GPTToolRuntime
+        runtime = GPTToolRuntime()
+
+        class FakeSession:
+            def __init__(self):
+                self.submitted = False
+            def set_authorized_hosts(self, hosts):
+                self.authorized_hosts = set(hosts or [])
+            def inspect_submit_target(self, button):
+                return {
+                    "payment_target": True,
+                    "payment_verification_target": False,
+                    "payment_commitment_target": True,
+                    "registration_context": False,
+                    "merchant_origin": "https://billing.example.test",
+                    "action_origin": "https://billing.example.test",
+                }
+            def submit_payment_after_owner_approval(self, button, origin, action_origin):
+                self.submitted = True
+                return {"ok": True, "payment_action_submitted": True}
+
+        session = FakeSession()
+        entry = {"session": session, "call_lock": RLock()}
+        with (
+            patch.object(runtime._browser_pool, "acquire", return_value=("test", entry)),
+            patch.object(runtime._browser_pool, "release"),
+            patch("console.gpt_tool_runtime.owner_input_broker.request_and_wait") as approval,
+        ):
+            result, failed = runtime._call_impl(
+                "browser_submit_payment",
+                {"name": "Pay now", "purpose": "Pay the invoice as requested"},
+                user_messages=[{"role": "user", "content": "Оплати счет на 10 долларов."}],
+                conversation_key="explicit-payment-test",
+            )
+        self.assertFalse(failed)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["authorization_scope"], "explicit_payment_action")
+        self.assertTrue(session.submitted)
+        approval.assert_not_called()
 
     def test_persistent_profile_disables_tab_restore_without_deleting_login_data(self):
         with TemporaryDirectory() as temp:

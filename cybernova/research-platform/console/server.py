@@ -9,6 +9,7 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -1257,15 +1258,27 @@ class ChatJobRequest(ChatRequest, ChatJobReceipt):
     pass
 
 
+def _chat_request_key(payload: ChatJobRequest) -> str:
+    # A receipt may only ever identify this exact turn. Keep the message out of
+    # the job registry while still rejecting a changed retry after a lost reply.
+    fields = (payload.session_id, payload.message, payload.tool_groups,
+              payload.tools_enabled, payload.run_id)
+    return hashlib.sha256(json.dumps(fields, ensure_ascii=False).encode()).hexdigest()
+
+
 def _complete_chat_job(payload: ChatJobRequest):
     def publish(event):
         if event["event"] not in {"model_request_start", "tool_call_start", "tool_call_completed", "tool_call_failed"}:
             return
         progress = {key: event[key] for key in ("event", "tool", "status") if key in event}
         with chat_jobs_lock:
-            chat_jobs[payload.receipt]["progress"] = progress
+            job = chat_jobs.get(payload.receipt)
+            if job is not None:
+                job["progress"] = progress
 
     token = CHAT_PROGRESS_SINK.set(publish)
+    with chat_jobs_lock:
+        chat_jobs[payload.receipt]["status"] = "running"
     try:
         result = {"status": "completed", "result": chat(payload)}
     except HTTPException as exc:
@@ -1280,21 +1293,25 @@ def _complete_chat_job(payload: ChatJobRequest):
 
 @app.post("/api/chat/start", status_code=202)
 def start_chat_job(payload: ChatJobRequest, background: BackgroundTasks):
+    request_key = _chat_request_key(payload)
     with chat_jobs_lock:
         existing = chat_jobs.get(payload.receipt)
         if existing is not None:
-            if existing["run_id"] != payload.run_id:
+            if existing["request_key"] != request_key:
                 raise HTTPException(status_code=409, detail="chat_receipt_conflict")
             return {"status": existing["status"]}
-        if sum(job["status"] == "running" for job in chat_jobs.values()) >= 4:
+        if sum(job["status"] in {"queued", "running"} for job in chat_jobs.values()) >= 4:
             raise HTTPException(status_code=429, detail="chat_queue_full")
         if len(chat_jobs) >= 32:
             oldest_finished = next(key for key, job in chat_jobs.items()
-                                   if job["status"] != "running")
+                                   if job["status"] not in {"queued", "running"})
             del chat_jobs[oldest_finished]
-        chat_jobs[payload.receipt] = {"status": "running", "run_id": payload.run_id}
+        chat_jobs[payload.receipt] = {
+            "status": "queued", "run_id": payload.run_id,
+            "session_id": payload.session_id, "request_key": request_key,
+        }
         background.add_task(_complete_chat_job, payload)
-    return {"status": "running"}
+    return {"status": "queued"}
 
 
 @app.post("/api/chat/result")
@@ -1303,7 +1320,24 @@ def chat_job_result(payload: ChatJobReceipt):
         job = chat_jobs.get(payload.receipt)
         if job is None:
             raise HTTPException(status_code=404, detail="chat_result_not_found")
-        return dict(job)
+        response = {key: value for key, value in job.items()
+                    if key not in {"request_key", "session_id"}}
+        session_id = job["session_id"]
+    response["usage_progress"] = _read_usage_progress(response["run_id"])
+    pending = None
+    if response["status"] in {"queued", "running"} and isinstance(session_id, str):
+        if re.fullmatch(r"[a-f0-9]{32}", session_id):
+            pending = owner_input_broker.pending("deepseek:" + session_id)
+    response["owner_input"] = pending
+    if pending:
+        response["state"] = "waiting_for_owner_input"
+    elif response["status"] == "running":
+        event = (response.get("progress") or {}).get("event")
+        response["state"] = ("waiting_for_model" if event == "model_request_start" else
+                             "executing_tool" if event == "tool_call_start" else "running")
+    else:
+        response["state"] = response["status"]
+    return response
 
 
 @app.post("/api/approve")
