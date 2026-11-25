@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 from threading import RLock
@@ -21,6 +22,11 @@ from urllib import request, error, parse
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
+
+try:
+    from .owner_input import owner_input_broker, OwnerInputError
+except ImportError:
+    from owner_input import owner_input_broker, OwnerInputError
 
 try:
     from .agent import (
@@ -334,6 +340,17 @@ class ApprovalRequest(BaseModel):
     decision: str = Field(pattern="^(approve|deny)$")
 
 
+class OwnerInputSubmitRequest(BaseModel):
+    session_id: str = Field(min_length=16, max_length=120)
+    request_id: str = Field(min_length=16, max_length=80)
+    value: str = Field(min_length=1, max_length=512)
+
+
+class OwnerInputCancelRequest(BaseModel):
+    session_id: str = Field(min_length=16, max_length=120)
+    request_id: str = Field(min_length=16, max_length=80)
+
+
 
 def _session(session_id: str | None) -> tuple[str, dict]:
     now = time.monotonic()
@@ -346,7 +363,9 @@ def _session(session_id: str | None) -> tuple[str, dict]:
             session["last"] = now
             sessions.move_to_end(session_id)
             return session_id, session
-        key = secrets.token_urlsafe(24)
+        key = (session_id if isinstance(session_id, str)
+               and re.fullmatch(r"[a-f0-9]{32}", session_id)
+               else secrets.token_urlsafe(24))
         session = {"last": now, "history": [], "lock": RLock(), "turns": 0,
                    "followups_turn": None, "followups": [], "followups_answer": None,
                    "followups_source": None, "pending_approvals": {},
@@ -985,6 +1004,44 @@ def get_research_scope(session_id: str | None = None):
     sid, state = _session(session_id)
     with state["lock"]:
         return {"session_id": sid, "scope": state["scope"]}
+
+
+@app.get("/api/owner-input/pending")
+def owner_input_pending(session_id: str):
+    with sessions_lock:
+        if session_id not in sessions:
+            raise HTTPException(status_code=404, detail="session_not_found")
+    try:
+        pending = owner_input_broker.pending("deepseek:" + session_id)
+    except OwnerInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return {"pending": pending}
+
+
+@app.post("/api/owner-input/submit")
+def owner_input_submit(payload: OwnerInputSubmitRequest):
+    with sessions_lock:
+        if payload.session_id not in sessions:
+            raise HTTPException(status_code=404, detail="session_not_found")
+    try:
+        return owner_input_broker.submit(
+            "deepseek:" + payload.session_id, payload.request_id, payload.value
+        )
+    except OwnerInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+@app.post("/api/owner-input/cancel")
+def owner_input_cancel(payload: OwnerInputCancelRequest):
+    with sessions_lock:
+        if payload.session_id not in sessions:
+            raise HTTPException(status_code=404, detail="session_not_found")
+    try:
+        return owner_input_broker.cancel(
+            "deepseek:" + payload.session_id, payload.request_id
+        )
+    except OwnerInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 @app.post("/api/chat")
