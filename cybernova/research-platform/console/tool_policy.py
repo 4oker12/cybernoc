@@ -224,7 +224,7 @@ def task_intent_matches(name: str, description: str, user_text: str) -> bool:
         (r"(?:uninstall|install|package)", r"(?:установ|install|uninstall|поставь|upgrade|обнови)"),
         (r"(?:shell|terminal|command|exec)", r"(?:вызов|вызови|выполн|запусти|run|execute|command|shell|терминал|команд|скрипт)"),
         (r"(?:scan|defender)", r"(?:скан|проверь|провер|scan|check|антивирус|defender|malware)"),
-        (r"(?:send|submit|publish|comment|email)", r"(?:отправ|send|submit|publish|опубликуй|коммент|email|письмо|сохран|save|apply|примен|обнови|update)"),
+        (r"(?:send|submit|publish|comment|email)", r"(?:отправ|send|submit|publish|опубликуй|коммент|email|письмо|сохран|save|apply|примен|обнови|update|зарегистр|регист|создай.{0,20}аккаунт|заведи.{0,20}аккаунт|sign.?up|register|create.{0,20}account)"),
         (r"(?:deploy|release|merge|dispatch)", r"(?:deploy|развер|релиз|release|merge|мерж|объедин|слий|dispatch|workflow)"),
         (r"(?:permission|collaborator|invite|revoke|secret|credential|webhook|branch.?protection)", r"(?:доступ|прав|permission|collaborator|участник|приглас|revoke|секрет|secret|credential|webhook|защит|protection)"),
         (r"(?:archive.?extract|extract|unpack)", r"(?:распак|извлеч|extract|unpack)"),
