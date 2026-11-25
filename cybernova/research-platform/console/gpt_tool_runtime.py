@@ -839,7 +839,7 @@ class GPTToolRuntime:
                 if not re.search(
                     r"(?i)(?:create.{0,50}account|register|sign[ -]?up|"
                     r"создай.{0,50}аккаунт|зарегистр|регай|заведи.{0,50}аккаунт|"
-                    r"оплат|платеж|payment|checkout|purchase|billing|\\bcard\\b|"
+                    r"оплат|платеж|payment|checkout|purchase|billing|\bcard\b|"
                     r"добавить карту|привязать карту|карточк)",
                     user_text,
                 ):
