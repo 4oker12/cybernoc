@@ -19,6 +19,11 @@ import re
 import socket
 from urllib.parse import parse_qsl, urlsplit
 
+try:
+    from .browser_backend import launch_with_backend
+except ImportError:
+    from browser_backend import launch_with_backend
+
 MAX_EVENTS = 500
 MAX_PAGE_TEXT = 2600
 MAX_SITE_HOSTS = 8
@@ -185,9 +190,19 @@ def _capture(url: str, allowed_hosts: set[str], *, runner=None, capture_detail="
         result = runner(url, {host: pin}, allowed_hosts)
     else:
         result = _playwright_run(url, {host: pin}, allowed_hosts, capture_detail=capture_detail)
+    backend = result.get("browser_backend") if isinstance(result, dict) else None
+    if backend in {"patchright", "playwright"}:
+        browser_label = "Chromium " + backend.capitalize() + " (isolated)"
+    elif runner is not None:
+        browser_label = "Injected capture runner"
+        backend = "injected_runner"
+    else:
+        browser_label = "Isolated Chromium"
+        backend = "unknown"
     return {
         "ok": True, "url": "https://" + host + (parsed.path or "/"),
-        "browser": "Chromium Playwright (isolated)",
+        "browser": browser_label,
+        "browser_backend": backend,
         "collection": "DevTools-equivalent browser Network metadata",
         "capture": result,
         "capture_detail": capture_detail,
@@ -201,10 +216,6 @@ def _capture(url: str, allowed_hosts: set[str], *, runner=None, capture_detail="
 
 
 def _playwright_run(url: str, pinned: dict[str, str], allowed_hosts: set[str], *, capture_detail="metadata") -> dict:
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        raise ValueError("playwright_python_not_installed") from None
     rows: list[dict] = []
     req_index: dict[object, dict] = {}
     blocked = Counter()
@@ -246,67 +257,85 @@ def _playwright_run(url: str, pinned: dict[str, str], allowed_hosts: set[str], *
         f"MAP {host} {ip}" for host, ip in pinned.items()
     )
     resolver = mappings + ", EXCLUDE localhost"
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=[
-                "--no-sandbox",
-                "--no-proxy-server",
-                "--disable-background-networking",
-                "--disable-extensions",
-                "--disable-sync",
-                "--disable-default-apps",
-                "--disable-features=MediaRouter",
-                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
-                "--host-resolver-rules=" + resolver,
-            ], timeout=10000)
-            try:
-                ctx = browser.new_context(
-                    accept_downloads=False,
-                    ignore_https_errors=False,
-                    java_script_enabled=True,
-                    service_workers="block",
-                    permissions=[],
-                    locale="ru-RU",
-                    user_agent="CybernovaReadOnlyResearch/1.0",
-                )
-                try:
-                    ctx.route("**/*", route_request)
-                    # No server connection, no WebSocket data transmission.
-                    ctx.route_web_socket("**/*", lambda ws: ws.close(code=1000))
-                    ctx.on("request", on_request)
-                    ctx.on("response", on_response)
-                    ctx.on("requestfailed", on_failed)
-                    page = ctx.new_page()
-                    page.set_default_timeout(8000)
-                    page.goto(url, wait_until="domcontentloaded", timeout=10000)
-                    page.wait_for_timeout(1500)
-                    title = page.title()[:160]
-                    headings = page.locator("h1, h2").all_text_contents()[:12]
-                    excerpt = page.locator("body").inner_text(timeout=4000)[:MAX_PAGE_TEXT]
-                    if capture_detail == "evidence":
-                        for resp, entry in response_refs:
-                            try:
-                                ctype = resp.headers.get("content-type", "")
-                                content_length = int(resp.headers.get("content-length", "0"))
-                                if content_length > 400_000 or not any(
-                                        kind in ctype.lower() for kind in (
-                                            "json", "html", "text/", "javascript", "xml")):
-                                    continue
-                                body = resp.body()
-                                entry["evidence"] = summarize_response(ctype, body, resp.headers)
-                            except Exception:
-                                entry["evidence_error"] = "body_unavailable"
+    launch_args = [
+        "--no-sandbox",
+        "--no-proxy-server",
+        "--disable-background-networking",
+        "--disable-extensions",
+        "--disable-sync",
+        "--disable-default-apps",
+        "--disable-features=MediaRouter",
+        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+        "--host-resolver-rules=" + resolver,
+    ]
 
-                finally:
-                    ctx.close()
-            finally:
-                browser.close()
+    def _launch(playwright):
+        return playwright.chromium.launch(
+            headless=True, args=launch_args, timeout=10000,
+        )
+
+    browser = None
+    playwright = None
+    ctx = None
+    try:
+        playwright, backend, browser, fallback_reason = launch_with_backend(_launch)
+        ctx = browser.new_context(
+            accept_downloads=False,
+            ignore_https_errors=False,
+            java_script_enabled=True,
+            service_workers="block",
+            permissions=[],
+            locale="ru-RU",
+            user_agent="CybernovaReadOnlyResearch/1.0",
+        )
+        ctx.route("**/*", route_request)
+        # No server connection, no WebSocket data transmission.
+        ctx.route_web_socket("**/*", lambda ws: ws.close(code=1000))
+        ctx.on("request", on_request)
+        ctx.on("response", on_response)
+        ctx.on("requestfailed", on_failed)
+        page = ctx.new_page()
+        page.set_default_timeout(8000)
+        page.goto(url, wait_until="domcontentloaded", timeout=10000)
+        page.wait_for_timeout(1500)
+        title = page.title()[:160]
+        headings = page.locator("h1, h2").all_text_contents()[:12]
+        excerpt = page.locator("body").inner_text(timeout=4000)[:MAX_PAGE_TEXT]
+        if capture_detail == "evidence":
+            for resp, entry in response_refs:
+                try:
+                    ctype = resp.headers.get("content-type", "")
+                    content_length = int(resp.headers.get("content-length", "0"))
+                    if content_length > 400_000 or not any(
+                            kind in ctype.lower() for kind in (
+                                "json", "html", "text/", "javascript", "xml")):
+                        continue
+                    body = resp.body()
+                    entry["evidence"] = summarize_response(ctype, body, resp.headers)
+                except Exception:
+                    entry["evidence_error"] = "body_unavailable"
     except Exception as exc:
         # Never expose secrets, raw URLs or browser-local file paths in errors.
         kind = type(exc).__name__
         if "Executable doesn't exist" in str(exc):
-            raise ValueError("chromium_missing_run_playwright_install") from None
+            raise ValueError("chromium_missing_run_install_browser") from None
         raise ValueError("browser_capture_failed:" + kind[:70]) from None
+    finally:
+        if ctx is not None:
+            try:
+                ctx.close()
+            except Exception:
+                pass
+        if browser is not None:
+            try:
+                browser.close()
+            except Exception:
+                pass
+        if playwright is not None:
+            try:
+                playwright.stop()
+            except Exception:
+                pass
 
     summary = Counter((r["resource_type"], str(r.get("status") or "blocked"))
                       for r in rows)
@@ -324,6 +353,8 @@ def _playwright_run(url: str, pinned: dict[str, str], allowed_hosts: set[str], *
         "event_limit": MAX_EVENTS,
         "source": "live_browser_requests",
         "raw_secrets_retained": False,
+        "browser_backend": backend,
+        "browser_backend_fallback_reason": fallback_reason,
     }
 
 

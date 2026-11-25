@@ -25,8 +25,10 @@ from urllib.parse import urljoin, urlsplit
 
 try:
     from .diagnostics import event as diagnostic_event
+    from .browser_backend import launch_with_backend
 except ImportError:
     from diagnostics import event as diagnostic_event
+    from browser_backend import launch_with_backend
 
 MAX_URL = 2048
 MAX_TEXT = 6500
@@ -124,7 +126,7 @@ BROWSER_CONTROL_TOOLS = [
           {"direction": {"type": "string", "enum": ["up", "down"]},
            "pixels": {"type": "integer", "description": "100 to 1200 pixels"}}, ["direction", "pixels"]),
     _tool("browser_screenshot", "Capture the visible viewport of the current Chromium tab as an image for a vision-capable model. Text-only models should use browser_snapshot and browser_network instead."),
-    _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers."),
+    _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers. Patchright disables Console API capture; set CYBERNOVA_BROWSER_BACKEND=playwright before starting a new session when full console messages are required."),
     _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
           "Submit one visible form/button only when the latest user message explicitly asks for the relevant action. User-requested account sign-up/registration is permitted. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Payment, purchase, deletion and account-removal actions remain blocked.",
@@ -573,7 +575,7 @@ def _disable_profile_session_restore(profile_dir: Path) -> bool:
 class BrowserSession:
     """One isolated persistent browser context, serialized on its own worker thread.
 
-    Playwright sync objects never cross threads. Cookies/local storage persist
+    Browser-driver sync objects never cross threads. Cookies/local storage persist
     in this dedicated profile on disk and are never returned to the model.
     The user's personal Chrome profile is never opened or inspected.
     """
@@ -588,6 +590,7 @@ class BrowserSession:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cybernova-chromium")
         self._closed = False
         self._pw = None
+        self._backend = None
         self._browser = None
         self._context = None
         self._page = None
@@ -1100,19 +1103,11 @@ class BrowserSession:
     def _ensure(self):
         if self._page is not None and not self._page.is_closed():
             return
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            raise ValueError("playwright_python_not_installed") from None
-        if self._pw is None:
-            self._pw = sync_playwright().start()
         if self._context is not None:
             try:
                 _ = self._context.pages
             except Exception:
-                self._context = None
-                self._browser = None
-                self._page = None
+                self._shutdown()
         restore_session = os.environ.get(
             "CYBERNOVA_GPT_BROWSER_RESTORE_SESSION", "0"
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -1125,18 +1120,8 @@ class BrowserSession:
             ephemeral = os.environ.get("CYBERNOVA_GPT_BROWSER_EPHEMERAL", "").strip().lower() in {
                 "1", "true", "yes", "on",
             }
-            diagnostic_event("browser_launch_start", headless=self._headless,
-                             session_kind="ephemeral" if ephemeral else "persistent")
-            if ephemeral:
-                self._browser = self._pw.chromium.launch(
-                    headless=self._headless, args=launch_args,
-                )
-                self._context = self._browser.new_context(
-                    accept_downloads=False, service_workers="block",
-                    ignore_https_errors=False, java_script_enabled=True,
-                    viewport={"width": 1440, "height": 1000},
-                )
-            else:
+            profile_dir = None
+            if not ephemeral:
                 configured_profile = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")
                 if self._profile_dir is not None:
                     profile_dir = self._profile_dir
@@ -1154,7 +1139,31 @@ class BrowserSession:
                         profile_dir.chmod(0o700)
                     except OSError:
                         pass
-                self._context = self._pw.chromium.launch_persistent_context(
+
+            diagnostic_event(
+                "browser_launch_start",
+                headless=self._headless,
+                session_kind="ephemeral" if ephemeral else "persistent",
+                preferred_backend=os.environ.get("CYBERNOVA_BROWSER_BACKEND", "patchright"),
+            )
+
+            def _launch_context(playwright):
+                browser = None
+                if ephemeral:
+                    browser = playwright.chromium.launch(
+                        headless=self._headless, args=launch_args,
+                    )
+                    try:
+                        context = browser.new_context(
+                            accept_downloads=False, service_workers="block",
+                            ignore_https_errors=False, java_script_enabled=True,
+                            viewport={"width": 1440, "height": 1000},
+                        )
+                    except Exception:
+                        browser.close()
+                        raise
+                    return browser, context
+                context = playwright.chromium.launch_persistent_context(
                     user_data_dir=str(profile_dir),
                     headless=self._headless,
                     args=launch_args,
@@ -1162,7 +1171,27 @@ class BrowserSession:
                     ignore_https_errors=False, java_script_enabled=True,
                     viewport={"width": 1440, "height": 1000},
                 )
-                self._browser = None
+                return None, context
+
+            try:
+                self._pw, self._backend, launched, fallback_reason = launch_with_backend(
+                    _launch_context
+                )
+            except Exception as exc:
+                message = str(exc).lower()
+                if "chromium_not_installed" in message or "executable doesn't exist" in message or "please run the following command" in message:
+                    raise ValueError("chromium_not_installed") from None
+                raise ValueError(
+                    "browser_backend_launch_failed:" + type(exc).__name__
+                ) from None
+            self._browser, self._context = launched
+            if fallback_reason:
+                diagnostic_event(
+                    "browser_backend_fallback",
+                    primary="patchright",
+                    selected=self._backend,
+                    reason=fallback_reason,
+                )
             self._context.route("**/*", self._route)
             # WebSockets bypass the ordinary HTTP route handler; block them
             # explicitly so a page cannot open an uninspected socket.
@@ -1171,9 +1200,13 @@ class BrowserSession:
                     code=1008, reason="Cybernova browser policy",
                 ),
             )
-            diagnostic_event("browser_launch_ready", headless=self._headless,
-                             session_kind="ephemeral" if ephemeral else "persistent",
-                             status="ok")
+            diagnostic_event(
+                "browser_launch_ready",
+                headless=self._headless,
+                session_kind="ephemeral" if ephemeral else "persistent",
+                backend=self._backend,
+                status="ok",
+            )
         pages = list(self._context.pages)
         if not restore_session:
             # A dedicated persistent profile keeps authentication state, but
@@ -1606,8 +1639,31 @@ class BrowserSession:
         if name == "browser_console":
             if args:
                 raise ValueError("browser_arguments_invalid")
-            return {"ok": True, "messages": self._console_events[-40:],
-                    "untrusted_page_content": True}
+            if self._backend == "patchright":
+                page_errors = [
+                    item for item in self._console_events
+                    if item.get("type") == "pageerror"
+                ][-40:]
+                return {
+                    "ok": True,
+                    "messages": page_errors,
+                    "console_api_available": False,
+                    "browser_backend": self._backend,
+                    "note": (
+                        "Patchright disables Chromium Console API capture. "
+                        "Set CYBERNOVA_BROWSER_BACKEND=playwright before starting "
+                        "a new browser session to collect console messages. "
+                        "Page errors remain available."
+                    ),
+                    "untrusted_page_content": True,
+                }
+            return {
+                "ok": True,
+                "messages": self._console_events[-40:],
+                "console_api_available": True,
+                "browser_backend": self._backend,
+                "untrusted_page_content": True,
+            }
         if name == "browser_network":
             if args:
                 raise ValueError("browser_arguments_invalid")
@@ -1847,6 +1903,7 @@ class BrowserSession:
         except Exception:
             pass
         self._page = self._context = self._browser = self._pw = None
+        self._backend = None
         self._attached_pages.clear()
         diagnostic_event("browser_shutdown", status="ok")
 
@@ -1859,7 +1916,7 @@ def browser_control_call(name: str, args: dict, session: BrowserSession) -> tupl
         return result, not bool(result.get("ok", False))
     except (OSError, ValueError, RuntimeError) as exc:
         message = str(exc).lower()
-        if "executable doesn't exist" in message or "please run the following command" in message:
+        if "chromium_not_installed" in message or "executable doesn't exist" in message or "please run the following command" in message:
             return {
                 "ok": False, "error": "chromium_not_installed",
                 "hint": "Run native.py --data-dir <existing-data-dir> install-browser",
@@ -1867,7 +1924,7 @@ def browser_control_call(name: str, args: dict, session: BrowserSession) -> tupl
         return {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}, True
     except Exception as exc:
         message = str(exc).lower()
-        if "executable doesn't exist" in message or "please run the following command" in message:
+        if "chromium_not_installed" in message or "executable doesn't exist" in message or "please run the following command" in message:
             return {
                 "ok": False, "error": "chromium_not_installed",
                 "hint": "Run native.py --data-dir <existing-data-dir> install-browser",
