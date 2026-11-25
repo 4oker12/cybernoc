@@ -1002,3 +1002,17 @@ html[data-theme="light"] .inspector {
   background: #ffffff !important;
   background-color: #ffffff !important;
 }
+
+
+.owner-input-dialog{width:min(480px,calc(100vw - 28px));max-width:none;padding:0;border:1px solid var(--line);border-radius:14px;background:var(--panel,#fff);color:var(--text);box-shadow:0 24px 80px #14223535}
+.owner-input-dialog::backdrop{background:#17253675;backdrop-filter:blur(3px)}
+.owner-input-shell{display:grid;gap:12px;padding:22px}
+.owner-input-heading h2{margin:0;font-size:19px}
+.owner-input-heading p{margin:6px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
+.owner-input-shell>label{font-size:13px;font-weight:600}
+.owner-input-shell>input{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;padding:11px 12px;background:var(--bg);color:var(--text);font:inherit;font-size:16px}
+.owner-input-shell>input:focus{outline:2px solid #16836f55;border-color:#16836f}
+.owner-input-note{margin:0;color:var(--muted);font-size:11px;line-height:1.55}
+.owner-input-error{margin:0;color:#b42318;font-size:12px}
+.owner-input-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+@media(max-width:520px){.owner-input-shell{padding:16px}.owner-input-actions{flex-direction:column-reverse}.owner-input-actions button{width:100%}}
