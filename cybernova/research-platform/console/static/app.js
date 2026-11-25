@@ -161,6 +161,38 @@ function approvalCard(event){
     buttons);
   return card;
 }
+function protectedInputCard(request,sessionId){
+  const form=node("form","approval-card");
+  const label=node("label","approval-title",request.label+" · "+request.url);
+  const input=node("input");
+  input.type="password";
+  input.autocomplete="off";
+  input.required=true;
+  input.maxLength=512;
+  label.append(input);
+  const submit=node("button","approval-yes","Передать в поле сайта");
+  submit.type="submit";
+  const status=node("p","approval-reason","Значение передаётся напрямую в поле браузера.");
+  form.append(label,submit,status);
+  form.addEventListener("submit",async event=>{
+    event.preventDefault();
+    if(submit.disabled||!input.value)return;
+    submit.disabled=true;
+    const value=input.value;
+    input.value="";
+    try{
+      await requestJson("/api/chat/protected-input",{session_id:sessionId,ticket:request.ticket,value});
+      label.remove();
+      submit.remove();
+      status.textContent="Поле заполнено. Попросите DeepSeek продолжить регистрацию или вход.";
+      $("messageInput").focus();
+    }catch(_){
+      status.textContent="Поле не заполнено. Повторите ввод или заново запросите защищённое поле.";
+      submit.disabled=false;
+    }
+  });
+  return form;
+}
 async function decideAction(requestId,decision,card){
   if(state.qwenRunning||!state.sessionId)return;
   busy(true,"qwen");
@@ -627,11 +659,15 @@ async function send(){
     showEvents(result.events,result.tool_calls,result.selected_by,pending);
     // Generate contextual next questions independently; do not delay the model reply.
     // A pending approval is the next user decision, not a generic follow-up.
-    if(!result.events?.some(e=>e.type==="approval_required")){
+    if(result.protected_input){
+      pending.wrap.append(protectedInputCard(result.protected_input,result.session_id));
+    }else if(!result.events?.some(e=>e.type==="approval_required")){
       void loadFollowups(result.session_id,result.turn,pending);
     }
     if(result.task_id)void refreshTaskList();
-    if(result.events?.some(e=>e.name==="comm_request_review"&&e.result?.ok)){
+    if(result.protected_input){
+      showTaskStatus("blocked");
+    }else if(result.events?.some(e=>e.name==="comm_request_review"&&e.result?.ok)){
       showTaskStatus("needs_review");
     }else{
       showTaskStatus("completed");

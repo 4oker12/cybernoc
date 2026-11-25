@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import socket
 import sys
@@ -49,13 +50,11 @@ HIGH_IMPACT = re.compile(
 )
 IRREVERSIBLE_SUBMIT_TARGET = re.compile(
     r"(?i)(pay(?:ment)?|purchase|buy\s+now|place\s+order|checkout|"
-    r"\bbook(?:\s+now)?\b|\breserve\b|\border\b|register|sign\s*up|"
-    r"create\s+account|new\s+account|\bjoin\b|\bdelete\b|\bremove\b|"
+    r"\bbook(?:\s+now)?\b|\breserve\b|\border\b|\bdelete\b|\bremove\b|"
     r"unsubscribe|\bcancel\b|\brevoke\b|\bdisable\b|\bdeactivate\b|"
     r"\blog\s*out\b|\bsign\s*out\b|\breset\b|\bdisconnect\b|"
     r"\bterminate\b|\berase\b|\bdestroy\b|"
-    r"оплат|купить|оформить\s+заказ|брон|резерв|регист|зарегистр|"
-    r"создать\s+аккаунт|новый\s+аккаунт|удал|отмен|отпис|"
+    r"оплат|купить|оформить\s+заказ|брон|резерв|удал|отмен|отпис|"
     r"сброс|отключ|разорвать|деактив|стереть)"
 )
 
@@ -83,6 +82,9 @@ BROWSER_CONTROL_TOOLS = [
           "Fill one visible non-sensitive form field by exact label or placeholder. Password, token, card and secret fields are refused. Filling does not intentionally submit the form.",
           {"label": {**STRING, "description": "Exact field label or placeholder"},
            "value": {**STRING, "description": "Text to enter"}}, ["label", "value"]),
+    _tool("browser_request_protected_input",
+          "Pause and request owner input directly in the Web UI for an observed password or one-time-code field. Never ask for the value in chat. Request only one field per turn.",
+          {"label": {**STRING, "description": "Exact visible field label or placeholder"}}, ["label"]),
     _tool("browser_select",
           "Choose an option in one visible select field by exact label and option label/value. Does not submit the form.",
           {"label": {**STRING, "description": "Exact select label"},
@@ -113,11 +115,23 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers."),
     _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
-          "Submit one visible form/button only when the latest user message explicitly asks to send, submit, save, apply, publish or post that form. Permits exactly one POST to the observed form action origin (or current page origin when no form action exists). Unrelated writes, DELETE, other write methods, payment, purchase, account registration, deletion and account-removal actions remain blocked.",
+          "Submit one explicitly requested visible POST form. For account creation use browser_register. Financial and destructive actions are blocked.",
+          {"name": {**STRING, "description": "Exact accessible name of the visible form submit button"}}, ["name"]),
+    _tool("browser_register",
+          "Submit an already filled registration form only when the user directly asks to register an account. Ask the user to enter credentials and complete challenges themselves.",
+          {"name": {**STRING, "description": "Exact accessible name of the visible form submit button"}}, ["name"]),
+    _tool("browser_login",
+          "Submit an already filled sign-in form when the user explicitly asks to log in. Pause for protected input before submitting a missing password or one-time code.",
           {"name": {**STRING, "description": "Exact accessible name of the visible form submit button"}}, ["name"]),
 ]
 BROWSER_CONTROL_NAMES = frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS)
-APPROVAL_TOOL_NAMES = frozenset({"browser_submit"})
+APPROVAL_TOOL_NAMES = frozenset({"browser_submit", "browser_register", "browser_login"})
+REGISTRATION_TARGET = re.compile(
+    r"(?i)(\bregister\b|\bregistration\b|\bsign[\s_-]*up\b|"
+    r"\bcreate[\s_-]+account\b|\bnew[\s_-]+account\b|\bjoin\b|"
+    r"регист|создать\s+аккаунт|новый\s+аккаунт)"
+)
+LOGIN_TARGET = re.compile(r"(?i)\b(?:log|sign)[\s_-]*in\b|\bauthenticate\b|войти|авторизац")
 
 
 def _origin(url: str) -> str:
@@ -326,21 +340,60 @@ class BrowserSession:
         self._page = None
         self._dns_cache: dict[str, tuple[float, list[str]]] = {}
         self._blocked: list[dict] = []
-        self._allow_post_origin: str | None = None
+        self._allow_post_url: str | None = None
         self._allow_post_remaining = 0
         self._allowed_request_count = 0
         self._console_events: list[dict] = []
         self._network_events: list[dict] = []
         self._request_started: dict[int, float] = {}
         self._attached_pages: set[int] = set()
+        self._owner_input = None
+        self._protected_values: set[str] = set()
 
     def call(self, name: str, args: dict) -> dict:
         if self._closed:
             raise ValueError("browser_session_closed")
         try:
-            return self._executor.submit(copy_context().run, self._dispatch, name, args).result(timeout=45)
+            return self._executor.submit(copy_context().run, self._safe_dispatch, name, args).result(timeout=45)
         except FutureTimeout:
             raise ValueError("browser_action_timeout") from None
+
+    def _safe_dispatch(self, name, args):
+        result = self._dispatch(name, args)
+        if not self._protected_values:
+            return result
+
+        def redact(value):
+            if isinstance(value, dict):
+                return {key: redact(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [redact(item) for item in value]
+            if isinstance(value, str):
+                for protected in sorted(self._protected_values, key=len, reverse=True):
+                    value = value.replace(protected, "[protected]")
+            return value
+
+        return redact(result)
+
+    def provide_protected_input(self, ticket: str, value: str):
+        return self._executor.submit(self._provide_protected_input, ticket, value).result(timeout=12)
+
+    def _provide_protected_input(self, ticket, value):
+        pending = self._owner_input
+        if (pending is None or not secrets.compare_digest(pending["ticket"], ticket)
+                or time.monotonic() > pending["expires"] or self._page != pending["page"]
+                or self._page.is_closed() or self._page.url != pending["url"]):
+            raise ValueError("browser_owner_input_expired")
+        self._owner_input = None
+        self._protected_values.add(value)
+        field = pending["field"]
+        try:
+            field.fill(value, timeout=7000)
+            if field.input_value() != value:
+                raise ValueError("browser_owner_input_not_applied")
+        except Exception:
+            raise ValueError("browser_owner_input_not_applied") from None
+        return {"ok": True}
 
     def set_authorized_hosts(self, hosts):
         clean = set()
@@ -530,8 +583,8 @@ class BrowserSession:
             validate_public_url(raw, self._authorized_hosts)
             method = req.method.upper()
             if method not in SAFE_METHODS:
-                same_origin = _origin(raw) == self._allow_post_origin
-                if (method == "POST" and same_origin and self._allow_post_remaining > 0):
+                if (method == "POST" and urlsplit(raw)._replace(fragment="").geturl() == self._allow_post_url
+                        and self._allow_post_remaining > 0):
                     self._allow_post_remaining -= 1
                     self._allowed_request_count += 1
                 else:
@@ -625,6 +678,30 @@ class BrowserSession:
             raise ValueError("browser_arguments_invalid")
         self._ensure()
         self._blocked = []
+        if self._owner_input is not None:
+            if (time.monotonic() <= self._owner_input["expires"] and
+                    name != "browser_request_protected_input"):
+                return {"ok": False, "status": "owner_input_pending"}
+            self._owner_input = None
+        if name == "browser_request_protected_input":
+            label = args.get("label")
+            if set(args) != {"label"} or not isinstance(label, str) or not 1 <= len(label) <= 180:
+                raise ValueError("browser_field_label_invalid")
+            field = self._page.get_by_label(label, exact=True)
+            if field.count() == 0:
+                field = self._page.get_by_placeholder(label, exact=True)
+            if field.count() != 1 or not field.is_visible() or not field.is_editable():
+                raise ValueError("browser_field_not_unique_or_interactable")
+            if (field.get_attribute("type") != "password" and
+                    field.get_attribute("autocomplete") != "one-time-code"):
+                raise ValueError("browser_field_not_supported_for_protected_input")
+            ticket = secrets.token_hex(24)
+            self._owner_input = {"ticket": ticket, "page": self._page, "url": self._page.url,
+                                 "field": field.element_handle(), "expires": time.monotonic() + 300}
+            return {"ok": True, "status": "owner_input_required", "ticket": ticket,
+                    "label": label, "url": _safe_url(self._page.url)}
+        if name == "browser_screenshot" and self._protected_values:
+            raise ValueError("browser_screenshot_unavailable_after_protected_input")
         if name == "browser_navigate":
             if set(args) != {"url"}:
                 raise ValueError("browser_arguments_invalid")
@@ -773,7 +850,8 @@ class BrowserSession:
             if locator.count() != 1 or not locator.is_visible() or not locator.is_enabled():
                 raise ValueError("browser_field_not_unique_or_interactable")
             field_type = (locator.get_attribute("type") or "").lower()
-            if field_type in {"password", "hidden", "file", "submit", "button"}:
+            if (field_type in {"password", "hidden", "file", "submit", "button"} or
+                    locator.get_attribute("autocomplete") == "one-time-code"):
                 raise ValueError("browser_sensitive_or_non_text_field_refused")
             locator.fill(value, timeout=7000)
             return self._snapshot()
@@ -791,18 +869,30 @@ class BrowserSession:
             except Exception:
                 locator.select_option(value=value, timeout=7000)
             return self._snapshot()
-        if name in {"browser_click_button", "browser_submit"}:
+        if name == "browser_click_button" or name in APPROVAL_TOOL_NAMES:
             if set(args) != {"name"}:
                 raise ValueError("browser_arguments_invalid")
             target = args["name"]
             if not isinstance(target, str) or not target.strip() or len(target) > 180:
                 raise ValueError("browser_button_name_invalid")
             button = self._one("button", target)
-            form_action = button.evaluate(
-                "el => (el.form && el.form.action) ? el.form.action : ''"
-            )
+            form = button.evaluate("""el => {
+                if (!el.form || el.type !== 'submit') return null;
+                return {
+                    action: el.hasAttribute('formaction') ? el.formAction : el.form.action,
+                    method: el.hasAttribute('formmethod') ? el.formMethod : el.form.method
+                };
+            }""")
+            form_action = form["action"] if form else ""
+            registration = bool(REGISTRATION_TARGET.search(
+                target + " " + urlsplit(form_action).path + " " + urlsplit(self._page.url).path
+            ))
+            login = not registration and bool(LOGIN_TARGET.search(
+                target + " " + urlsplit(form_action).path + " " + urlsplit(self._page.url).path
+            ))
             if name == "browser_click_button" and (
-                    HIGH_IMPACT.search(target) or HIGH_IMPACT.search(form_action)):
+                    HIGH_IMPACT.search(target) or HIGH_IMPACT.search(form_action)
+                    or (form and (registration or login))):
                 return {
                     "ok": False, "status": "approval_required",
                     "reason": "high_impact_button_or_form",
@@ -811,8 +901,10 @@ class BrowserSession:
                     "suggested_action": "user_must_complete_manually",
                     "message": "Кнопка или форма похожа на оформление, покупку, оплату или бронирование. Для неё нужен отдельный запрос разрешения.",
                 }
-            if name == "browser_submit":
-                submit_target = form_action or self._page.url
+            if name in APPROVAL_TOOL_NAMES:
+                if not form or form["method"].lower() != "post":
+                    raise ValueError("browser_submit_requires_native_post_form")
+                submit_target = form_action
                 validate_public_url(submit_target, self._authorized_hosts)
                 if IRREVERSIBLE_SUBMIT_TARGET.search(target + " " + submit_target):
                     return {
@@ -822,11 +914,40 @@ class BrowserSession:
                         "form_action": _safe_url(submit_target),
                         "message": "Эта кнопка относится к оплате, удалению или другому необратимому действию. Общего разрешения на отправку формы недостаточно; действие оставлено человеку.",
                     }
-                self._allow_post_origin = _origin(submit_target)
+                expected_tool = ("browser_register" if registration else
+                                 "browser_login" if login else "browser_submit")
+                if name != expected_tool:
+                    raise ValueError("browser_form_requires_matching_tool:" + expected_tool)
+                if (registration or login) and _origin(submit_target) != _origin(self._page.url):
+                    raise ValueError("browser_account_form_requires_same_origin")
+                if self._page.locator(
+                    "iframe[src*='recaptcha/api2/bframe']:visible, "
+                    "iframe[src*='hcaptcha.com'][title*='challenge' i]:visible, "
+                    "iframe[src*='challenges.cloudflare.com']:visible"
+                ).count():
+                    return {"ok": False, "status": "human_challenge_required",
+                            "message": "A visible browser challenge requires human action."}
+                if not button.evaluate("el => el.form.checkValidity()"):
+                    return {"ok": False, "status": "browser_form_validation_failed"}
+                self._allow_post_url = urlsplit(submit_target)._replace(fragment="").geturl()
                 self._allow_post_remaining = 1
                 self._allowed_request_count = 0
+            post_status = None
             try:
-                button.click(timeout=8000)
+                if name in APPROVAL_TOOL_NAMES:
+                    try:
+                        with self._page.expect_response(
+                            lambda reply: (reply.request.method == "POST" and
+                                           reply.url == self._allow_post_url),
+                            timeout=12000,
+                        ) as observed:
+                            button.click(timeout=8000)
+                        post_status = observed.value.status
+                    except Exception as exc:
+                        if type(exc).__name__ != "TimeoutError":
+                            raise
+                else:
+                    button.click(timeout=8000)
                 try:
                     self._page.wait_for_load_state("domcontentloaded", timeout=3500)
                 except Exception:
@@ -836,14 +957,16 @@ class BrowserSession:
                 except Exception:
                     pass
             finally:
-                if name == "browser_submit":
-                    self._allow_post_origin = None
+                if name in APPROVAL_TOOL_NAMES:
+                    self._allow_post_url = None
                     self._allow_post_remaining = 0
             result = self._snapshot()
-            if name == "browser_submit":
-                result["approved_submit"] = True
+            if name in APPROVAL_TOOL_NAMES:
+                result["approved_submit"] = self._allowed_request_count == 1 and post_status is not None
                 result["approved_post_requests_allowed"] = self._allowed_request_count
                 result["approved_submit_origin"] = _origin(submit_target)
+                result["post_http_status"] = post_status
+                result["ok"] = post_status is not None and 200 <= post_status < 400
                 result["other_write_requests"] = "blocked"
             return result
         raise ValueError("unknown_browser_control_tool")

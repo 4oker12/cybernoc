@@ -33,7 +33,8 @@ ALLOWED_GET = frozenset({"/api/status", "/api/comm/tasks", "/api/comm/events",
     "/api/collab/runs", "/api/collab/run", "/auth/callback",
     "/api/diagnostics/export"})
 ALLOWED_POST = frozenset({
-    "/api/chat", "/api/chat/start", "/api/chat/result", "/api/import", "/api/approve", "/api/followups",
+    "/api/chat", "/api/chat/start", "/api/chat/result", "/api/chat/protected-input",
+    "/api/import", "/api/approve", "/api/followups",
     "/api/reset", "/api/research/scope", "/api/comm/resume", "/api/comm/reviewer-feedback",
     "/api/siwc/start", "/api/siwc/disconnect", "/api/siwc/review", "/api/siwc/chat",
     "/api/profile-settings", "/api/model-config", "/api/collab/start", "/api/collab/step",

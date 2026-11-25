@@ -21,6 +21,7 @@ from urllib import request, error, parse
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 try:
     from .agent import (
@@ -1084,7 +1085,7 @@ def chat(payload: ChatRequest):
         state["turns"] += 1
         current_status = store.get_task(task_id)["status"]
         final_status = ("needs_review" if current_status == "needs_review"
-                        else "blocked" if requests else "completed")
+                        else "blocked" if requests or outcome.get("protected_input") else "completed")
         event = store.append(
             task_id, "qwen", "result", outcome["answer"][:12000],
             status=final_status,
@@ -1153,6 +1154,33 @@ def chat_job_result(payload: ChatJobReceipt):
         if job is None:
             raise HTTPException(status_code=404, detail="chat_result_not_found")
         return dict(job)
+
+
+@app.post("/api/chat/protected-input")
+async def chat_protected_input(request: Request):
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="invalid_protected_input") from None
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="invalid_protected_input")
+    session_id, ticket, value = (payload.get(key) for key in ("session_id", "ticket", "value"))
+    if (not all(isinstance(item, str) for item in (session_id, ticket, value))
+            or not 1 <= len(value) <= 512 or len(ticket) != 48):
+        raise HTTPException(status_code=422, detail="invalid_protected_input")
+    with sessions_lock:
+        state = sessions.get(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+
+    def fill():
+        with state["lock"]:
+            return deepseek_tool_runtime.provide_protected_input("deepseek:" + session_id, ticket, value)
+
+    try:
+        return await run_in_threadpool(fill)
+    except Exception:
+        raise HTTPException(status_code=409, detail="protected_input_not_applied") from None
 
 
 @app.post("/api/approve")

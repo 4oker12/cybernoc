@@ -1156,6 +1156,17 @@ class Agent:
                                 else "screenshot_payload_invalid_or_too_large"
                             ),
                         }
+                    if (name == "browser_request_protected_input"
+                            and safe_result.get("status") == "owner_input_required"):
+                        events.append({"type": "tool_result", "name": name,
+                                       "result": {"status": "owner_input_required"}})
+                        count += 1
+                        outcome = result_payload(
+                            "Браузер ждёт защищённого ввода. Заполните поле в карточке, "
+                            "затем попросите продолжить действие."
+                        )
+                        outcome["protected_input"] = safe_result
+                        return outcome
                     serialized = json.dumps(safe_result, ensure_ascii=False)[:MAX_RESULT]
                     safe_event = {
                         "type": kind, "name": str(name)[:80],
@@ -1167,6 +1178,9 @@ class Agent:
                     }
                     safe_event.update(event)
                     events.append(safe_event)
+                    if safe_result.get("status") == "human_challenge_required":
+                        count += 1
+                        return result_payload("Сайт показал браузерную проверку. Выполнение приостановлено.")
                     context.append({"role": "tool", "tool_name": str(name),
                                     "content": serialized})
                     count += 1

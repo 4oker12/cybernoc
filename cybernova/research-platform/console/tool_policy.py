@@ -218,6 +218,14 @@ def task_intent_matches(name: str, description: str, user_text: str) -> bool:
         text,
     ):
         return False
+    if name == "browser_register":
+        return bool(re.search(
+            r"(?i)\bregister\b|\bsign\s+up\b|\bcreate\s+(?:a|an|the|one|test)\s+"
+            r"(?:test\s+)?account\b|зарегистрируй|зарегистрировать|создай\s+аккаунт",
+            text,
+        ))
+    if name == "browser_login":
+        return bool(re.search(r"(?i)\b(?:log|sign)\s+in\b|\bauthenticate\b|войти|войди|авториз", text))
     definition = (str(name) + " " + str(description)).casefold()
     groups = (
         (r"(?:delete|remove|destroy|drop|purge|format)", r"(?:удал|delete|remove|destroy|drop|purge|форматир)"),

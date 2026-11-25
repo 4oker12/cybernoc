@@ -69,7 +69,7 @@ class BrowserControlTests(unittest.TestCase):
             "browser_console", "browser_network",
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
-        self.assertIn("latest user message explicitly asks", submit["description"])
+        self.assertIn("explicitly requested", submit["description"])
 
     def test_browser_tools_are_shared_with_the_deepseek_agent(self):
         from console.agent import Agent
@@ -103,13 +103,45 @@ class BrowserControlTests(unittest.TestCase):
         self.assertIn("browser_submit", gpt_names)
         self.assertIn("browser_submit", deepseek_names)
 
-    def test_browser_submit_keeps_account_registration_and_destructive_actions_manual(self):
+    def test_registration_has_separate_intent_and_destructive_actions_stay_manual(self):
+        from console.tool_policy import task_intent_matches
+        self.assertIn("browser_register", BROWSER_CONTROL_NAMES)
+        self.assertTrue(task_intent_matches("browser_register", "", "Register a test account."))
+        self.assertFalse(task_intent_matches("browser_register", "", "Inspect the form."))
+        self.assertFalse(task_intent_matches("browser_register", "", "Do not register an account."))
+        self.assertTrue(task_intent_matches("browser_login", "", "Log in to the test account."))
+        self.assertFalse(task_intent_matches("browser_login", "", "Inspect the login page."))
         for target in (
-            "Sign up", "Register", "Create account", "New account",
             "Pay now", "Place order", "Delete account",
         ):
             with self.subTest(target=target):
                 self.assertIsNotNone(IRREVERSIBLE_SUBMIT_TARGET.search(target))
+
+    def test_protected_input_is_bound_to_one_page_and_one_use(self):
+        browser = BrowserSession()
+        from unittest.mock import Mock
+        import time
+        try:
+            page = Mock()
+            page.url = "https://example.com/login"
+            page.is_closed.return_value = False
+            field = Mock()
+            field.input_value.return_value = "fixture-secret"
+            browser._page = page
+            browser._owner_input = {
+                "ticket": "a" * 48, "url": page.url, "page": page,
+                "field": field, "expires": time.monotonic() + 60,
+            }
+            with self.assertRaisesRegex(ValueError, "browser_owner_input_expired"):
+                browser._provide_protected_input("b" * 48, "fixture-secret")
+            field.fill.assert_not_called()
+            self.assertEqual(browser._provide_protected_input("a" * 48, "fixture-secret"), {"ok": True})
+            with self.assertRaisesRegex(ValueError, "browser_owner_input_expired"):
+                browser._provide_protected_input("a" * 48, "fixture-secret")
+            with patch.object(browser, "_dispatch", return_value={"title": "fixture-secret"}):
+                self.assertEqual(browser._safe_dispatch("browser_snapshot", {}), {"title": "[protected]"})
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
 
     def test_browser_submit_requires_explicit_current_user_intent_and_dispatches_when_requested(self):
         from console.gpt_tool_runtime import GPTToolRuntime
@@ -324,15 +356,19 @@ class BrowserControlTests(unittest.TestCase):
                 self.assertTrue(denied.aborted)
                 self.assertEqual(browser._blocked[-1]["suggested_tool"], "browser_submit")
 
-                # One user-approved POST may go to the exact visible form action origin.
-                browser._allow_post_origin = "https://forms.example.net"
+                # Same-origin requests to another path must not consume approval.
+                browser._allow_post_url = "https://forms.example.net/submit"
                 browser._allow_post_remaining = 1
+                unrelated = FakeRoute("https://forms.example.net/analytics", "POST")
+                browser._route(unrelated)
+                self.assertTrue(unrelated.aborted)
+                self.assertEqual(browser._allow_post_remaining, 1)
                 allowed = FakeRoute("https://forms.example.net/submit", "POST")
                 browser._route(allowed)
                 self.assertTrue(allowed.continued)
                 self.assertEqual(browser._allow_post_remaining, 0)
 
-                second = FakeRoute("https://forms.example.net/confirm", "POST")
+                second = FakeRoute("https://forms.example.net/submit", "POST")
                 browser._route(second)
                 self.assertTrue(second.aborted)
 

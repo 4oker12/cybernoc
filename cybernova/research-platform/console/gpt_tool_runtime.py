@@ -23,7 +23,7 @@ from threading import RLock
 
 try:
     from .tool_policy import task_intent_matches
-    from .browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
+    from .browser_control import APPROVAL_TOOL_NAMES, BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from .developer_tools import SOURCE
     from .research_web import RESEARCH_WEB_TOOLS, research_web_call
     from .computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
@@ -31,7 +31,7 @@ try:
     from .github_write_tools import GITHUB_WRITE_TOOLS, GITHUB_WRITE_NAMES, github_write_call
 except ImportError:
     from tool_policy import task_intent_matches
-    from browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
+    from browser_control import APPROVAL_TOOL_NAMES, BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from developer_tools import SOURCE
     from research_web import RESEARCH_WEB_TOOLS, research_web_call
     from computer_control import COMPUTER_TOOLS, COMPUTER_TOOL_NAMES, computer_control_call
@@ -634,7 +634,7 @@ class GPTToolRuntime:
             # Browser operations use their own per-conversation lock and worker
             # thread. They never hold the runtime-wide lock while Playwright runs.
             if name.startswith("browser_"):
-                if name == "browser_submit":
+                if name in APPROVAL_TOOL_NAMES:
                     latest_user = ""
                     for message in reversed(user_messages or []):
                         if isinstance(message, dict) and message.get("role") == "user":
@@ -651,8 +651,12 @@ class GPTToolRuntime:
                     if not task_intent_matches(name, description, latest_user):
                         return {
                             "ok": False, "status": "task_intent_required",
-                            "error": "browser_submit_requires_explicit_user_intent",
-                            "message": "Отправка формы не выполнялась: последнее сообщение пользователя должно прямо просить отправить, сохранить, применить или передать эту форму.",
+                            "error": name + "_requires_explicit_user_intent",
+                            "message": (
+                                "Подтвердите, что хотите зарегистрировать аккаунт на этом сайте."
+                                if name == "browser_register" else
+                                "Последнее сообщение должно прямо просить отправить или сохранить эту форму."
+                            ),
                         }, True
                 key, entry = self._browser_pool.acquire(conversation_key)
                 try:
@@ -725,6 +729,14 @@ class GPTToolRuntime:
 
     def close(self):
         self._browser_pool.close()
+
+    def provide_protected_input(self, conversation_key, ticket, value):
+        key, entry = self._browser_pool.acquire(conversation_key)
+        try:
+            with entry["call_lock"]:
+                return entry["session"].provide_protected_input(ticket, value)
+        finally:
+            self._browser_pool.release(key, entry)
 
 def _browser_profile_path(agent_name: str) -> Path:
     configured = os.environ.get("CYBERNOVA_GPT_BROWSER_PROFILE")
