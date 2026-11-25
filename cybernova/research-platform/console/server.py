@@ -16,6 +16,7 @@ import re
 import secrets
 import subprocess
 from threading import RLock
+from typing import Any
 import time
 from urllib import request, error, parse
 
@@ -348,7 +349,12 @@ class ApprovalRequest(BaseModel):
 class OwnerInputSubmitRequest(BaseModel):
     session_id: str = Field(min_length=16, max_length=120)
     request_id: str = Field(min_length=16, max_length=80)
-    value: str = Field(min_length=1, max_length=512)
+    # Any is intentional: Pydantic validation errors must not echo PAN/CVV
+    # values back in a 422 response. The in-memory broker validates by request type.
+    value: Any = None
+    payment_card: Any = None
+    approved_frame_hosts: Any = None
+    decision: Any = None
     save_to_vault: bool = False
 
 
@@ -1029,13 +1035,24 @@ def owner_input_submit(payload: OwnerInputSubmitRequest):
     with sessions_lock:
         if payload.session_id not in sessions:
             raise HTTPException(status_code=404, detail="session_not_found")
+    raw_card = payload.payment_card
     try:
         return owner_input_broker.submit(
             "deepseek:" + payload.session_id, payload.request_id, payload.value,
             save_to_vault=payload.save_to_vault,
+            payment_card=raw_card,
+            approved_frame_hosts=payload.approved_frame_hosts,
+            decision=payload.decision,
         )
     except OwnerInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
+    finally:
+        # Drop the request-model reference as soon as the broker has copied and
+        # validated the one-time fields. No card payload is logged or persisted.
+        if isinstance(raw_card, dict):
+            for key in list(raw_card):
+                raw_card[key] = ""
+            raw_card.clear()
 
 
 @app.post("/api/owner-input/cancel")
