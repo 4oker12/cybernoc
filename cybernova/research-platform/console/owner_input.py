@@ -20,7 +20,8 @@ class OwnerInputError(ValueError):
 
 _PAYMENT_FIELD_KEYS = frozenset({
     "card_number", "expiry", "expiry_month", "expiry_year", "cvv",
-    "cardholder_name", "billing_postal_code",
+    "cardholder_name", "billing_address_line1", "billing_city",
+    "billing_region", "billing_country", "billing_postal_code",
 })
 _PAYMENT_REQUIRED_KEYS = frozenset({"card_number", "expiry_month", "expiry_year", "cvv"})
 
@@ -31,8 +32,12 @@ def _normalize_payment_card(value, payment_fields):
     expected = set(_PAYMENT_REQUIRED_KEYS)
     if "cardholder_name" in payment_fields:
         expected.add("cardholder_name")
-    if "billing_postal_code" in payment_fields:
-        expected.add("billing_postal_code")
+    for field in (
+        "billing_address_line1", "billing_city", "billing_region",
+        "billing_country", "billing_postal_code",
+    ):
+        if field in payment_fields:
+            expected.add(field)
     if set(value) != expected:
         raise OwnerInputError("payment_card_fields_invalid")
     if any(not isinstance(item, str) for item in value.values()):
@@ -78,6 +83,26 @@ def _normalize_payment_card(value, payment_fields):
         if not 2 <= len(name) <= 80 or "\x00" in name:
             raise OwnerInputError("payment_cardholder_name_invalid")
         normalized["cardholder_name"] = name
+    if "billing_address_line1" in expected:
+        address = value["billing_address_line1"].strip()
+        if not 3 <= len(address) <= 120:
+            raise OwnerInputError("payment_billing_address_invalid")
+        normalized["billing_address_line1"] = address
+    if "billing_city" in expected:
+        city = value["billing_city"].strip()
+        if not 2 <= len(city) <= 80:
+            raise OwnerInputError("payment_billing_city_invalid")
+        normalized["billing_city"] = city
+    if "billing_region" in expected:
+        region = value["billing_region"].strip()
+        if not 2 <= len(region) <= 80:
+            raise OwnerInputError("payment_billing_region_invalid")
+        normalized["billing_region"] = region
+    if "billing_country" in expected:
+        country = value["billing_country"].strip()
+        if not 2 <= len(country) <= 80:
+            raise OwnerInputError("payment_billing_country_invalid")
+        normalized["billing_country"] = country
     if "billing_postal_code" in expected:
         postal = value["billing_postal_code"].strip()
         if not 2 <= len(postal) <= 20 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 -]*", postal):
