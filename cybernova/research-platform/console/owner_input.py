@@ -244,6 +244,7 @@ class OwnerInputBroker:
                     "payment_fields": list(item["payment_fields"]),
                     "payment_frame_hosts": list(item["payment_frame_hosts"]),
                     "payment_field_hosts": dict(item["payment_field_hosts"]),
+                    "expected_origin": item["expected_origin"],
                     "action_origin": item["action_origin"],
                     "action_button": item["action_button"]}
 
