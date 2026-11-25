@@ -190,10 +190,19 @@ def _capture(url: str, allowed_hosts: set[str], *, runner=None, capture_detail="
         result = runner(url, {host: pin}, allowed_hosts)
     else:
         result = _playwright_run(url, {host: pin}, allowed_hosts, capture_detail=capture_detail)
+    backend = result.get("browser_backend") if isinstance(result, dict) else None
+    if backend in {"patchright", "playwright"}:
+        browser_label = "Chromium " + backend.capitalize() + " (isolated)"
+    elif runner is not None:
+        browser_label = "Injected capture runner"
+        backend = "injected_runner"
+    else:
+        browser_label = "Isolated Chromium"
+        backend = "unknown"
     return {
         "ok": True, "url": "https://" + host + (parsed.path or "/"),
-        "browser": "Chromium " + str(result.get("browser_backend", "patchright")).capitalize() + " (isolated)",
-        "browser_backend": result.get("browser_backend", "patchright"),
+        "browser": browser_label,
+        "browser_backend": backend,
         "collection": "DevTools-equivalent browser Network metadata",
         "capture": result,
         "capture_detail": capture_detail,
@@ -309,7 +318,7 @@ def _playwright_run(url: str, pinned: dict[str, str], allowed_hosts: set[str], *
         # Never expose secrets, raw URLs or browser-local file paths in errors.
         kind = type(exc).__name__
         if "Executable doesn't exist" in str(exc):
-            raise ValueError("chromium_missing_run_patchright_install") from None
+            raise ValueError("chromium_missing_run_install_browser") from None
         raise ValueError("browser_capture_failed:" + kind[:70]) from None
     finally:
         if ctx is not None:
