@@ -1,5 +1,42 @@
 # Architecture handoff
 
+> **Historical correction — 2026-11-25:** the statement below that the GitHub
+> repository was empty is no longer current. Source code is present in
+> `4oker12/cybernoc`; the 2026-11-16 status is retained as history, not as
+> the current blocker.
+
+## Current verified state — 2026-11-25
+
+- GitHub repository: `4oker12/cybernoc`.
+- Main working branch baseline: `feature/full-shell-computer-discovery`,
+  HEAD `2ab19ba97387f9d04199645ed11a74a89232532f`.
+- Current review branch: `agent/agent-cycle-routing-consistency`.
+- Draft PR: [#38 — Align agent tool routing across providers](https://github.com/4oker12/cybernoc/pull/38).
+- Review head: `0d76a157243aa01c74ca66a319b91705071cd1f8`.
+- GitHub Actions Quality Gate: success; 476 unit tests passed, compile,
+  JavaScript parsing, portable deployment validation, registry checks and
+  default-closed scope checks passed.
+- The PR changes shared tool guidance, DeepSeek JSON-fallback catalog/context,
+  explicit catalog overflow handling and approval-client scope propagation.
+- High-impact actions without direct user intent remain blocked. Existing tests
+  intentionally reject unsolicited approval prompts for those actions.
+- Local Windows worktree, service processes, ports, live Account GPT calls,
+  live DeepSeek calls and local end-to-end behavior have not been verified.
+- GitHub `main` is 107 commits ahead of the working feature branch. No merge,
+  reset or branch switch was performed; the PR targets the instructed feature
+  branch only.
+
+### Next step
+
+Review PR #38 and decide whether to merge it into
+`feature/full-shell-computer-discovery`. After that, continue the provider/tool
+catalog parity audit and perform the read-only Windows preflight before any
+local update or service operation.
+
+---
+
+## Historical snapshot — 2026-11-16
+
 Updated: 2026-11-16 (Europe/Kiev)
 
 ## Verified state
