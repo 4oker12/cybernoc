@@ -568,6 +568,7 @@ function resetOwnerInputValues(){
   $("ownerInputPaymentFrameList").replaceChildren();
   $("ownerInputPaymentFrames").hidden=true;
   $("ownerInputPaymentFields").hidden=true;
+  $("ownerInputPaymentMerchant").hidden=true;
   $("ownerInputConfirmationPanel").hidden=true;
   $("ownerInputSingleField").hidden=false;
   $("ownerInputVaultOption").hidden=true;
@@ -648,8 +649,10 @@ async function pollOwnerInput(){
     if(type==="payment_card"){
       $("ownerInputSingleField").hidden=true;
       $("ownerInputVaultOption").hidden=true;
+      $("ownerInputPaymentMerchant").textContent="Сайт: "+(item.expected_origin||"Не определён");
+      $("ownerInputPaymentMerchant").hidden=false;
       $("ownerInputNote").textContent=
-        "Данные карты передаются только в текущую платёжную форму. Cybernova не сохраняет номер карты и CVV, не добавляет их в историю и не передаёт модели.";
+        "Данные карты передаются только в указанную платёжную форму и отмеченные платёжные домены. Cybernova не сохраняет номер карты и CVV, не добавляет их в историю и не передаёт модели.";
       $("ownerInputSubmit").textContent="Передать и заполнить форму";
       renderOwnerPaymentFields(item);
       renderOwnerPaymentFrames(item);
