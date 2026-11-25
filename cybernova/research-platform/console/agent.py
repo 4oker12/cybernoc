@@ -1006,6 +1006,7 @@ class Agent:
                         else:
                             chosen, chosen_args = "browser_open", {"url": selected_url}
                         if chosen in descriptors:
+                            progress("executing", chosen)
                             observed, error_flag = self._call_registered_tool(
                                 chosen, chosen_args, mcp=mcp,
                                 authorized_targets=authorized_targets,
@@ -1044,6 +1045,7 @@ class Agent:
                         r"улучш|создай|напиши|доработ|рефактор|разбер)",
                         text))
                     if wants_dev and "dev_list" in descriptors:
+                        progress("executing", "dev_list")
                         observed, error_flag = mcp.call("dev_list", {"limit": 100})
                         executed += 1
                         selected_by = "developer_evidence_fallback"
@@ -1108,7 +1110,6 @@ class Agent:
                         if failed_calls.blocked(name, args):
                             kind = "repeated_failure_suppressed"
                             raise BackendError("identical_failed_call_suppressed_choose_alternative")
-                        progress("executing", name)
                         if name == "http_get":
                             if not public_get:
                                 raise BackendError("public_http_not_enabled")
@@ -1129,10 +1130,12 @@ class Agent:
                                 }
                             else:
                                 gets += 1
+                                progress("executing", name)
                                 dispatched = True
                                 safe_result, failed = mcp.call(name, args)
                                 executed += 1
                         elif name in local_names:
+                            progress("executing", name)
                             dispatched = True
                             safe_result, failed = self._call_registered_tool(
                                 name, args, mcp=mcp,
@@ -1145,6 +1148,7 @@ class Agent:
                         elif name in REVIEWED_TOOLS:
                             if mcp is None:
                                 raise BackendError("mcp_backend_unavailable")
+                            progress("executing", name)
                             dispatched = True
                             safe_result, failed = mcp.call(name, args)
                             executed += 1
@@ -1164,6 +1168,7 @@ class Agent:
                             else:
                                 if mcp is None:
                                     raise BackendError("mcp_backend_unavailable")
+                                progress("executing", name)
                                 dispatched = True
                                 safe_result, failed = mcp.call(name, args)
                                 executed += 1

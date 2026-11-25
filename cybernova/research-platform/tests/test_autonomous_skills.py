@@ -1,4 +1,7 @@
 import unittest
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from console.autonomous_skills import select_skill_guidance, FailedCallGuard
 from console.profile_settings import default_settings, normalize_settings, mode_instructions_for
 
@@ -19,6 +22,11 @@ class AutonomousSkillsTests(unittest.TestCase):
         self.assertFalse(guard.blocked("browser_navigate", {"url": "https://example.net"}))
         guard.record("browser_navigate", args, False)
         self.assertFalse(guard.blocked("browser_navigate", args))
+
+    def test_unknown_or_mutating_call_is_not_replayed_after_failure(self):
+        guard = FailedCallGuard()
+        guard.record("dev_edit", {"path": "example.py"}, True)
+        self.assertTrue(guard.blocked("dev_edit", {"path": "example.py"}))
 
     def test_existing_profile_values_preserved(self):
         settings = normalize_settings({"researcher": {"behavior": {"autonomy": 55}}})

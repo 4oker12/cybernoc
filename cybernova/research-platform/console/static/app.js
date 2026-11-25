@@ -534,7 +534,7 @@ async function watchUsageProgress(runId,mode="qwen",pending=null){
         {cache:"no-store",headers:{"Accept":"application/json"}});
       if(!response.ok)continue;
       const progress=await response.json(),usage=progress.usage||{};
-      if(pending&&progress.status==="running"&&progress.progress){
+      if(pending&&isRunning()&&pending.wrap.classList.contains("working")&&progress.status==="running"&&progress.progress){
         const phases={preparing:"Проверяю доступные инструменты",analyzing:"Анализирую данные",executing:"Выполняю инструмент",finalizing:"Готовлю результат",reviewing:"Проверяю итог"};
         const phase=phases[progress.progress.phase];
         if(phase)pending.body.textContent=phase+(progress.progress.tool?" · "+progress.progress.tool:"")+"…";
@@ -1245,8 +1245,8 @@ function toolsPanel(show){
 const DEFAULT_PROFILE_SETTINGS={
   user:{display_name:"",role:"",about:"",preferences:""},
   privacy:{share_with_researcher:true,share_with_chatgpt:true},
-  researcher:{description:"",instructions:"",behavior:{autonomy:90,initiative:80,skepticism:90,vigilance:85,neutrality:95,brevity:80,research_depth:80,persistence:90,humor:25}},
-  chatgpt:{description:"",instructions:""},
+  researcher:{description:"Самостоятельный технический исследователь и исполнитель Cybernova.",instructions:"Работай от цели к проверяемому результату. Сначала изучи доступные инструменты и текущую реализацию, затем выполни независимые безопасные этапы, проверь результат и кратко укажи блокеры. При ограничении сайта не обходи защиту: используй разрешённые источники и явно разделяй недоступность и отсутствие результатов.",behavior:{autonomy:90,initiative:80,skepticism:90,vigilance:85,neutrality:95,brevity:80,research_depth:80,persistence:90,humor:25}},
+  chatgpt:{description:"Технический консультант, архитектор и независимый ревьюер.",instructions:"Сначала факты и цель, затем причинно-следственный анализ и проверяемый результат. Общайся естественно, без канцелярита; лёгкая ирония допустима только в подходящем контексте."},
   ui:{theme:"light",density:"comfortable",font_scale:100,sidebar_width:300,chat_width:1040,show_technical_details:false},
 };
 function applyInterfaceSettings(ui){

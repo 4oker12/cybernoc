@@ -37,7 +37,13 @@ class FailedCallGuard:
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def blocked(self, name, args):
-        return self._failures.get(self._key(name, args), 0) >= 2
+        # Only a small known read-only set may be tried a second time.
+        # An ambiguous failure of a write or unclassified operation may have
+        # already produced side effects; inspect state before doing anything else.
+        retryable = {"gateway_status", "local_webui_health", "ip_network_summary",
+                     "browser_snapshot", "browser_navigate", "research_source_open",
+                     "google_search", "dev_list", "dev_read"}
+        return self._failures.get(self._key(name, args), 0) >= (2 if name in retryable else 1)
 
     def record(self, name, args, failed):
         key = self._key(name, args)
