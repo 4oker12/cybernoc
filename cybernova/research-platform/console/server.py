@@ -25,8 +25,10 @@ from pydantic import BaseModel, Field
 
 try:
     from .owner_input import owner_input_broker, OwnerInputError
+    from .account_missions import account_mission_store
 except ImportError:
     from owner_input import owner_input_broker, OwnerInputError
+    from account_missions import account_mission_store
 
 try:
     from .agent import (
@@ -251,6 +253,9 @@ collaboration_step_lock = RLock()
 @asynccontextmanager
 async def lifespan(app):
     worker = None
+    # Recover durable account missions before accepting work. Interrupted
+    # external actions are marked for reconciliation, never replayed.
+    account_mission_store().recover_interrupted()
     if os.environ.get("CYBERNOVA_COMM_WORKER", "1") == "1":
         worker = CommunicationWorker(communication_store())
         worker.start()
