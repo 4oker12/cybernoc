@@ -13,6 +13,7 @@ import re
 import secrets
 import sqlite3
 from threading import RLock
+from functools import lru_cache
 from urllib.parse import urlsplit
 
 try:
@@ -334,3 +335,9 @@ class AccountMissionStore:
                 )
             db.commit()
             return len(rows)
+
+
+@lru_cache(maxsize=1)
+def account_mission_store() -> AccountMissionStore:
+    """Return the process-wide store bound to the configured communications DB."""
+    return AccountMissionStore()
