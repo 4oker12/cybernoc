@@ -21,7 +21,7 @@ class OwnerInputBroker:
 
     @staticmethod
     def _session(value):
-        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,120}", value):
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_:-]{16,120}", value):
             raise OwnerInputError("owner_input_session_invalid")
         return value
 
