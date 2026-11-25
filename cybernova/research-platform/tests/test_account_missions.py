@@ -88,6 +88,36 @@ class AccountMissionStoreTests(unittest.TestCase):
         self.assertNotIn("token=secret", url)
         self.assertNotIn("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", url)
 
+    def test_waiting_owner_request_is_marked_lost_after_restart(self):
+        mission = self.store.create("AWS", "Create account")
+        self.store.checkpoint(
+            mission["mission_id"], "otp", "Enter email code", "waiting_owner",
+            "Provider requested a one-time code", "Request a fresh code if needed",
+        )
+        self.assertEqual(self.store.recover_interrupted(), 1)
+        recovered = self.store.get(mission["mission_id"])
+        self.assertEqual(recovered["status"], "blocked")
+        self.assertIn("lost on restart", recovered["next_action"])
+        resumed = self.store.resume(mission["mission_id"])
+        self.assertEqual(resumed["status"], "running")
+
+    def test_mission_cannot_be_completed_with_unfinished_steps(self):
+        mission = self.store.create("AWS", "Create account")
+        mission_id = mission["mission_id"]
+        self.store.checkpoint(
+            mission_id, "profile", "Fill profile", "completed", "Profile verified",
+        )
+        with self.assertRaisesRegex(AccountMissionError, "completion_requires_verified_step"):
+            self.store.checkpoint(
+                mission_id, "submit", "Submit registration", "started",
+                "Submission about to happen", mission_status="completed",
+            )
+        self.store.checkpoint(
+            mission_id, "submit", "Submit registration", "completed",
+            "Dashboard verified", mission_status="completed",
+        )
+        self.assertEqual(self.store.get(mission_id)["status"], "completed")
+
     def test_invalid_url_and_status_are_rejected(self):
         mission = self.store.create("AWS", "Create account")
         with self.assertRaises(AccountMissionError):
