@@ -13,7 +13,7 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,qwenRunning:fals
   },
   lastUsage:{qwen:null,gpt:null},
   collabRun:null,collabLooping:false,collabStopRequested:false,
-  ownerInputTimer:null,ownerInputRequestId:null};
+  ownerInputTimer:null,ownerInputRequestId:null,ownerInputType:null};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка Console API / MCP",
@@ -561,6 +561,76 @@ async function requestJson(path,data){
   if(!response.ok)throw Error(body.detail||"HTTP "+response.status);
   return body;
 }
+function resetOwnerInputValues(){
+  $("ownerInputValue").value="";
+  $("ownerInputSaveToVault").checked=false;
+  $("ownerInputPaymentFields").replaceChildren();
+  $("ownerInputPaymentFrameList").replaceChildren();
+  $("ownerInputPaymentFrames").hidden=true;
+  $("ownerInputPaymentFields").hidden=true;
+  $("ownerInputConfirmationPanel").hidden=true;
+  $("ownerInputSingleField").hidden=false;
+  $("ownerInputVaultOption").hidden=true;
+}
+function renderOwnerPaymentFields(item){
+  const container=$("ownerInputPaymentFields");
+  container.replaceChildren();
+  const available=new Set(item.payment_fields||[]);
+  const configs=[
+    ["cardholder_name","Имя владельца карты","text","text",80],
+    ["card_number","Номер банковской карты","text","numeric",23],
+    ["expiry_month","Месяц окончания (MM)","text","numeric",2],
+    ["expiry_year","Год окончания (YY или YYYY)","text","numeric",4],
+    ["cvv","CVV / CVC","password","numeric",4],
+    ["billing_postal_code","Почтовый индекс для оплаты","text","text",20]
+  ];
+  for(const [key,label,type,inputMode,maxLength] of configs){
+    const needed=available.has(key)||
+      ((key==="expiry_month"||key==="expiry_year")&&
+       (available.has("expiry")||available.has("expiry_month")||available.has("expiry_year")));
+    if(!needed)continue;
+    const wrap=document.createElement("div");
+    wrap.className="owner-payment-field";
+    const caption=document.createElement("label");
+    const id="ownerPayment_"+key;
+    caption.htmlFor=id;
+    caption.textContent=label;
+    const input=document.createElement("input");
+    input.id=id;
+    input.type=type;
+    input.inputMode=inputMode;
+    input.maxLength=maxLength;
+    input.autocomplete="off";
+    input.spellcheck=false;
+    input.required=true;
+    input.dataset.paymentField=key;
+    if(key==="expiry_month")input.placeholder="MM";
+    if(key==="expiry_year")input.placeholder="YY";
+    wrap.append(caption,input);
+    container.append(wrap);
+  }
+  container.hidden=false;
+  const first=container.querySelector("[data-payment-field='card_number']")||
+    container.querySelector("input");
+  first?.focus();
+}
+function renderOwnerPaymentFrames(item){
+  const container=$("ownerInputPaymentFrames"),list=$("ownerInputPaymentFrameList");
+  list.replaceChildren();
+  const hosts=Array.isArray(item.payment_frame_hosts)?item.payment_frame_hosts:[];
+  container.hidden=hosts.length===0;
+  for(const host of hosts){
+    const label=document.createElement("label");
+    label.className="owner-payment-frame-option";
+    const checkbox=document.createElement("input");
+    checkbox.type="checkbox";
+    checkbox.dataset.paymentFrameHost=host;
+    const text=document.createElement("span");
+    text.textContent="Разрешить платёжной форме на "+host+" получить данные карты";
+    label.append(checkbox,text);
+    list.append(label);
+  }
+}
 async function pollOwnerInput(){
   if(!state.sessionId)return;
   try{
@@ -569,23 +639,48 @@ async function pollOwnerInput(){
     const data=await response.json(),item=data.pending;
     if(!item||item.request_id===state.ownerInputRequestId)return;
     state.ownerInputRequestId=item.request_id;
+    state.ownerInputType=item.input_type;
+    resetOwnerInputValues();
     $("ownerInputPurpose").textContent=item.purpose||"Нужны данные владельца";
     $("ownerInputFieldLabel").textContent=item.field_label||"Значение";
-    const input=$("ownerInputValue");
-    input.value="";
-    input.type=item.input_type==="password"?"password":"text";
-    input.inputMode=item.input_type==="otp"?"numeric":(item.input_type==="contact"?"email":"text");
-    input.maxLength=item.input_type==="otp"?8:512;
-    input.autocomplete="off";
     $("ownerInputError").textContent="";
-    const vaultOption=$("ownerInputVaultOption");
-    vaultOption.hidden=!(item.input_type==="password"&&item.vault_save_available===true);
-    $("ownerInputSaveToVault").checked=false;
-    $("ownerInputVaultLabel").textContent=item.account_label?
-      "Сохранить пароль для "+item.account_label+" в зашифрованном хранилище Cybernova":
-      "Сохранить пароль в зашифрованном хранилище Cybernova";
+    const type=item.input_type;
+    if(type==="payment_card"){
+      $("ownerInputSingleField").hidden=true;
+      $("ownerInputVaultOption").hidden=true;
+      $("ownerInputNote").textContent=
+        "Данные карты передаются только в текущую платёжную форму. Cybernova не сохраняет номер карты и CVV, не добавляет их в историю и не передаёт модели.";
+      $("ownerInputSubmit").textContent="Передать и заполнить форму";
+      renderOwnerPaymentFields(item);
+      renderOwnerPaymentFrames(item);
+    }else if(type==="payment_confirmation"){
+      $("ownerInputSingleField").hidden=true;
+      $("ownerInputConfirmationPanel").hidden=false;
+      $("ownerInputMerchantOrigin").textContent=item.expected_origin||"Не определён";
+      $("ownerInputActionButton").textContent=item.action_button||item.field_label||"Неизвестная кнопка";
+      $("ownerInputActionOrigin").textContent=item.action_origin||"Не определён";
+      $("ownerInputActionSummary").textContent=item.purpose||"Описание не предоставлено";
+      $("ownerInputNote").textContent=
+        "Подтверждение разрешает ровно одну отправку указанной формы. Если сумма, периодичность или назначение не совпадают с ожиданиями — откажи.";
+      $("ownerInputSubmit").textContent="Подтвердить действие";
+    }else{
+      const input=$("ownerInputValue");
+      input.value="";
+      input.type=type==="password"?"password":"text";
+      input.inputMode=type==="otp"?"numeric":(type==="contact"?"email":"text");
+      input.maxLength=type==="otp"?8:512;
+      input.autocomplete="off";
+      $("ownerInputVaultOption").hidden=!(type==="password"&&item.vault_save_available===true);
+      $("ownerInputSaveToVault").checked=false;
+      $("ownerInputVaultLabel").textContent=item.account_label?
+        "Сохранить пароль для "+item.account_label+" в зашифрованном хранилище Cybernova":
+        "Сохранить пароль в зашифрованном хранилище Cybernova";
+      $("ownerInputNote").textContent=
+        "Введённое значение передаётся локальному исполнителю и не добавляется в переписку. Сохранение пароля возможно только при отдельном выборе выше.";
+      $("ownerInputSubmit").textContent="Передать и продолжить";
+      input.focus();
+    }
     $("ownerInputDialog").showModal();
-    input.focus();
   }catch(_){}
 }
 function startOwnerInputPolling(){
@@ -596,21 +691,49 @@ function stopOwnerInputPolling(){
   if(state.ownerInputTimer){clearInterval(state.ownerInputTimer);state.ownerInputTimer=null;}
 }
 async function submitOwnerInput(){
-  const value=$("ownerInputValue").value;
-  if(!state.sessionId||!state.ownerInputRequestId||!value)return;
+  if(!state.sessionId||!state.ownerInputRequestId)return;
+  const type=state.ownerInputType;
+  let payload={session_id:state.sessionId,request_id:state.ownerInputRequestId};
+  if(type==="payment_card"){
+    const card={};
+    for(const input of $("ownerInputPaymentFields").querySelectorAll("[data-payment-field]")){
+      card[input.dataset.paymentField]=input.value;
+      if(!input.value.trim()){
+        $("ownerInputError").textContent="Заполни все поля, показанные для этой платёжной формы.";
+        input.focus();
+        return;
+      }
+    }
+    const frameChecks=[...$("ownerInputPaymentFrameList").querySelectorAll("[data-payment-frame-host]")];
+    const notApproved=frameChecks.find(item=>!item.checked);
+    if(notApproved){
+      $("ownerInputError").textContent="Подтверди платёжный домен "+notApproved.dataset.paymentFrameHost+" или отмени передачу данных.";
+      return;
+    }
+    payload.payment_card=card;
+    payload.approved_frame_hosts=frameChecks.map(item=>item.dataset.paymentFrameHost);
+  }else if(type==="payment_confirmation"){
+    payload.decision=true;
+  }else{
+    const value=$("ownerInputValue").value;
+    if(!value)return;
+    payload.value=value;
+    payload.save_to_vault=$("ownerInputSaveToVault").checked;
+  }
   $("ownerInputSubmit").disabled=true;
   try{
     const response=await fetch("/api/owner-input/submit",{
       method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({session_id:state.sessionId,request_id:state.ownerInputRequestId,value,
-        save_to_vault:$("ownerInputSaveToVault").checked})
+      cache:"no-store",credentials:"same-origin",referrerPolicy:"no-referrer",
+      body:JSON.stringify(payload)
     });
     const data=await response.json();
     if(!response.ok)throw Error(data.detail||"Не удалось передать данные");
     $("ownerInputDialog").close();
-    $("ownerInputValue").value="";
-    $("ownerInputSaveToVault").checked=false;
+    resetOwnerInputValues();
     state.ownerInputRequestId=null;
+    state.ownerInputType=null;
+    payload=null;
   }catch(error){
     $("ownerInputError").textContent=String(error.message||error);
   }finally{$("ownerInputSubmit").disabled=false;}
@@ -620,12 +743,14 @@ async function cancelOwnerInput(){
   try{
     await fetch("/api/owner-input/cancel",{
       method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({session_id:state.sessionId,request_id:state.ownerInputRequestId})
+      body:JSON.stringify({session_id:state.sessionId,request_id:state.ownerInputRequestId}),
+      cache:"no-store",credentials:"same-origin",referrerPolicy:"no-referrer"
     });
   }catch(_){}
   $("ownerInputDialog").close();
-  $("ownerInputValue").value="";
+  resetOwnerInputValues();
   state.ownerInputRequestId=null;
+  state.ownerInputType=null;
 }
 async function send(){
   if(state.mode==="gpt")return sendGPT();
