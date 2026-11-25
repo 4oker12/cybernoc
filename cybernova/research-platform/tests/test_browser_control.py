@@ -92,6 +92,22 @@ class BrowserControlTests(unittest.TestCase):
             _payment_field_kind({"autocomplete": "cc-postal-code"}),
             "billing_postal_code",
         )
+        self.assertEqual(
+            _payment_field_kind({"autocomplete": "section-billing address-line1"}),
+            "billing_address_line1",
+        )
+        self.assertEqual(
+            _payment_field_kind({"autocomplete": "section-billing address-level2"}),
+            "billing_city",
+        )
+        self.assertEqual(
+            _payment_field_kind({"autocomplete": "section-billing address-level1"}),
+            "billing_region",
+        )
+        self.assertEqual(
+            _payment_field_kind({"autocomplete": "section-billing country"}),
+            "billing_country",
+        )
         self.assertTrue(PAYMENT_SUBMIT_TARGET.search("Verify payment method"))
         self.assertFalse(PAYMENT_SUBMIT_TARGET.search("Delete account"))
 
