@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 import platform
 import re
+import secrets
+import string
 import shutil
 import subprocess
 import sys
@@ -27,6 +29,7 @@ try:
         AccountMissionError, AccountMissionStore, account_mission_store,
         MISSION_STATUSES, STEP_STATUSES,
     )
+    from .account_vault import AccountVaultError, account_vault
     from .browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from .developer_tools import SOURCE
     from .research_web import RESEARCH_WEB_TOOLS, research_web_call
@@ -40,6 +43,7 @@ except ImportError:
         AccountMissionError, AccountMissionStore, account_mission_store,
         MISSION_STATUSES, STEP_STATUSES,
     )
+    from account_vault import AccountVaultError, account_vault
     from browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from developer_tools import SOURCE
     from research_web import RESEARCH_WEB_TOOLS, research_web_call
@@ -78,6 +82,8 @@ _TOOL_NAMES = frozenset(
     "terminal_run", "terminal_status", "owner_request_input", "browser_fill_owner_input",
     "account_mission_create", "account_mission_checkpoint", "account_mission_get",
     "account_mission_list", "account_mission_resume",
+    "browser_generate_and_fill_password", "browser_fill_saved_credential",
+    "account_vault_list", "account_vault_mark_verified",
 } | COMPUTER_TOOL_NAMES | GITHUB_NAMES | GITHUB_WRITE_NAMES
 
 # Composer tool bundles. Empty selection means automatic access to the full
@@ -142,7 +148,7 @@ def normalize_tool_groups(groups=None) -> list[str]:
 
 
 def tool_group_for_name(name: str) -> str:
-    if name.startswith(("browser_", "account_mission_")) or name == "owner_request_input":
+    if name.startswith(("browser_", "account_mission_", "account_vault_")) or name == "owner_request_input":
         return "browser"
     if name.startswith("computer_"):
         return "computer"
@@ -336,20 +342,59 @@ def build_tool_catalog() -> list[dict]:
         ),
         _function_tool(
             "owner_request_input",
-            "Pause the current task and request one sensitive value directly from the owner through Cybernova's local protected dialog. Allowed types: otp, password, contact. The value is held in memory only and is NEVER returned to the model or written to logs/files. Do not ask for payment-card data; use the provider's hosted payment page. Waits for the owner or times out.",
+            "Pause the current task and request one sensitive value through Cybernova's local protected dialog. Allowed types: otp, password, contact. The value is never returned to the model or written to logs/files. For a password, set offer_vault_save=true to show the owner an optional local encrypted-vault checkbox. The request is bound to the current HTTPS origin and conversation. Do not ask for payment-card data.",
             {"type": "object", "properties": {
                 "purpose": {"type": "string", "maxLength": 240},
                 "input_type": {"type": "string", "enum": ["otp", "password", "contact"]},
                 "field_label": {"type": "string", "maxLength": 120},
-            }, "required": ["purpose", "input_type", "field_label"], "additionalProperties": False},
+                "offer_vault_save": {"type": "boolean"},
+                "service": {"type": "string", "maxLength": 120},
+                "username": {"type": "string", "maxLength": 254},
+                "account_label": {"type": "string", "maxLength": 120},
+            }, "required": ["purpose", "input_type", "field_label", "offer_vault_save",
+                           "service", "username", "account_label"], "additionalProperties": False},
         ),
         _function_tool(
             "browser_fill_owner_input",
-            "Fill one password, one-time verification code, or contact value previously supplied through owner_request_input. The secret is fetched internally and is never returned to the model. The request is bound to this conversation and can be consumed once.",
+            "Fill one owner-supplied password, one-time code, or contact value. The secret is fetched internally, origin-checked and never returned to the model. The request can be consumed once.",
             {"type": "object", "properties": {
                 "request_id": {"type": "string", "maxLength": 80},
                 "field_label": {"type": "string", "maxLength": 120},
             }, "required": ["request_id", "field_label"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "browser_generate_and_fill_password",
+            "Generate a strong random password locally, save it encrypted in the account vault, and fill the currently visible password field. The password is NEVER returned to the model or tool result. Use only during a user-requested account creation. The record starts pending until account creation and sign-in are verified.",
+            {"type": "object", "properties": {
+                "service": {"type": "string", "maxLength": 120},
+                "username": {"type": "string", "maxLength": 254},
+                "account_label": {"type": "string", "maxLength": 120},
+                "field_label": {"type": "string", "maxLength": 120},
+            }, "required": ["service", "username", "account_label", "field_label"],
+               "additionalProperties": False},
+        ),
+        _function_tool(
+            "browser_fill_saved_credential",
+            "Retrieve one password internally from the encrypted account vault and fill a visible password field only when the current HTTPS origin exactly matches the stored service origin. The password is never returned to the model.",
+            {"type": "object", "properties": {
+                "record_id": {"type": "string", "maxLength": 100},
+                "field_label": {"type": "string", "maxLength": 120},
+            }, "required": ["record_id", "field_label"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_vault_list",
+            "List account-vault metadata only: service, username, origin, status and record ID. Passwords and encryption material are never returned.",
+            {"type": "object", "properties": {
+                "service": {"type": "string", "maxLength": 120},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            }, "required": ["service", "limit"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_vault_mark_verified",
+            "Mark a pending credential record active only after the account was created, sign-in was verified, and the service identity matches. Does not expose the password.",
+            {"type": "object", "properties": {
+                "record_id": {"type": "string", "maxLength": 100},
+            }, "required": ["record_id"], "additionalProperties": False},
         ),
     ])
     return rows
@@ -737,9 +782,19 @@ class GPTToolRuntime:
             if name == "owner_request_input":
                 if not isinstance(conversation_key, str) or not conversation_key:
                     return {"ok": False, "error": "owner_input_session_unavailable"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        entry["session"].set_authorized_hosts(authorized_targets or set())
+                        origin = entry["session"].current_origin()
+                finally:
+                    self._browser_pool.release(key, entry)
                 result = owner_input_broker.request_and_wait(
                     conversation_key, args.get("purpose"), args.get("input_type"),
-                    args.get("field_label"), timeout=300,
+                    args.get("field_label"), timeout=300, expected_origin=origin,
+                    offer_vault_save=args.get("offer_vault_save", False),
+                    service=args.get("service", ""), username=args.get("username", ""),
+                    account_label=args.get("account_label", ""),
                 )
                 return result, not bool(result.get("ok"))
             if name == "browser_fill_owner_input":
@@ -749,16 +804,75 @@ class GPTToolRuntime:
                 try:
                     with entry["call_lock"]:
                         entry["session"].set_authorized_hosts(authorized_targets or set())
-                        input_type, value = owner_input_broker.consume(
+                        input_type, value, expected_origin = owner_input_broker.consume(
                             conversation_key, args.get("request_id")
                         )
                         result = entry["session"].fill_owner_input(
-                            args.get("field_label"), value, input_type
+                            args.get("field_label"), value, input_type, expected_origin
                         )
                         result["owner_input_consumed"] = True
                         return result, not bool(result.get("ok"))
                 finally:
                     self._browser_pool.release(key, entry)
+            if name == "browser_generate_and_fill_password":
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "browser_conversation_required"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        session = entry["session"]
+                        session.set_authorized_hosts(authorized_targets or set())
+                        origin = session.current_origin()
+                        symbols = "!@#$%^&*_-+="
+                        chars = [
+                            secrets.choice(string.ascii_uppercase),
+                            secrets.choice(string.ascii_lowercase),
+                            secrets.choice(string.digits),
+                            secrets.choice(symbols),
+                        ] + [secrets.choice(string.ascii_letters + string.digits + symbols)
+                             for _ in range(24)]
+                        secrets.SystemRandom().shuffle(chars)
+                        password = "".join(chars)
+                        record = account_vault().store_password(
+                            args.get("service"), args.get("username"), password,
+                            origin, args.get("account_label", ""),
+                        )
+                        result = session.fill_owner_input(
+                            args.get("field_label"), password, "password", origin
+                        )
+                        result["credential_record"] = record
+                        result["password_generated_locally"] = True
+                        return result, not bool(result.get("ok"))
+                finally:
+                    self._browser_pool.release(key, entry)
+            if name == "browser_fill_saved_credential":
+                if not isinstance(conversation_key, str) or not conversation_key:
+                    return {"ok": False, "error": "browser_conversation_required"}, True
+                key, entry = self._browser_pool.acquire(conversation_key)
+                try:
+                    with entry["call_lock"]:
+                        session = entry["session"]
+                        session.set_authorized_hosts(authorized_targets or set())
+                        origin = session.current_origin()
+                        record, password = account_vault()._secret_for_browser_fill(
+                            args.get("record_id"), origin
+                        )
+                        result = session.fill_owner_input(
+                            args.get("field_label"), password, "password", record["origin"]
+                        )
+                        result["credential_record"] = record
+                        result["saved_credential_filled"] = True
+                        return result, not bool(result.get("ok"))
+                finally:
+                    self._browser_pool.release(key, entry)
+            if name == "account_vault_list":
+                return {"ok": True, "entries": account_vault().list_entries(
+                    args.get("limit", 30), args.get("service", "")
+                )}, False
+            if name == "account_vault_mark_verified":
+                return {"ok": True, "entry": account_vault().mark_verified(
+                    args.get("record_id")
+                )}, False
             # Browser operations use their own per-conversation lock and worker
             # thread. They never hold the runtime-wide lock while Playwright runs.
             if name.startswith("browser_"):
