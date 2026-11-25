@@ -12,7 +12,8 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,qwenRunning:fals
     gpt:{input:0,output:0,total:0,measuredTurns:0}
   },
   lastUsage:{qwen:null,gpt:null},
-  collabRun:null,collabLooping:false,collabStopRequested:false};
+  collabRun:null,collabLooping:false,collabStopRequested:false,
+  ownerInputTimer:null,ownerInputRequestId:null};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка Console API / MCP",
@@ -521,7 +522,11 @@ function renderToolPicker(groups){
 }
 function newRunId(){
   if(window.crypto?.randomUUID)return window.crypto.randomUUID().replace(/-/g,"");
-  return Array.from({length:32},()=>Math.floor(Math.random()*16).toString(16)).join("");
+  if(window.crypto?.getRandomValues){
+    const bytes=new Uint8Array(16);window.crypto.getRandomValues(bytes);
+    return Array.from(bytes,x=>x.toString(16).padStart(2,"0")).join("");
+  }
+  throw Error("Secure random generator unavailable");
 }
 async function watchUsageProgress(runId,mode="qwen"){
   const isRunning=()=>mode==="gpt"?state.gptRunning:state.qwenRunning;
@@ -556,6 +561,64 @@ async function requestJson(path,data){
   if(!response.ok)throw Error(body.detail||"HTTP "+response.status);
   return body;
 }
+async function pollOwnerInput(){
+  if(!state.sessionId)return;
+  try{
+    const response=await fetch("/api/owner-input/pending?session_id="+encodeURIComponent(state.sessionId),{cache:"no-store"});
+    if(!response.ok)return;
+    const data=await response.json(),item=data.pending;
+    if(!item||item.request_id===state.ownerInputRequestId)return;
+    state.ownerInputRequestId=item.request_id;
+    $("ownerInputPurpose").textContent=item.purpose||"Нужны данные владельца";
+    $("ownerInputFieldLabel").textContent=item.field_label||"Значение";
+    const input=$("ownerInputValue");
+    input.value="";
+    input.type=item.input_type==="password"?"password":"text";
+    input.inputMode=item.input_type==="otp"?"numeric":(item.input_type==="contact"?"email":"text");
+    input.maxLength=item.input_type==="otp"?8:512;
+    input.autocomplete="off";
+    $("ownerInputError").textContent="";
+    $("ownerInputDialog").showModal();
+    input.focus();
+  }catch(_){}
+}
+function startOwnerInputPolling(){
+  if(state.ownerInputTimer)clearInterval(state.ownerInputTimer);
+  state.ownerInputTimer=setInterval(pollOwnerInput,900);
+}
+function stopOwnerInputPolling(){
+  if(state.ownerInputTimer){clearInterval(state.ownerInputTimer);state.ownerInputTimer=null;}
+}
+async function submitOwnerInput(){
+  const value=$("ownerInputValue").value;
+  if(!state.sessionId||!state.ownerInputRequestId||!value)return;
+  $("ownerInputSubmit").disabled=true;
+  try{
+    const response=await fetch("/api/owner-input/submit",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({session_id:state.sessionId,request_id:state.ownerInputRequestId,value})
+    });
+    const data=await response.json();
+    if(!response.ok)throw Error(data.detail||"Не удалось передать данные");
+    $("ownerInputDialog").close();
+    $("ownerInputValue").value="";
+    state.ownerInputRequestId=null;
+  }catch(error){
+    $("ownerInputError").textContent=String(error.message||error);
+  }finally{$("ownerInputSubmit").disabled=false;}
+}
+async function cancelOwnerInput(){
+  if(!state.sessionId||!state.ownerInputRequestId)return;
+  try{
+    await fetch("/api/owner-input/cancel",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({session_id:state.sessionId,request_id:state.ownerInputRequestId})
+    });
+  }catch(_){}
+  $("ownerInputDialog").close();
+  $("ownerInputValue").value="";
+  state.ownerInputRequestId=null;
+}
 async function send(){
   if(state.mode==="gpt")return sendGPT();
   const text=$("messageInput").value.trim();
@@ -566,6 +629,8 @@ async function send(){
   resizeComposer();
   const pending=renderMessage("assistant",(state.qwenModel||"Модель")+" формирует ответ…",true);
   const runId=newRunId();
+  state.sessionId=state.sessionId||newRunId();
+  startOwnerInputPolling();
   busy(true,"qwen");
   const usageWatch=watchUsageProgress(runId,"qwen");
   try{
@@ -604,6 +669,10 @@ async function send(){
     pending.body.textContent="Ошибка: "+String(exc.message||exc)+" | ID: "+runId;
     $("sendStatus").textContent="Ошибка подключения";
   }finally{
+    stopOwnerInputPolling();
+    if($("ownerInputDialog").open)$("ownerInputDialog").close();
+    $("ownerInputValue").value="";
+    state.ownerInputRequestId=null;
     busy(false,"qwen");await usageWatch;$("messageInput").focus();toBottom();
   }
 }
@@ -1676,6 +1745,12 @@ function init(){
   $("collabNew").addEventListener("click",newCollab);
   $("navProfile").addEventListener("click",()=>openProfileSettings());
   $("modelQuickSettings").addEventListener("click",()=>openProfileSettings("model"));
+  $("ownerInputSubmit").addEventListener("click",submitOwnerInput);
+  $("ownerInputCancel").addEventListener("click",cancelOwnerInput);
+  $("ownerInputDialog").addEventListener("cancel",event=>{event.preventDefault();void cancelOwnerInput();});
+  $("ownerInputValue").addEventListener("keydown",event=>{
+    if(event.key==="Enter"){event.preventDefault();void submitOwnerInput();}
+  });
   $("profileClose").addEventListener("click",()=>$("profileDialog").close());
   $("profileCancel").addEventListener("click",()=>$("profileDialog").close());
   $("profileSave").addEventListener("click",saveProfileSettings);
