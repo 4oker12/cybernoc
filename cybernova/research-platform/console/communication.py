@@ -120,6 +120,11 @@ class CommunicationStore:
                     );
                     CREATE INDEX IF NOT EXISTS provider_state_by_task
                     ON provider_continuation_state(task_id,message_seq);
+                    CREATE TABLE IF NOT EXISTS scheduled_text_tasks (
+                      task_id TEXT PRIMARY KEY REFERENCES tasks(task_id),
+                      due_at TEXT NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS scheduled_text_due ON scheduled_text_tasks(due_at);
                     CREATE INDEX IF NOT EXISTS messages_by_task
                     ON messages(task_id,seq);
                     CREATE INDEX IF NOT EXISTS tasks_by_update
@@ -188,6 +193,7 @@ class CommunicationStore:
         self, task_id: str, actor: str, kind: str, body: str, *,
         evidence_refs: list[str] | None = None, event_key: str | None = None,
         status: str | None = None, provider_state: dict | None = None,
+        require_available: bool = False,
     ) -> dict:
         self.get_task(task_id)
         if actor not in ACTORS or kind not in KINDS:
@@ -218,6 +224,10 @@ class CommunicationStore:
         message_id = "msg_" + secrets.token_urlsafe(18)
         with self._lock, self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if require_available:
+                current = db.execute("SELECT status FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+                if current is None or current["status"] in {"running", "queued"}:
+                    raise CommunicationError("task_busy")
             if event_key:
                 row = db.execute(
                     "SELECT * FROM messages WHERE task_id=? AND actor=? AND event_key=?",
@@ -324,12 +334,70 @@ class CommunicationStore:
         return self.append(task_id, "qwen", "request_review", question,
                            evidence_refs=evidence_refs, status="needs_review")
 
-    def claim_queued(self) -> dict | None:
+    def recent_dialog(self, task_id: str, limit: int = 100) -> dict:
+        task = self.get_task(task_id)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise CommunicationError("invalid_pagination")
+        with self._connection() as db:
+            rows = db.execute("SELECT * FROM messages WHERE task_id=? ORDER BY seq DESC LIMIT ?",
+                              (task_id, limit)).fetchall()
+        return {"task": task, "messages": [self._message(r) for r in reversed(rows)],
+                "next_after": rows[0]["seq"] if rows else 0}
+
+    def schedule_text(self, prompt: str, due_at: str) -> dict:
+        prompt = _check_text(prompt, 9000)
+        try:
+            due = datetime.fromisoformat(due_at.replace("Z", "+00:00"))
+            if due.tzinfo is None:
+                raise ValueError("timezone required")
+            due = due.astimezone(timezone.utc).isoformat(timespec="milliseconds")
+        except (ValueError, TypeError, AttributeError):
+            raise CommunicationError("invalid_schedule_time") from None
+        now = _utc()
+        task_id = "cn_" + secrets.token_urlsafe(18)
+        with self._lock, self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            pending = db.execute("SELECT count(*) FROM scheduled_text_tasks s JOIN tasks t USING(task_id) WHERE t.status IN ('queued','running')").fetchone()[0]
+            if pending >= 32:
+                raise CommunicationError("schedule_queue_full")
+            db.execute("INSERT INTO tasks(task_id,title,status,origin,created_at,updated_at) VALUES(?,?,'queued','human',?,?)",
+                       (task_id, prompt[:MAX_TITLE], now, now))
+            db.execute("INSERT INTO scheduled_text_tasks(task_id,due_at) VALUES(?,?)", (task_id, due))
+            db.execute("INSERT INTO messages(message_id,task_id,actor,kind,body,created_at) VALUES(?,?,'human','instruction',?,?)",
+                       ("msg_" + secrets.token_urlsafe(18), task_id, prompt, now))
+            db.commit()
+        return self.get_task(task_id)
+
+    def scheduled_due(self, task_id: str) -> str | None:
+        with self._connection() as db:
+            row = db.execute("SELECT due_at FROM scheduled_text_tasks WHERE task_id=?", (task_id,)).fetchone()
+        return row["due_at"] if row else None
+
+    def cancel_scheduled(self, task_id: str) -> dict:
+        self.get_task(task_id)
+        with self._lock, self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            changed = db.execute("UPDATE tasks SET status='blocked',updated_at=?,revision=revision+1 WHERE task_id=? AND status='queued' AND EXISTS (SELECT 1 FROM scheduled_text_tasks WHERE task_id=?)",
+                                 (_utc(), task_id, task_id)).rowcount
+            if changed != 1:
+                raise CommunicationError("schedule_not_pending")
+            db.execute("INSERT INTO messages(message_id,task_id,actor,kind,body,created_at) VALUES(?,?,'controller','system',?,?)",
+                       ("msg_" + secrets.token_urlsafe(18), task_id, "Запланированный запуск отменён пользователем.", _utc()))
+            db.commit()
+        return self.get_task(task_id)
+
+    def claim_queued(self, *, text_only: bool = False) -> dict | None:
         """Atomically lease one queued task; multiple workers cannot claim it."""
         with self._lock, self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
-                "SELECT * FROM tasks WHERE status='queued' ORDER BY updated_at ASC LIMIT 1",
+                ("SELECT t.* FROM tasks t JOIN scheduled_text_tasks s USING(task_id) "
+                 "WHERE t.status='queued' AND s.due_at<=? ORDER BY s.due_at,t.created_at LIMIT 1")
+                if text_only else
+                ("SELECT t.* FROM tasks t WHERE t.status='queued' AND NOT EXISTS "
+                 "(SELECT 1 FROM scheduled_text_tasks s WHERE s.task_id=t.task_id) "
+                 "ORDER BY t.updated_at ASC LIMIT 1"),
+                (_utc(),) if text_only else (),
             ).fetchone()
             if row is None:
                 db.commit()

@@ -154,7 +154,7 @@ class GPTConversationTests(unittest.TestCase):
         self.assertIn("recordUsage(result.usage",app)
         self.assertIn('id="toolPickerToggle"',html)
         self.assertIn('id="tokenUsageStatus"',html)
-        self.assertIn('async function watchUsageProgress(runId,mode="qwen")',app)
+        self.assertIn('async function watchUsageProgress(runId,mode="qwen",pending=null)',app)
         self.assertIn("/api/usage-progress?run_id=",app)
         self.assertIn("run_id:runId",app)
         self.assertIn("ВКЛАДКИ · НАВИГАЦИЯ · NETWORK",app)

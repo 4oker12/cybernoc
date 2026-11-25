@@ -589,7 +589,7 @@ async function send(){
     showEvents(result.events,result.tool_calls,result.selected_by,pending);
     // Generate contextual next questions independently; do not delay the model reply.
     // A pending approval is the next user decision, not a generic follow-up.
-    if(!result.events?.some(e=>e.type==="approval_required")){
+    if(!result.usage?.budget_reached&&!result.events?.some(e=>e.type==="approval_required")){
       void loadFollowups(result.session_id,result.turn,pending);
     }
     if(result.task_id)void refreshTaskList();
@@ -825,6 +825,12 @@ async function refreshTaskList(){
       button.append(text,status);
       button.addEventListener("click",()=>resumeTask(task.task_id));
       list.append(button);
+      if(task.scheduled_at&&taskStatus==="queued"){
+        const cancel=node("button","header-button","Отменить запуск");cancel.type="button";
+        cancel.title=new Date(task.scheduled_at).toLocaleString();
+        cancel.addEventListener("click",async()=>{try{await requestJson("/api/comm/cancel-scheduled",{task_id:task.task_id});await refreshTaskList();}catch(e){$("sendStatus").textContent=String(e.message||e);}});
+        list.append(cancel);
+      }
     }
     if(!list.childNodes.length)list.append(node("p","muted","Пока нет исследований."));
   }catch(_){}
@@ -1245,7 +1251,7 @@ function toolsPanel(show){
 const DEFAULT_PROFILE_SETTINGS={
   user:{display_name:"",role:"",about:"",preferences:""},
   privacy:{share_with_researcher:true,share_with_chatgpt:true},
-  researcher:{description:"Самостоятельный технический исследователь и исполнитель Cybernova.",instructions:"Работай от цели к проверяемому результату. Сначала изучи доступные инструменты и текущую реализацию, затем выполни независимые безопасные этапы, проверь результат и кратко укажи блокеры. При ограничении сайта не обходи защиту: используй разрешённые источники и явно разделяй недоступность и отсутствие результатов.",behavior:{autonomy:90,initiative:80,skepticism:90,vigilance:85,neutrality:95,brevity:80,research_depth:80,persistence:90,humor:25}},
+  researcher:{memory_notes:"",input_budget:120000,description:"Самостоятельный технический исследователь и исполнитель Cybernova.",instructions:"Работай от цели к проверяемому результату. Сначала изучи доступные инструменты и текущую реализацию, затем выполни независимые безопасные этапы, проверь результат и кратко укажи блокеры. При ограничении сайта не обходи защиту: используй разрешённые источники и явно разделяй недоступность и отсутствие результатов.",behavior:{autonomy:90,initiative:80,skepticism:90,vigilance:85,neutrality:95,brevity:80,research_depth:80,persistence:90,humor:25}},
   chatgpt:{description:"Технический консультант, архитектор и независимый ревьюер.",instructions:"Сначала факты и цель, затем причинно-следственный анализ и проверяемый результат. Общайся естественно, без канцелярита; лёгкая ирония допустима только в подходящем контексте."},
   ui:{theme:"light",density:"comfortable",font_scale:100,sidebar_width:300,chat_width:1040,show_technical_details:false},
 };
@@ -1283,6 +1289,8 @@ function populateProfileSettings(settings){
   $("shareChatGPT").checked=privacy.share_with_chatgpt!==false;
   $("researcherDescription").value=researcher.description||"";
   $("researcherInstructions").value=researcher.instructions||"";
+  if($("researcherMemoryNotes"))$("researcherMemoryNotes").value=researcher.memory_notes||"";
+  if($("researcherInputBudget"))$("researcherInputBudget").value=String(researcher.input_budget||120000);
   for(const key of ["autonomy","initiative","skepticism","vigilance","neutrality","brevity","research_depth","persistence","humor"]){
     const input=$("researcher"+key.split("_").map(part=>part[0].toUpperCase()+part.slice(1)).join(""));
     const output=$(input.id+"Value");
@@ -1314,6 +1322,8 @@ function collectProfileSettings(){
     researcher:{
       description:$("researcherDescription").value,
       instructions:$("researcherInstructions").value,
+      memory_notes:$("researcherMemoryNotes")?.value||"",
+      input_budget:Number($("researcherInputBudget")?.value||120000),
       behavior:{
         autonomy:Number($("researcherAutonomy").value),
         initiative:Number($("researcherInitiative").value),
@@ -1622,6 +1632,18 @@ async function newCollab(){
   void refreshCollabRuns();
 }
 function init(){
+  $("scheduleTaskOpen")?.addEventListener("click",()=>{$("scheduleTaskDialog").showModal();});
+  $("scheduleTaskCancel")?.addEventListener("click",()=>{$("scheduleTaskDialog").close();});
+  $("scheduleTaskSave")?.addEventListener("click",async()=>{
+    const button=$("scheduleTaskSave");button.disabled=true;
+    try{
+      const message=$("scheduleTaskPrompt").value.trim();
+      const local=$("scheduleTaskTime").value;
+      if(!message)throw Error("Укажи задачу");
+      await requestJson("/api/comm/schedule",{message,due_at:(local?new Date(local):new Date()).toISOString()});
+      $("scheduleTaskPrompt").value="";$("scheduleTaskStatus").textContent="";$("scheduleTaskDialog").close();await refreshTaskList();
+    }catch(e){$("scheduleTaskStatus").textContent=String(e.message||e);}finally{button.disabled=false;}
+  });
   window.cybernovaWelcome=$("welcome").cloneNode(true);
   window.cybernovaGptWelcome=$("gptWelcome").cloneNode(true);
   showResearchScope({hosts:[],capture_detail:"evidence"});

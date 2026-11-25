@@ -51,17 +51,21 @@ def _history_from_dialog(messages: list[dict]) -> tuple[list[dict], str] | None:
 
 class CommunicationWorker:
     def __init__(self, store: CommunicationStore, *, agent_factory=None,
-                 interval_seconds: float = 5.0):
+                 interval_seconds: float = 5.0, model_factory=None, text_workers: int = 2):
         self.store = store
         self.agent_factory = agent_factory
         self.interval = interval_seconds
         self._stop = threading.Event()
         self._thread = None
+        self._text_threads = []
+        self.model_factory = model_factory
+        self.text_workers = max(0, min(2, text_workers))
 
     def _agent_for(self, task_id: str):
         if self.agent_factory is not None:
             return self.agent_factory(task_id)
         return Agent(
+            ollama=self.model_factory() if self.model_factory else None,
             mcp_factory=lambda: CommunicationToolClient(
                 TrafficToolClient(MCPClient(), {},
                                   scope=ResearchScopeStore().load(task_id)),
@@ -70,15 +74,15 @@ class CommunicationWorker:
             local_tool_runtime=shared_local_tool_runtime,
         )
 
-    def run_once(self) -> dict | None:
-        task = self.store.claim_queued()
+    def run_once(self, *, text_only=False) -> dict | None:
+        task = self.store.claim_queued(text_only=text_only)
         if task is None:
             return None
         task_id = task["task_id"]
         diagnostic_event("background_task_start", mode="researcher")
         started = time.monotonic()
         try:
-            dialog = self.store.read_dialog(task_id, limit=100)
+            dialog = self.store.recent_dialog(task_id, limit=100)
             current = _history_from_dialog(dialog["messages"])
             if current is None:
                 self.store.append(task_id, "controller", "system",
@@ -93,12 +97,16 @@ class CommunicationWorker:
                 options["scope"] = ResearchScopeStore().load(task_id)
                 options["session_id"] = task_id
                 try:
-                    from .profile_settings import ProfileSettingsStore, user_context_for, mode_instructions_for
+                    from .profile_settings import ProfileSettingsStore, user_context_for, mode_instructions_for, relevant_memory
                 except ImportError:
-                    from profile_settings import ProfileSettingsStore, user_context_for, mode_instructions_for
+                    from profile_settings import ProfileSettingsStore, user_context_for, mode_instructions_for, relevant_memory
                 profile = ProfileSettingsStore().load()
                 options["user_context"] = user_context_for(profile, "researcher")
                 options["profile_instructions"] = mode_instructions_for(profile, "researcher")
+                options["input_budget"] = profile["researcher"]["input_budget"]
+                options["memory_context"] = relevant_memory(profile, prompt)
+                if text_only:
+                    options.update(tools_enabled=False, force_tools=False, public_get=False, scope={})
             outcome = self._agent_for(task_id).run(history, prompt, **options)
             if not isinstance(outcome, dict):
                 raise ValueError("unexpected_agent_output")
@@ -145,10 +153,10 @@ class CommunicationWorker:
             return {"task_id": task_id, "status": "blocked",
                     "error": type(exc).__name__}
 
-    def _loop(self) -> None:
+    def _loop(self, text_only=False) -> None:
         while not self._stop.is_set():
             try:
-                self.run_once()
+                self.run_once(text_only=text_only)
             except Exception as exc:
                 diagnostic_event("background_worker_failed",
                                  status="failed", error_type=type(exc).__name__)
@@ -164,9 +172,17 @@ class CommunicationWorker:
             target=self._loop, daemon=True, name="cybernova-communication-worker",
         )
         self._thread.start()
+        self._text_threads = [threading.Thread(target=self._loop, args=(True,), daemon=True,
+                                               name=f"cybernova-text-worker-{i}")
+                              for i in range(self.text_workers)]
+        for thread in self._text_threads:
+            thread.start()
 
     def stop(self) -> None:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2)
             self._thread = None
+        for thread in self._text_threads:
+            thread.join(timeout=2)
+        self._text_threads = []

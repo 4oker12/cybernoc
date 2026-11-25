@@ -56,7 +56,7 @@ try:
     from .siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from .siwc_chat_store import GPTChatStore, GPTChatError
     from .research_scope import ResearchScopeStore, scope_profile
-    from .profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
+    from .profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for, relevant_memory
     from .model_settings import ModelSettingsError, apply_model_settings, get_model_settings, test_model_connection
 except ImportError:
     from agent import (
@@ -92,7 +92,7 @@ except ImportError:
     from siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from siwc_chat_store import GPTChatStore, GPTChatError
     from research_scope import ResearchScopeStore, scope_profile
-    from profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
+    from profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for, relevant_memory
     from model_settings import ModelSettingsError, apply_model_settings, get_model_settings, test_model_connection
 
 ROOT = Path(__file__).resolve().parent
@@ -261,7 +261,7 @@ collaboration_step_lock = RLock()
 async def lifespan(app):
     worker = None
     if os.environ.get("CYBERNOVA_COMM_WORKER", "1") == "1":
-        worker = CommunicationWorker(communication_store())
+        worker = CommunicationWorker(communication_store(), model_factory=lambda: agent.ollama)
         worker.start()
     try:
         yield
@@ -1018,7 +1018,7 @@ def chat(payload: ChatRequest):
         task_id = state["task_id"]
         # Include ChatGPT feedback and background Qwen results which arrived
         # while the browser was open, instead of using stale in-memory history.
-        previous = store.read_dialog(task_id, limit=100)["messages"]
+        previous = store.recent_dialog(task_id, limit=100)["messages"]
         persisted_history = []
         for message in previous:
             if message["actor"] == "controller" and message["kind"] == "system":
@@ -1037,8 +1037,11 @@ def chat(payload: ChatRequest):
                 persisted_history[-MAX_HISTORY:], state["history"],
                 provider_identity=_provider_identity(agent.ollama),
             )
-        store.append(task_id, "human", "instruction", payload.message,
-                     status="running")
+        try:
+            store.append(task_id, "human", "instruction", payload.message,
+                         status="running", require_available=True)
+        except CommunicationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         try:
             selected_tool_groups = normalize_tool_groups(payload.tool_groups)
         except ValueError as exc:
@@ -1065,7 +1068,9 @@ def chat(payload: ChatRequest):
                 profile_instructions=mode_instructions_for(profile, "researcher"),
                 tool_groups=selected_tool_groups,
                 tools_enabled=payload.tools_enabled,
-                session_id=sid,
+                session_id=task_id,
+                input_budget=profile["researcher"]["input_budget"],
+                memory_context=relevant_memory(profile, payload.message),
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
                 on_progress=lambda progress: _update_agent_progress(payload.run_id, progress),
             )
@@ -1258,11 +1263,36 @@ def communication_evidence(session_id: str):
 @app.get("/api/comm/tasks")
 def communication_tasks():
     """List recent persisted tasks in the local Cybernova Web UI."""
-    return {"tasks": communication_store().list_tasks(limit=25)}
+    store = communication_store()
+    tasks = store.list_tasks(limit=25)
+    return {"tasks": [{**task, "scheduled_at": store.scheduled_due(task["task_id"])} for task in tasks]}
+
+
+class ScheduleTextRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=9000)
+    due_at: str = Field(min_length=1, max_length=64)
+
+
+@app.post("/api/comm/schedule")
+def schedule_text_task(payload: ScheduleTextRequest):
+    if os.environ.get("CYBERNOVA_COMM_WORKER", "1") != "1":
+        raise HTTPException(status_code=503, detail="background_worker_disabled")
+    try:
+        return {"task": communication_store().schedule_text(payload.message, payload.due_at)}
+    except CommunicationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 class ResumeTaskRequest(BaseModel):
     task_id: str = Field(min_length=12, max_length=100)
+
+
+@app.post("/api/comm/cancel-scheduled")
+def cancel_scheduled_task(payload: ResumeTaskRequest):
+    try:
+        return {"task": communication_store().cancel_scheduled(payload.task_id)}
+    except CommunicationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/comm/resume")
@@ -1271,7 +1301,7 @@ def communication_resume(payload: ResumeTaskRequest):
     store = communication_store()
     try:
         task = store.get_task(payload.task_id)
-        dialog = store.read_dialog(payload.task_id, limit=100)
+        dialog = store.recent_dialog(payload.task_id, limit=100)
     except CommunicationError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     sid, state = _session(None)
