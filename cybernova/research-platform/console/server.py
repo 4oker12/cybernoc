@@ -14,11 +14,11 @@ import os
 from pathlib import Path
 import secrets
 import subprocess
-from threading import RLock
+from threading import Lock, RLock
 import time
 from urllib import request, error, parse
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -1090,8 +1090,59 @@ def chat(payload: ChatRequest):
             status=final_status,
             provider_state=_provider_state_payload(agent.ollama, history_reasoning_content),
         )
-    return {"session_id": sid, "task_id": task_id, "event_seq": event["seq"],
-            "turn": state["turns"], "run_id": payload.run_id, **outcome}
+        return {"session_id": sid, "task_id": task_id, "event_seq": event["seq"],
+                "turn": state["turns"], "run_id": payload.run_id, **outcome}
+
+
+chat_jobs: OrderedDict[str, dict] = OrderedDict()
+chat_jobs_lock = Lock()
+
+
+class ChatJobReceipt(BaseModel):
+    receipt: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class ChatJobRequest(ChatRequest, ChatJobReceipt):
+    pass
+
+
+def _complete_chat_job(payload: ChatJobRequest):
+    try:
+        result = {"status": "completed", "result": chat(payload)}
+    except HTTPException as exc:
+        result = {"status": "failed", "detail": exc.detail}
+    except Exception:
+        result = {"status": "failed", "detail": "chat_job_failed"}
+    with chat_jobs_lock:
+        chat_jobs[payload.receipt].update(result)
+
+
+@app.post("/api/chat/start", status_code=202)
+def start_chat_job(payload: ChatJobRequest, background: BackgroundTasks):
+    with chat_jobs_lock:
+        existing = chat_jobs.get(payload.receipt)
+        if existing is not None:
+            if existing["run_id"] != payload.run_id:
+                raise HTTPException(status_code=409, detail="chat_receipt_conflict")
+            return {"status": existing["status"]}
+        if sum(job["status"] == "running" for job in chat_jobs.values()) >= 4:
+            raise HTTPException(status_code=429, detail="chat_queue_full")
+        if len(chat_jobs) >= 32:
+            oldest_finished = next(key for key, job in chat_jobs.items()
+                                   if job["status"] != "running")
+            del chat_jobs[oldest_finished]
+        chat_jobs[payload.receipt] = {"status": "running", "run_id": payload.run_id}
+        background.add_task(_complete_chat_job, payload)
+    return {"status": "running"}
+
+
+@app.post("/api/chat/result")
+def chat_job_result(payload: ChatJobReceipt):
+    with chat_jobs_lock:
+        job = chat_jobs.get(payload.receipt)
+        if job is None:
+            raise HTTPException(status_code=404, detail="chat_result_not_found")
+        return dict(job)
 
 
 @app.post("/api/approve")

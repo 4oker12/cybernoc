@@ -521,7 +521,8 @@ function renderToolPicker(groups){
 }
 function newRunId(){
   if(window.crypto?.randomUUID)return window.crypto.randomUUID().replace(/-/g,"");
-  return Array.from({length:32},()=>Math.floor(Math.random()*16).toString(16)).join("");
+  return Array.from(window.crypto.getRandomValues(new Uint8Array(16)),
+    value=>value.toString(16).padStart(2,"0")).join("");
 }
 async function watchUsageProgress(runId,mode="qwen"){
   const isRunning=()=>mode==="gpt"?state.gptRunning:state.qwenRunning;
@@ -548,13 +549,46 @@ async function watchUsageProgress(runId,mode="qwen"){
     }catch(_){}
   }
 }
-async function requestJson(path,data){
+async function requestJson(path,data,signal){
   const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},
-     body:JSON.stringify(data),cache:"no-store"});
+     body:JSON.stringify(data),cache:"no-store",signal});
   let body;
-  try{body=await response.json();}catch(_){throw Error("Некорректный ответ сервера: "+response.status);}
-  if(!response.ok)throw Error(body.detail||"HTTP "+response.status);
+  try{body=await response.json();}catch(_){
+    throw Object.assign(Error("Некорректный ответ сервера: "+response.status),{status:response.status});
+  }
+  if(!response.ok)throw Object.assign(Error(body.detail||"HTTP "+response.status),{status:response.status});
   return body;
+}
+async function requestChatTurn(data,pending){
+  const receipt=newRunId();
+  const deadline=Date.now()+15*60*1000;
+  let accepted=false, failures=0;
+  try{
+    await requestJson("/api/chat/start",{...data,receipt},AbortSignal.timeout(10000));
+    accepted=true;
+  }catch(exc){
+    if(!(exc instanceof TypeError)&&exc.name!=="TimeoutError"&&!(exc.status>=500))throw exc;
+  }
+  pending.body.textContent=accepted?"Задача принята. Ожидаем результат…":"Проверяем, принял ли сервер задачу…";
+  while(Date.now()<deadline){
+    await new Promise(resolve=>setTimeout(resolve,1000));
+    let job;
+    try{
+      job=await requestJson("/api/chat/result",{receipt},AbortSignal.timeout(10000));
+    }catch(exc){
+      const transient=exc instanceof TypeError||exc.name==="TimeoutError"||
+        exc.status>=500||(!accepted&&exc.status===404);
+      if(!transient||++failures>=15)throw exc;
+      pending.body.textContent="Связь прервалась. Проверяем статус задачи…";
+      continue;
+    }
+    if(job.status==="completed")return job.result;
+    if(job.status==="failed")throw Error(job.detail||"Выполнение задачи завершилось ошибкой");
+    if(!accepted||failures)pending.body.textContent="Задача принята. Ожидаем результат…";
+    accepted=true;
+    failures=0;
+  }
+  throw Error("Истекло время ожидания результата. Задача может продолжаться на сервере.");
 }
 async function send(){
   if(state.mode==="gpt")return sendGPT();
@@ -569,10 +603,10 @@ async function send(){
   busy(true,"qwen");
   const usageWatch=watchUsageProgress(runId,"qwen");
   try{
-    const result=await requestJson("/api/chat",{
+    const result=await requestChatTurn({
       session_id:state.sessionId,message:text,tool_groups:state.toolGroups,
       tools_enabled:state.toolsEnabled,run_id:runId,
-    });
+    },pending);
     state.sessionId=result.session_id;
     state.taskId=result.task_id||state.taskId;
     state.lastSeq=Math.max(state.lastSeq,result.event_seq||0);
