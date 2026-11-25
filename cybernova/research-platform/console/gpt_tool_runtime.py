@@ -375,7 +375,7 @@ def build_tool_catalog() -> list[dict]:
         ),
         _function_tool(
             "owner_request_input",
-            "Pause the current task and request one sensitive value through Cybernova's local protected dialog. Allowed types: otp, password, contact. The value is never returned to the model or written to logs/files. For a password, set offer_vault_save=true to show the owner an optional local encrypted-vault checkbox. The request is bound to the current HTTPS origin and conversation. Do not ask for payment-card data.",
+            "Pause the current task and request one sensitive value through Cybernova's local protected dialog. Allowed types: otp, password, contact. The value is never returned to the model or written to logs/files. For a password, set offer_vault_save=true to show the owner an optional local encrypted-vault checkbox. The request is bound to the current HTTPS origin and conversation. This generic tool is not for payment cards; use browser_request_and_fill_payment_card for an observed HTTPS card form.",
             {"type": "object", "properties": {
                 "purpose": {"type": "string", "maxLength": 240},
                 "input_type": {"type": "string", "enum": ["otp", "password", "contact"]},
