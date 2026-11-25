@@ -493,6 +493,10 @@ class BrowserSession:
         else:
             raise ValueError("payment_form_field_missing_or_ambiguous:expiry")
         choose("cardholder_name")
+        choose("billing_address_line1")
+        choose("billing_city")
+        choose("billing_region")
+        choose("billing_country")
         choose("billing_postal_code")
         main_host = urlsplit(origin).hostname.lower()
         frame_hosts = sorted({host for host in field_hosts.values() if host != main_host})
