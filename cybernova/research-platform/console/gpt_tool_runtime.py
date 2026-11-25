@@ -23,6 +23,10 @@ from threading import RLock
 
 try:
     from .tool_policy import task_intent_matches
+    from .account_missions import (
+        AccountMissionError, AccountMissionStore, account_mission_store,
+        MISSION_STATUSES, STEP_STATUSES,
+    )
     from .browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from .developer_tools import SOURCE
     from .research_web import RESEARCH_WEB_TOOLS, research_web_call
@@ -32,6 +36,10 @@ try:
     from .owner_input import owner_input_broker
 except ImportError:
     from tool_policy import task_intent_matches
+    from account_missions import (
+        AccountMissionError, AccountMissionStore, account_mission_store,
+        MISSION_STATUSES, STEP_STATUSES,
+    )
     from browser_control import BROWSER_CONTROL_TOOLS, BrowserSession, browser_control_call
     from developer_tools import SOURCE
     from research_web import RESEARCH_WEB_TOOLS, research_web_call
@@ -68,6 +76,8 @@ _TOOL_NAMES = frozenset(
     item["name"] for item in BROWSER_CONTROL_TOOLS
 ) | frozenset(item["name"] for item in RESEARCH_WEB_TOOLS) | {
     "terminal_run", "terminal_status", "owner_request_input", "browser_fill_owner_input",
+    "account_mission_create", "account_mission_checkpoint", "account_mission_get",
+    "account_mission_list", "account_mission_resume",
 } | COMPUTER_TOOL_NAMES | GITHUB_NAMES | GITHUB_WRITE_NAMES
 
 # Composer tool bundles. Empty selection means automatic access to the full
@@ -132,7 +142,7 @@ def normalize_tool_groups(groups=None) -> list[str]:
 
 
 def tool_group_for_name(name: str) -> str:
-    if name.startswith("browser_") or name == "owner_request_input":
+    if name.startswith(("browser_", "account_mission_")) or name == "owner_request_input":
         return "browser"
     if name.startswith("computer_"):
         return "computer"
@@ -274,7 +284,56 @@ def build_tool_catalog() -> list[dict]:
     rows.extend(_convert_mcp_tool(item) for item in COMPUTER_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in GITHUB_TOOLS)
     rows.extend(_convert_mcp_tool(item) for item in GITHUB_WRITE_TOOLS)
+    mission_statuses = sorted(MISSION_STATUSES)
+    step_statuses = sorted(STEP_STATUSES)
     rows.extend([
+        _function_tool(
+            "account_mission_create",
+            "Create a durable account-setup mission. Stores only non-secret goal and success criteria in the local SQLite data store. Use for multi-step registrations or service setup; never put passwords, OTPs, cookies, API keys, payment data or verification URLs with tokens in mission text.",
+            {"type": "object", "properties": {
+                "service": {"type": "string", "maxLength": 120},
+                "goal": {"type": "string", "maxLength": 2000},
+                "success_criteria": {"type": "string", "maxLength": 1200},
+            }, "required": ["service", "goal", "success_criteria"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_mission_checkpoint",
+            "Persist one idempotent account-setup checkpoint. Record only a short sanitized summary and next action, never secrets or raw page contents. Mark an external action started before it happens and completed only after verifying the provider's state. Use waiting_owner for SMS/OTP or a required owner input. page_url must be the clean HTTPS page URL; query strings and tokens are stripped.",
+            {"type": "object", "properties": {
+                "mission_id": {"type": "string", "maxLength": 100},
+                "step_key": {"type": "string", "maxLength": 80},
+                "step_name": {"type": "string", "maxLength": 160},
+                "step_status": {"type": "string", "enum": step_statuses},
+                "summary": {"type": "string", "maxLength": 1200},
+                "next_action": {"type": "string", "maxLength": 600},
+                "page_url": {"type": "string", "maxLength": 2048},
+                "mission_status": {"type": "string", "enum": [""] + mission_statuses},
+            }, "required": ["mission_id", "step_key", "step_name", "step_status",
+                           "summary", "next_action", "page_url", "mission_status"],
+               "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_mission_get",
+            "Read one account mission and its ordered checkpoints. Use this after a restart or when returning to a previous account task. If resume_requires_reconciliation is true, inspect the provider's current state before repeating the last action.",
+            {"type": "object", "properties": {
+                "mission_id": {"type": "string", "maxLength": 100},
+            }, "required": ["mission_id"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_mission_list",
+            "List recent account missions. Use at the start of a new account-setup request to find an existing matching mission rather than creating a duplicate. Empty status means all statuses.",
+            {"type": "object", "properties": {
+                "status": {"type": "string", "enum": [""] + mission_statuses},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            }, "required": ["status", "limit"], "additionalProperties": False},
+        ),
+        _function_tool(
+            "account_mission_resume",
+            "Explicitly resume a blocked or waiting account mission. This changes only the mission status; it does NOT replay any browser action. Read the returned checkpoints and reconcile the live provider state first.",
+            {"type": "object", "properties": {
+                "mission_id": {"type": "string", "maxLength": 100},
+            }, "required": ["mission_id"], "additionalProperties": False},
+        ),
         _function_tool(
             "owner_request_input",
             "Pause the current task and request one sensitive value directly from the owner through Cybernova's local protected dialog. Allowed types: otp, password, contact. The value is held in memory only and is NEVER returned to the model or written to logs/files. Do not ask for payment-card data; use the provider's hosted payment page. Waits for the owner or times out.",
@@ -652,6 +711,29 @@ class GPTToolRuntime:
                 return github_call(name, args)
             if name in GITHUB_WRITE_NAMES:
                 return github_write_call(name, args, user_messages=user_messages)
+            if name.startswith("account_mission_"):
+                missions = account_mission_store()
+                if name == "account_mission_create":
+                    result = missions.create(
+                        args.get("service"), args.get("goal"), args.get("success_criteria", "")
+                    )
+                    return {"ok": True, "mission": result}, False
+                if name == "account_mission_checkpoint":
+                    result = missions.checkpoint(
+                        args.get("mission_id"), args.get("step_key"), args.get("step_name"),
+                        args.get("step_status"), args.get("summary"),
+                        args.get("next_action", ""), args.get("page_url", ""),
+                        args.get("mission_status") or None,
+                    )
+                    return {"ok": True, "mission": result}, False
+                if name == "account_mission_get":
+                    return {"ok": True, "mission": missions.get(args.get("mission_id"))}, False
+                if name == "account_mission_list":
+                    return {"ok": True, "missions": missions.list(
+                        args.get("status") or None, args.get("limit", 20)
+                    )}, False
+                if name == "account_mission_resume":
+                    return {"ok": True, "mission": missions.resume(args.get("mission_id"))}, False
             if name == "owner_request_input":
                 if not isinstance(conversation_key, str) or not conversation_key:
                     return {"ok": False, "error": "owner_input_session_unavailable"}, True
