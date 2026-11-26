@@ -121,6 +121,10 @@ BROWSER_CONTROL_TOOLS = [
           {"name": {**STRING, "description": "Exact accessible name of one button"},
            "dialog_action": {"type": "string", "enum": ["dismiss", "accept"],
                              "description": "How to handle a JavaScript confirm caused by this click"}}, ["name"]),
+    _tool("browser_set_checked",
+          "Set one visible native checkbox or radio button by its label. Verify the checked state. Does not authorize form submission or other write requests.",
+          {"name": STRING, "role": {"type": "string", "enum": ["checkbox", "radio"]},
+           "checked": {"type": "boolean"}}, ["name", "role", "checked"]),
     _tool("browser_back",
           "Navigate back one page in the isolated Chromium session."),
     _tool("browser_wait",
@@ -1558,6 +1562,8 @@ class BrowserSession:
             type: el.getAttribute('type') || '',
             placeholder: el.getAttribute('placeholder') || '',
             labels: Array.from(el.labels || []).map(x => (x.innerText || x.textContent || '').trim()).join(' ').slice(0, 120),
+            checked: (el.type === 'checkbox' || el.type === 'radio') ? !!el.checked : null,
+            submit_label: el.tagName === 'INPUT' && ['submit','button','reset'].includes(el.type) ? (el.value || '').slice(0,120) : '',
             name: el.getAttribute('name') || '',
             id: el.getAttribute('id') || '',
             aria_label: el.getAttribute('aria-label') || '',
@@ -1629,14 +1635,14 @@ class BrowserSession:
                 rows = []
             for item in rows:
                 label = _redact_text(
-                    item.get("text", "") or item.get("labels", "")
-                    or item.get("aria_label", "") or item.get("placeholder", "")
+                    item.get("labels", "") or item.get("aria_label", "")
+                    or item.get("submit_label", "") or item.get("text", "") or item.get("placeholder", "")
                     or item.get("name", "") or item.get("id", "")
                 ).strip()
                 frame_info = {"frame_index": frame_index, "frame_url": frame_url,
                               "region": item.get("region") or "other",
                               "in_viewport": bool(item.get("in_viewport"))}
-                if item["tag"] == "a" and label:
+                if item["tag"] == "a" and item.get("role") != "button" and label:
                     href = urljoin(getattr(frame, "url", "") or page.url, item.get("href") or "")
                     parsed_href = urlsplit(href)
                     if parsed_href.scheme not in {"http", "https"}:
@@ -1651,7 +1657,8 @@ class BrowserSession:
                         kind = "external"
                     links.append({"name": label, "url": _safe_url(href) if kind != "action" else "",
                                   "kind": kind, **frame_info})
-                elif item["tag"] == "button" or item.get("role") == "button":
+                elif (item["tag"] == "button" or item.get("role") == "button"
+                      or (item["tag"] == "input" and item.get("type") in {"submit", "button", "reset"})):
                     if label:
                         buttons.append({
                             "name": label, "type": item.get("type") or "button",
@@ -1668,6 +1675,7 @@ class BrowserSession:
                         "autocomplete": _redact_text(item.get("autocomplete") or "")[:80],
                         "data_agent_id": _redact_text(item.get("data_agent_id") or "")[:100],
                         "readonly": bool(item.get("readonly")),
+                        "checked": item.get("checked"),
                         **frame_info,
                     })
         try:
@@ -1757,13 +1765,45 @@ class BrowserSession:
     def _one(self, role: str, name: str):
         if not isinstance(name, str) or not name.strip() or len(name) > 180:
             raise ValueError("browser_target_name_invalid")
-        locator = self._page.get_by_role(role, name=name.strip(), exact=True)
-        count = locator.count()
-        if count != 1:
-            raise ValueError("browser_target_not_unique:" + str(count))
-        if not locator.is_visible() or not locator.is_enabled():
-            raise ValueError("browser_target_not_interactable")
-        return locator
+        target = name.strip()
+        main = getattr(self._page, "main_frame", None)
+        frames = list(getattr(self._page, "frames", []) or [])
+        contexts = [main if main is not None else self._page]
+        contexts.extend(frame for frame in frames if frame is not main)
+        # Search semantic roles first, then the same native control kind by
+        # normalized, exact visible text. Never choose among multiple matches.
+        selectors = {
+            "link": "a[href],[role='link']",
+            "button": "button,[role='button'],input[type='submit'],input[type='button']",
+            "checkbox": "input[type='checkbox']",
+            "radio": "input[type='radio']",
+        }
+        pattern = re.compile(r"^\s*" + r"\s+".join(re.escape(p) for p in target.split()) + r"\s*$", re.I)
+        strategies = [lambda frame: frame.get_by_role(role, name=target, exact=True),
+                      lambda frame: frame.get_by_role(role, name=pattern)]
+        if role in selectors:
+            strategies.append(lambda frame: frame.locator(selectors[role]).filter(has_text=pattern))
+        for strategy in strategies:
+            matches = []
+            overflow = False
+            for frame in contexts:
+                try:
+                    group = strategy(frame)
+                    count = group.count()
+                    if count > 40:
+                        overflow = True
+                        continue
+                    for index in range(count):
+                        candidate = group.nth(index)
+                        if candidate.is_visible() and candidate.is_enabled():
+                            matches.append(candidate)
+                except Exception:
+                    continue
+            if overflow or len(matches) > 1:
+                raise ValueError("browser_target_not_unique:" + ("many" if overflow else str(len(matches))))
+            if len(matches) == 1:
+                return matches[0]
+        raise ValueError("browser_target_not_unique:0")
 
     def _dispatch(self, name: str, args: dict, expected_action_origin: str | None = None) -> dict:
         if name not in BROWSER_CONTROL_NAMES:
@@ -2037,7 +2077,18 @@ class BrowserSession:
                         self._page.keyboard.press("ControlOrMeta+A")
                         self._page.keyboard.press("Backspace")
                     _keyboard_type_text(self._page.keyboard, value, False)
-                return self._snapshot()
+                result = self._snapshot()
+                try:
+                    verified = locator.evaluate(
+                        "(el, expected) => { const v = el.isContentEditable || el.getAttribute('role') === 'textbox' && !('value' in el) ? el.innerText : el.value; return typeof v === 'string' && (expected.clear ? v === expected.text : v.endsWith(expected.text)); }",
+                        {"text": value, "clear": clear_first},
+                    )
+                except Exception:
+                    verified = None
+                result["field_verification"] = "verified" if verified is True else "mismatch" if verified is False else "unknown"
+                if verified is False:
+                    result["ok"] = False
+                return result
 
             if (not isinstance(coords, (list, tuple)) or len(coords) != 2
                     or any(type(point) not in (int, float) or abs(point) > 100000
@@ -2074,6 +2125,22 @@ class BrowserSession:
                 self._page.keyboard.press("Backspace")
             _keyboard_type_text(self._page.keyboard, value, human_like)
             return self._snapshot()
+        if name == "browser_set_checked":
+            if set(args) != {"name", "role", "checked"} or args["role"] not in {"checkbox", "radio"} or type(args["checked"]) is not bool:
+                raise ValueError("browser_check_arguments_invalid")
+            locator = self._one(args["role"], args["name"])
+            metadata = _browser_field_metadata(locator)
+            if (metadata.get("tag") != "input" or metadata.get("type") != args["role"]
+                    or _browser_field_is_sensitive(metadata, args["name"])
+                    or HIGH_IMPACT.search(args["name"])
+                    or (args["role"] == "radio" and not args["checked"])):
+                raise ValueError("browser_check_target_refused")
+            locator.set_checked(args["checked"], timeout=7000)
+            verified = locator.is_checked() == args["checked"]
+            result = self._snapshot()
+            result["checked_state_verified"] = verified
+            result["ok"] = verified
+            return result
         if name == "browser_select":
             if set(args) != {"label", "value"}:
                 raise ValueError("browser_arguments_invalid")
@@ -2226,7 +2293,10 @@ def browser_control_call(name: str, args: dict, session: BrowserSession) -> tupl
                 "ok": False, "error": "chromium_not_installed",
                 "hint": "Run native.py --data-dir <existing-data-dir> install-browser",
             }, True
-        return {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}, True
+        result = {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}
+        if "browser_target_not_unique" in message or "browser_field_not_found" in message or "not_unique_or_interactable" in message:
+            result["recovery"] = "Refresh browser_snapshot; inspect the visible role, label and frame. If ambiguous choose a more specific observed target. Do not repeat the same failed action."
+        return result, True
     except Exception as exc:
         message = str(exc).lower()
         if "chromium_not_installed" in message or "executable doesn't exist" in message or "please run the following command" in message:
