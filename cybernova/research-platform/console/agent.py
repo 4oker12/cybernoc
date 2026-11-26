@@ -518,6 +518,99 @@ def _compact_context(messages):
     return compact
 
 
+def _bounded_browser_json(result, limit):
+    """Project browser observations into valid JSON, preserving action receipts.
+
+    Trim long text and optional metadata before removing actionable controls.
+    The full observation remains in the controller context for subsequent calls.
+    """
+    def encode(obj):
+        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    original = encode(result)
+    if len(original) <= limit:
+        return original
+    projected = dict(result)
+    projected["observation_compacted"] = True
+    # Explicit reads must not skip unseen text or rows when the model budget
+    # is smaller than the browser's original page chunk.
+    if type(result.get("offset")) is int and isinstance(result.get("text"), str):
+        projected.pop("note", None)
+        projected.pop("scopes", None)
+        source = result["text"]
+        lo, hi, best = 1, len(source), None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            partial = dict(projected, text=source[:mid])
+            if mid < len(source):
+                partial["next_offset"] = result["offset"] + mid
+                partial["complete"] = False
+            encoded = encode(partial)
+            if len(encoded) <= limit:
+                best, lo = encoded, mid + 1
+            else:
+                hi = mid - 1
+        if best is not None:
+            return best
+        return encode({"ok": False, "error": "browser_read_chunk_exceeds_context_budget",
+                       "offset": result["offset"], "complete": False})
+    if type(result.get("row_offset")) is int and isinstance(result.get("rows"), list):
+        projected["rows"] = list(result["rows"])
+        while projected["rows"] and len(encode(projected)) > limit:
+            projected["rows"].pop()
+            projected["next_row_offset"] = result["row_offset"] + len(projected["rows"])
+            projected["complete"] = False
+        if projected["rows"] and len(encode(projected)) <= limit:
+            return encode(projected)
+        return encode({"ok": False, "error": "browser_table_row_exceeds_context_budget",
+                       "row_offset": result["row_offset"], "complete": False,
+                       "frame_index": result.get("frame_index"), "table_index": result.get("table_index")})
+    # The latest control map matters more than duplicated page prose.
+    for key in ("visible_text", "text", "content"):
+        if isinstance(projected.get(key), str):
+            projected[key] = projected[key][:700]
+    for key in ("links", "buttons", "form_fields"):
+        rows = projected.get(key)
+        if isinstance(rows, list):
+            keys = {
+                "links": ("name", "url", "kind", "frame_index", "region"),
+                "buttons": ("name", "type", "frame_index", "region"),
+                "form_fields": ("label", "type", "id", "name", "placeholder", "checked", "frame_index"),
+            }[key]
+            projected[key] = [
+                {k: row[k] for k in keys if k in row and row[k] not in ("", None)}
+                for row in rows if isinstance(row, dict)
+            ]
+    if isinstance(projected.get("content_stats"), dict) and isinstance(projected.get("visible_text"), str):
+        projected["content_stats"] = dict(projected["content_stats"])
+        projected["content_stats"]["model_excerpt_chars"] = len(projected["visible_text"])
+        projected["content_stats"]["model_excerpt_truncated"] = len(projected["visible_text"]) < len(result.get("visible_text", ""))
+    for key in ("browser", "note"):
+        projected.pop(key, None)
+    while len(encode(projected)) > limit:
+        candidates = [key for key in ("links", "buttons", "form_fields", "headings", "landmarks", "tables", "blocked_requests", "dialogs", "rows", "matches")
+                      if isinstance(projected.get(key), list) and projected[key]]
+        if not candidates:
+            break
+        key = max(candidates, key=lambda item: len(encode(projected[item])))
+        projected[key] = projected[key][:-1]
+        projected["omitted_controls"] = True
+    if len(encode(projected)) <= limit:
+        return encode(projected)
+    # Preserve status and cursors rather than emitting syntactically broken JSON.
+    minimal = {k: projected[k] for k in (
+        "ok", "error", "reason", "status", "url", "title", "post_http_status",
+        "post_outcome", "approved_submit", "approved_post_requests_allowed",
+        "field_verification", "checked_state_verified", "next_offset",
+        "next_row_offset", "complete", "recovery",
+    ) if k in projected}
+    minimal["observation_compacted"] = True
+    minimal["recovery"] = "Observation exceeds context budget. Use browser_snapshot or a targeted read."
+    for k, v in list(minimal.items()):
+        if isinstance(v, str):
+            minimal[k] = v[:300]
+    return encode(minimal)
+
+
 def _compact_tool_output(output, seen_pages):
     content = str(output.get("content") or "")
     if not str(output.get("tool_name", "")).startswith("browser_"):
@@ -526,9 +619,10 @@ def _compact_tool_output(output, seen_pages):
         result = json.loads(content)
     except ValueError:
         return content[:MAX_CONTEXT_TOOL_CHARS]
-    if (not isinstance(result, dict) or result.get("ok") is not True
-            or not result.get("url") or "visible_text" not in result):
+    if not isinstance(result, dict):
         return content[:MAX_CONTEXT_TOOL_CHARS]
+    if (result.get("ok") is not True or not result.get("url") or "visible_text" not in result):
+        return _bounded_browser_json(result, MAX_CONTEXT_TOOL_CHARS)
     page = tuple(result.get(key) for key in ("url", "title", *_BROWSER_PAGE_FIELDS))
     fingerprint = json.dumps(page, ensure_ascii=False, sort_keys=True)
     if fingerprint in seen_pages:
@@ -537,7 +631,7 @@ def _compact_tool_output(output, seen_pages):
         content = json.dumps(result, ensure_ascii=False)
     else:
         seen_pages.add(fingerprint)
-    return content[:MAX_CONTEXT_TOOL_CHARS]
+    return _bounded_browser_json(result, MAX_CONTEXT_TOOL_CHARS)
 
 
 def _restore_reasoning_history(persisted_history, in_memory_history, provider_identity=None):
@@ -1035,7 +1129,7 @@ class Agent:
                             )
                             executed += 1
                             selected_by = "evidence_first_fallback"
-                            serialized = json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]
+                            serialized = json.dumps(observed, ensure_ascii=False)
                             events.append({
                                 "type": "tool_result", "name": chosen,
                                 "arguments": {"url": selected_url},
@@ -1197,19 +1291,21 @@ class Agent:
                                 else "screenshot_payload_invalid_or_too_large"
                             ),
                         }
-                    serialized = json.dumps(safe_result, ensure_ascii=False)[:MAX_RESULT]
+                    serialized = json.dumps(safe_result, ensure_ascii=False)
+                    model_serialized = serialized if name.startswith("browser_") else serialized[:MAX_RESULT]
                     safe_event = {
                         "type": kind, "name": str(name)[:80],
                         "arguments": _safe_args(name, args) if name in REVIEWED_TOOLS
                                      else safe_preview(args),
                         "is_error": failed or safe_result.get("ok") is False,
                         "result": safe_result if len(serialized) < MAX_RESULT
-                                  else {"truncated": serialized},
+                                  else (json.loads(_bounded_browser_json(safe_result, MAX_RESULT))
+                                        if name.startswith("browser_") else {"truncated": serialized[:MAX_RESULT]}),
                     }
                     safe_event.update(event)
                     events.append(safe_event)
                     context.append({"role": "tool", "tool_name": str(name),
-                                    "content": serialized})
+                                    "content": model_serialized})
                     count += 1
                 if count >= MAX_CALLS:
                     context.append({"role": "system", "content":
