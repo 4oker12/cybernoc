@@ -822,6 +822,23 @@ class AgentTests(unittest.TestCase):
         self.assertNotIn("visible_text", results[1])
         self.assertEqual(results[2]["form_fields"], [{"label": "Email"}])
 
+    def test_large_browser_observation_preserves_receipts_and_valid_json(self):
+        from console.agent import _compact_tool_output
+        page = {"ok": True, "url": "https://example.com", "title": "Form",
+                "visible_text": "text " * 4000, "approved_submit": True,
+                "post_http_status": 200, "field_verification": "verified",
+                "buttons": [{"name": "Continue", "type": "button", "frame_index": 0}],
+                "form_fields": [{"label": "Email", "type": "email", "name": "email"}]}
+        content = _compact_tool_output({"tool_name": "browser_submit",
+                                       "content": json.dumps(page)}, set())
+        self.assertLessEqual(len(content), 3500)
+        result = json.loads(content)
+        self.assertTrue(result["approved_submit"])
+        self.assertEqual(result["post_http_status"], 200)
+        self.assertEqual(result["field_verification"], "verified")
+        self.assertEqual(result["buttons"][0]["name"], "Continue")
+        self.assertEqual(result["form_fields"][0]["name"], "email")
+
     def test_compact_context_keeps_recent_tool_pairs_and_bounds_payloads(self):
         messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "task"}]
         for index in range(12):
