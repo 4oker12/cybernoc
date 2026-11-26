@@ -212,6 +212,27 @@ def tool_requires_task_intent(name: str, description: str = "") -> bool:
 def task_intent_matches(name: str, description: str, user_text: str) -> bool:
     """Check that the current user task directly asks for the high-impact action."""
     text = str(user_text or "")
+    # An explicit registration request is not cancelled by an unrelated
+    # negative constraint (e.g. "Do not purchase anything"). Keep direct
+    # registration/submission denials fail-closed.
+    if name == "browser_submit":
+        registration_requested = re.search(
+            r"(?i)(?:зарегистрируй|зарегистрировать|зарегистрируйтесь|регай|"
+            r"создай.{0,25}аккаунт|создать.{0,25}аккаунт|"
+            r"заведи.{0,25}аккаунт|\bregister\b|\bsign[ -]?up\b|"
+            r"\bcreate.{0,25}account\b)", text,
+        )
+        registration_denied = re.search(
+            r"(?i)(?:\bне\s+(?:(?:надо|нужно|следует|стоит|разрешаю|"
+            r"пытайся|пытаться|буду)\s+)?(?:зарегистр|регистр|регай|"
+            r"созда|завед|отправ|сохраня|сохран|подтверж|делай)|"
+            r"\bбез\s+регистрац|\bне\s+разрешаю\b|\bотмена\b|"
+            r"\bзапрещаю\b|\b(?:do\s+not|don't|never)\s+"
+            r"(?:register|sign[ -]?up|create|submit|send|save|confirm)|"
+            r"\b(?:deny|cancel|refuse)\b)", text,
+        )
+        if registration_requested and not registration_denied:
+            return True
     if re.search(
         r"(?i)(?:\bне\b|\bнет\b|\bнельзя\b|\bзапрещаю\b|\bотмена\b|"
         r"\bdo\s+not\b|\bdon't\b|\bnever\b|\bdeny\b|\brefuse\b)",
