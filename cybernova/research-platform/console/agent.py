@@ -1291,7 +1291,8 @@ class Agent:
                             ),
                         }
                     serialized = json.dumps(safe_result, ensure_ascii=False)
-                    model_serialized = serialized if name.startswith("browser_") else serialized[:MAX_RESULT]
+                    is_browser_result = isinstance(name, str) and name.startswith("browser_")
+                    model_serialized = serialized if is_browser_result else serialized[:MAX_RESULT]
                     safe_event = {
                         "type": kind, "name": str(name)[:80],
                         "arguments": _safe_args(name, args) if name in REVIEWED_TOOLS
@@ -1299,7 +1300,7 @@ class Agent:
                         "is_error": failed or safe_result.get("ok") is False,
                         "result": safe_result if len(serialized) < MAX_RESULT
                                   else (json.loads(_bounded_browser_json(safe_result, MAX_RESULT))
-                                        if name.startswith("browser_") else {"truncated": serialized[:MAX_RESULT]}),
+                                        if is_browser_result else {"truncated": serialized[:MAX_RESULT]}),
                     }
                     safe_event.update(event)
                     events.append(safe_event)
