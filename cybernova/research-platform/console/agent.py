@@ -531,6 +531,39 @@ def _bounded_browser_json(result, limit):
         return original
     projected = dict(result)
     projected["observation_compacted"] = True
+    # Explicit reads must not skip unseen text or rows when the model budget
+    # is smaller than the browser's original page chunk.
+    if type(result.get("offset")) is int and isinstance(result.get("text"), str):
+        projected.pop("note", None)
+        projected.pop("scopes", None)
+        source = result["text"]
+        lo, hi, best = 1, len(source), None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            partial = dict(projected, text=source[:mid])
+            if mid < len(source):
+                partial["next_offset"] = result["offset"] + mid
+                partial["complete"] = False
+            encoded = encode(partial)
+            if len(encoded) <= limit:
+                best, lo = encoded, mid + 1
+            else:
+                hi = mid - 1
+        if best is not None:
+            return best
+        return encode({"ok": False, "error": "browser_read_chunk_exceeds_context_budget",
+                       "offset": result["offset"], "complete": False})
+    if type(result.get("row_offset")) is int and isinstance(result.get("rows"), list):
+        projected["rows"] = list(result["rows"])
+        while projected["rows"] and len(encode(projected)) > limit:
+            projected["rows"].pop()
+            projected["next_row_offset"] = result["row_offset"] + len(projected["rows"])
+            projected["complete"] = False
+        if projected["rows"] and len(encode(projected)) <= limit:
+            return encode(projected)
+        return encode({"ok": False, "error": "browser_table_row_exceeds_context_budget",
+                       "row_offset": result["row_offset"], "complete": False,
+                       "frame_index": result.get("frame_index"), "table_index": result.get("table_index")})
     # The latest control map matters more than duplicated page prose.
     for key in ("visible_text", "text", "content"):
         if isinstance(projected.get(key), str):
@@ -547,15 +580,19 @@ def _bounded_browser_json(result, limit):
                 {k: row[k] for k in keys if k in row and row[k] not in ("", None)}
                 for row in rows if isinstance(row, dict)
             ]
-    for key in ("landmarks", "tables", "focused_element", "browser", "note"):
+    if isinstance(projected.get("content_stats"), dict) and isinstance(projected.get("visible_text"), str):
+        projected["content_stats"] = dict(projected["content_stats"])
+        projected["content_stats"]["model_excerpt_chars"] = len(projected["visible_text"])
+        projected["content_stats"]["model_excerpt_truncated"] = len(projected["visible_text"]) < len(result.get("visible_text", ""))
+    for key in ("browser", "note"):
         projected.pop(key, None)
     while len(encode(projected)) > limit:
-        candidates = [key for key in ("links", "buttons", "form_fields", "headings", "blocked_requests", "dialogs", "rows", "matches")
+        candidates = [key for key in ("links", "buttons", "form_fields", "headings", "landmarks", "tables", "blocked_requests", "dialogs", "rows", "matches")
                       if isinstance(projected.get(key), list) and projected[key]]
         if not candidates:
             break
         key = max(candidates, key=lambda item: len(encode(projected[item])))
-        projected[key].pop()
+        projected[key] = projected[key][:-1]
         projected["omitted_controls"] = True
     if len(encode(projected)) <= limit:
         return encode(projected)
