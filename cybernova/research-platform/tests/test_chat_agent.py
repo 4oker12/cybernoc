@@ -839,6 +839,35 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["buttons"][0]["name"], "Continue")
         self.assertEqual(result["form_fields"][0]["name"], "email")
 
+    def test_compacted_browser_read_preserves_contiguous_cursor(self):
+        from console.agent import _compact_tool_output
+        original = "abc " * 2000
+        page = {"ok": True, "url": "https://example.com", "offset": 100,
+                "next_offset": 8100, "text": original, "complete": False,
+                "content_sha256": "hash"}
+        encoded = _compact_tool_output({"tool_name": "browser_read_page",
+                                        "content": json.dumps(page)}, set())
+        result = json.loads(encoded)
+        self.assertTrue(result["ok"])
+        self.assertLessEqual(len(encoded), 3500)
+        self.assertEqual(result["text"], original[:len(result["text"])])
+        self.assertEqual(result["next_offset"], 100 + len(result["text"]))
+        self.assertEqual(result["content_sha256"], "hash")
+        self.assertFalse(result["complete"])
+
+    def test_compacted_table_read_preserves_contiguous_row_cursor(self):
+        from console.agent import _compact_tool_output
+        rows = [["cell " * 70] for _ in range(20)]
+        page = {"ok": True, "url": "https://example.com", "row_offset": 5,
+                "next_row_offset": 25, "rows": rows, "complete": False}
+        encoded = _compact_tool_output({"tool_name": "browser_read_table",
+                                        "content": json.dumps(page)}, set())
+        result = json.loads(encoded)
+        self.assertTrue(result["ok"])
+        self.assertLessEqual(len(encoded), 3500)
+        self.assertEqual(result["rows"], rows[:len(result["rows"])])
+        self.assertEqual(result["next_row_offset"], 5 + len(result["rows"]))
+
     def test_compact_context_keeps_recent_tool_pairs_and_bounds_payloads(self):
         messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "task"}]
         for index in range(12):
