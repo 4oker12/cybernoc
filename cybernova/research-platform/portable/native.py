@@ -182,7 +182,9 @@ def _chromium_installed(data: Path) -> bool:
         except (OSError, subprocess.TimeoutExpired):
             return False
 
-    return _installed_for("patchright") and _installed_for("playwright")
+    # Patchright is the primary browser backend. Playwright is an optional
+    # fallback, so a missing fallback must not report Chromium as unavailable.
+    return _installed_for("patchright")
 
 def set_key(data: Path):
     values=_load(data)

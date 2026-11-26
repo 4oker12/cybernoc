@@ -343,6 +343,8 @@ class BrowserControlTests(unittest.TestCase):
         self.assertEqual(addresses, ["93.184.215.14"])
         self.assertEqual(_safe_url("https://example.org/article?id=secret#token"),
                          "https://example.org/article")
+        self.assertEqual(_safe_url("http://127.0.0.1:51234/archive?q=hidden"),
+                         "http://127.0.0.1:51234/archive")
 
     def test_unsafe_url_forms_are_rejected_before_dns(self):
         bad = [
