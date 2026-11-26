@@ -509,6 +509,35 @@ class BrowserControlTests(unittest.TestCase):
 
 
 
+    def test_semantic_target_resolver_recovers_whitespace_and_nested_frames(self):
+        class Candidate:
+            def is_visible(self): return True
+            def is_enabled(self): return True
+        class Locator:
+            def __init__(self, rows): self.rows = rows
+            def count(self): return len(self.rows)
+            def nth(self, index): return self.rows[index]
+        candidate = Candidate()
+        class Frame:
+            def __init__(self, rows): self.rows = rows
+            def get_by_role(self, role, name, exact=False):
+                return Locator(self.rows if hasattr(name, "search") and name.search("  Continue  ") else [])
+            def locator(self, selector): return self
+            def filter(self, **kwargs): return Locator([])
+        main, child = Frame([]), Frame([candidate])
+        session = BrowserSession(headless=True)
+        try:
+            session._page = type("Page", (), {"main_frame": main, "frames": [main, child]})()
+            self.assertIs(session._one("button", "continue"), candidate)
+            main.rows = [Candidate()]
+            with self.assertRaisesRegex(ValueError, "browser_target_not_unique:2"):
+                session._one("button", "continue")
+        finally:
+            session._executor.shutdown(wait=False, cancel_futures=True)
+
+    def test_checked_tool_is_in_catalog(self):
+        self.assertIn("browser_set_checked", {item["name"] for item in BROWSER_CONTROL_TOOLS})
+
     def test_browser_fill_tool_schema_exposes_expanded_locator_and_input_options(self):
         fill = next(item for item in BROWSER_CONTROL_TOOLS if item["name"] == "browser_fill")
         properties = fill["inputSchema"]["properties"]
