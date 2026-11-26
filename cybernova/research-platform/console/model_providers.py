@@ -98,7 +98,34 @@ class _NoRedirect(request.HTTPRedirectHandler):
         raise ModelConfigError("llm_redirect_forbidden")
 
 
-def _normalize_context(messages: list[dict], *, require_reasoning: bool = False) -> list[dict]:
+DEEPSEEK_VISION_MODELS = frozenset({
+    "deepseek-flash", "deepseek-v4-flash-vision-exp",
+})
+
+
+def _normalize_tool_content(content, allow_images: bool):
+    if not isinstance(content, list):
+        return str(content or "")
+    blocks = []
+    for part in content[:8]:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "text" and isinstance(part.get("text"), str):
+            blocks.append({"type": "text", "text": part["text"][:20000]})
+        elif part.get("type") == "image_url":
+            if not allow_images:
+                raise ModelConfigError("active_model_has_no_supported_tool_vision")
+            image = part.get("image_url")
+            url = image.get("url") if isinstance(image, dict) else None
+            if (not isinstance(url, str) or len(url) > MAX_IMAGE_DATA_URL_CHARS
+                    or not _IMAGE_DATA_URL_RE.fullmatch(url)):
+                raise ModelConfigError("invalid_tool_image_payload")
+            blocks.append({"type": "image_url", "image_url": {"url": url, "detail": "high"}})
+    return blocks or ""
+
+
+def _normalize_context(messages: list[dict], *, require_reasoning: bool = False,
+                       allow_tool_images: bool = False) -> list[dict]:
     """Convert internal turns to Chat Completions, guarding DeepSeek Thinking history."""
     output = []
     pending = deque()
@@ -175,7 +202,7 @@ def _normalize_context(messages: list[dict], *, require_reasoning: bool = False)
             if not pending:
                 raise ModelConfigError("orphan_tool_response")
             output.append({"role": "tool", "tool_call_id": pending.popleft(),
-                           "content": str(message.get("content") or "")})
+                           "content": _normalize_tool_content(message.get("content"), allow_tool_images)})
     return output
 
 
@@ -196,6 +223,15 @@ class OpenAICompatibleClient:
             raise ModelConfigError("remote_api_key_required")
         self.transport = transport or self._request
         self.models_transport = models_transport or self._request_models
+
+    @property
+    def supports_vision(self) -> bool:
+        return (parse.urlsplit(self.endpoint).hostname == "api.deepseek.com"
+                and self.model in DEEPSEEK_VISION_MODELS)
+
+    @property
+    def supports_tool_images(self) -> bool:
+        return self.supports_vision
 
     def _request_models(self, url: str) -> dict:
         headers = {"Accept": "application/json"}
@@ -309,6 +345,7 @@ class OpenAICompatibleClient:
             "messages": _normalize_context(
                 messages,
                 require_reasoning=bool(tools) and deepseek_model and thinking == "enabled",
+                allow_tool_images=self.supports_tool_images,
             ),
             token_field: max_tokens,
         }
