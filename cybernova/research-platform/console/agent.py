@@ -56,7 +56,7 @@ MAX_CONTEXT_HISTORY_CHARS = 2500
 MAX_CONTEXT_TOOL_CALLS = 8
 MAX_CONTEXT_TOOL_CHARS = 3500
 MAX_CONTEXT_SUMMARY_CHARS = 5000
-_BROWSER_PAGE_FIELDS = ("visible_text", "links", "buttons", "form_fields")
+_BROWSER_PAGE_FIELDS = ("visible_text", "links", "buttons", "form_fields", "headings")
 _ROUTINE_READ_TOOLS = frozenset({
     "browser_navigate", "browser_snapshot", "browser_follow_link", "browser_tabs",
     "browser_back", "browser_forward", "browser_reload", "terminal_status",
@@ -468,7 +468,7 @@ def _compact_context(messages):
         index += 1
 
     pairs = []
-    seen_pages = set()
+    seen_pages = {}
     for group_index, group in enumerate(groups):
         for pair_index, (call, output) in enumerate(zip(group["calls"], group["outputs"])):
             pairs.append((group_index, pair_index, call, output))
@@ -518,6 +518,49 @@ def _compact_context(messages):
     return compact
 
 
+def _browser_json(result, limit):
+    """Bound a browser observation without cutting through a control or JSON string."""
+    def encode(value):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    content = encode(result)
+    if len(content) <= limit:
+        return content
+    list_fields = ("form_fields", "buttons", "links", "headings", "blocked_requests",
+                   "events", "messages", "tabs")
+    lists = {key: result[key] for key in list_fields if isinstance(result.get(key), list)}
+    bounded = {key: value for key, value in result.items()
+               if key not in lists and key != "visible_text"}
+    bounded["observation_truncated"] = True
+    for key in lists:
+        bounded[key] = []
+    visible_text = result.get("visible_text")
+    if isinstance(visible_text, str):
+        bounded["visible_text"] = visible_text[:min(600, limit // 5)]
+    for index in range(max((len(items) for items in lists.values()), default=0)):
+        for key, items in lists.items():
+            if index >= len(items):
+                continue
+            item = items[index]
+            if key == "form_fields" and isinstance(item, dict) and "options" in item:
+                item = {**item, "options": item["options"][:8]}
+            bounded[key].append(item)
+            if len(encode(bounded)) > limit:
+                bounded[key].pop()
+    content = encode(bounded)
+    if len(content) <= limit:
+        return content
+    # Non-page tools may return their own large arrays (e.g. browser_network).
+    return encode({"ok": result.get("ok"), "observation_truncated": True,
+                   "preview": content[:limit // 3]})
+
+
+def _serialize_tool_result(name, result):
+    if name.startswith("browser_") and isinstance(result, dict):
+        return _browser_json(result, MAX_RESULT)
+    return json.dumps(result, ensure_ascii=False)[:MAX_RESULT]
+
+
 def _compact_tool_output(output, seen_pages):
     content = str(output.get("content") or "")
     if not str(output.get("tool_name", "")).startswith("browser_"):
@@ -526,18 +569,26 @@ def _compact_tool_output(output, seen_pages):
         result = json.loads(content)
     except ValueError:
         return content[:MAX_CONTEXT_TOOL_CHARS]
-    if (not isinstance(result, dict) or result.get("ok") is not True
-            or not result.get("url") or "visible_text" not in result):
+    if not isinstance(result, dict):
         return content[:MAX_CONTEXT_TOOL_CHARS]
-    page = tuple(result.get(key) for key in ("url", "title", *_BROWSER_PAGE_FIELDS))
-    fingerprint = json.dumps(page, ensure_ascii=False, sort_keys=True)
-    if fingerprint in seen_pages:
-        result = {key: value for key, value in result.items() if key not in _BROWSER_PAGE_FIELDS}
-        result["page_content"] = "unchanged_from_earlier_tool_result"
-        content = json.dumps(result, ensure_ascii=False)
-    else:
-        seen_pages.add(fingerprint)
-    return content[:MAX_CONTEXT_TOOL_CHARS]
+    if not result.get("url") or "visible_text" not in result:
+        return _browser_json(result, MAX_CONTEXT_TOOL_CHARS)
+    # Build each delta against the previous observation of this page still in
+    # the current context window, including after older tool calls are evicted.
+    key = (result["url"], result.get("title"), result.get("tab"))
+    previous = seen_pages.get(key)
+    seen_pages[key] = result
+    if previous is not None and result.get("ok") is True:
+        unchanged = [field for field in _BROWSER_PAGE_FIELDS
+                     if field in result and previous.get(field) == result[field]]
+        if unchanged:
+            result = {key: value for key, value in result.items() if key not in unchanged}
+            result["page_content"] = (
+                "changed_fields_only" if any(field in result for field in _BROWSER_PAGE_FIELDS)
+                else "unchanged_from_earlier_tool_result"
+            )
+            result["unchanged_page_fields"] = unchanged
+    return _browser_json(result, MAX_CONTEXT_TOOL_CHARS)
 
 
 def _restore_reasoning_history(persisted_history, in_memory_history, provider_identity=None):
@@ -1035,7 +1086,7 @@ class Agent:
                             )
                             executed += 1
                             selected_by = "evidence_first_fallback"
-                            serialized = json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]
+                            serialized = _serialize_tool_result(chosen, observed)
                             events.append({
                                 "type": "tool_result", "name": chosen,
                                 "arguments": {"url": selected_url},
@@ -1208,14 +1259,17 @@ class Agent:
                         )
                         outcome["protected_input"] = safe_result
                         return outcome
-                    serialized = json.dumps(safe_result, ensure_ascii=False)[:MAX_RESULT]
+                    serialized = _serialize_tool_result(name, safe_result)
+                    if name.startswith("browser_"):
+                        event_result = json.loads(serialized)
+                    else:
+                        event_result = safe_result if len(serialized) < MAX_RESULT else {"truncated": serialized}
                     safe_event = {
                         "type": kind, "name": str(name)[:80],
                         "arguments": _safe_args(name, args) if name in REVIEWED_TOOLS
                                      else safe_preview(args),
                         "is_error": failed or safe_result.get("ok") is False,
-                        "result": safe_result if len(serialized) < MAX_RESULT
-                                  else {"truncated": serialized},
+                        "result": event_result,
                     }
                     safe_event.update(event)
                     events.append(safe_event)

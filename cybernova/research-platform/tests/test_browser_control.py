@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import ModuleType
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import sys
 import unittest
 from threading import RLock
@@ -81,6 +81,33 @@ class BrowserControlTests(unittest.TestCase):
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
         self.assertIn("explicitly requested", submit["description"])
+
+    def test_button_search_falls_back_to_exact_visible_text(self):
+        session = BrowserSession()
+        self.addCleanup(session._executor.shutdown, wait=False)
+        session._page = Mock()
+        page = session._page
+        named_button, all_buttons = Mock(), Mock()
+        page.get_by_role.side_effect = [all_buttons, named_button]
+        named_button.filter.return_value.count.return_value = 0
+        fallback = all_buttons.and_.return_value.filter.return_value
+        fallback.count.return_value = 1
+        fallback.is_enabled.return_value = True
+        self.assertIs(session._one("button", "Continue"), fallback)
+        page.get_by_text.assert_called_once_with("Continue", exact=True)
+
+    def test_missing_target_returns_fresh_observation(self):
+        session = BrowserSession()
+        self.addCleanup(session._executor.shutdown, wait=False)
+        session._page = Mock()
+        session._page.is_closed.return_value = False
+        with patch.object(session, "_dispatch",
+                          side_effect=ValueError("browser_target_not_unique:0")), patch.object(
+                session, "_snapshot", return_value={"ok": True, "buttons": [{"name": "Next"}]}):
+            result = session._safe_dispatch("browser_click_button", {"name": "Continue"})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "browser_target_not_unique:0")
+        self.assertEqual(result["buttons"], [{"name": "Next"}])
 
     def test_browser_tools_are_shared_with_the_deepseek_agent(self):
         from console.agent import Agent

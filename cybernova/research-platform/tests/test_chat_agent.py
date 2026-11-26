@@ -821,6 +821,27 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(results[1]["http_status"], 200)
         self.assertNotIn("visible_text", results[1])
         self.assertEqual(results[2]["form_fields"], [{"label": "Email"}])
+        self.assertEqual(results[2]["page_content"], "changed_fields_only")
+        self.assertNotIn("visible_text", results[2])
+
+    def test_large_browser_observation_remains_valid_and_keeps_controls(self):
+        page = {"ok": True, "url": "https://example.com/form", "visible_text": "a" * 6500,
+                "links": [{"name": "Link", "url": "https://example.com/" + "a" * 150}] * 35,
+                "buttons": [{"name": "Continue", "id": "next"}],
+                "form_fields": [{"label": "Name", "id": "name"}]}
+        messages = [
+            {"role": "user", "content": "Read the form"},
+            {"role": "assistant", "tool_calls": [
+                {"function": {"name": "browser_snapshot", "arguments": "{}"}}
+            ]},
+            {"role": "tool", "tool_name": "browser_snapshot", "content": json.dumps(page)},
+        ]
+        content = _compact_context(messages)[-1]["content"]
+        observation = json.loads(content)
+        self.assertLessEqual(len(content), 3500)
+        self.assertTrue(observation["observation_truncated"])
+        self.assertEqual(observation["form_fields"], page["form_fields"])
+        self.assertEqual(observation["buttons"], page["buttons"])
 
     def test_compact_context_keeps_recent_tool_pairs_and_bounds_payloads(self):
         messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "task"}]
