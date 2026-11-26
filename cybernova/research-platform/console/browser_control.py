@@ -100,6 +100,9 @@ BROWSER_CONTROL_TOOLS = [
           {"query": {**STRING, "description": "Literal phrase to find in visible page text; 2 to 180 characters"},
            "max_matches": {"type": "integer", "minimum": 1, "maximum": 10,
                            "description": "Maximum matching snippets to return, from 1 to 10"}}, ["query", "max_matches"]),
+    _tool("browser_find_controls",
+          "Find visible links, buttons or form controls by a literal name, label, placeholder or id across page frames, before the normal snapshot control limit. Use after an ambiguous or missing target. Read-only.",
+          {"query": STRING}, ["query"]),
     _tool("browser_follow_link",
           "Follow one visible link by its exact accessible name in the current page. This is navigation only; it does not submit forms.",
           {"name": {**STRING, "description": "Exact visible/accessibility name of one link"}}, ["name"]),
@@ -1521,7 +1524,7 @@ class BrowserSession:
         result["handoff_note"] = "Saved cookies remain in the isolated profile; unsaved form text and other tabs may need to be restored."
         return result
 
-    def _snapshot(self) -> dict:
+    def _snapshot(self, control_query: str | None = None) -> dict:
         if self._page is None or self._page.is_closed():
             raise ValueError("browser_no_open_page")
         page = self._page
@@ -1533,18 +1536,26 @@ class BrowserSession:
             frames = [page.main_frame]
         frames = frames[:12]
 
-        page_text, scopes, text_clipped = self._page_text(frames)
+        page_text, scopes, text_clipped = self._page_text(frames) if control_query is None else ("", [], False)
         links, buttons, fields, headings, landmarks, tables = [], [], [], [], [], []
         focused = None
         selector = (
             "a,button,input,textarea,select,[role='button'],"
             "[contenteditable='true'],[role='textbox']"
         )
-        script = """els => els.filter(el => {
+        script = """(els, query) => els.filter(el => {
             const r = el.getBoundingClientRect();
             const s = getComputedStyle(el);
             return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' &&
-                   s.display !== 'none' && !el.disabled;
+                   s.display !== 'none' && !el.disabled && !el.closest('[hidden],[aria-hidden="true"]');
+        }).filter(el => {
+            if (!query) return true;
+            const text = el.isContentEditable || el.getAttribute('role') === 'textbox' ? '' : (el.innerText || '');
+            const label = Array.from(el.labels || []).map(x => x.innerText || x.textContent || '').join(' ');
+            const submit = el.tagName === 'INPUT' && ['submit','button','reset'].includes(el.type) ? el.value : '';
+            const keys = [text, label, submit, el.getAttribute('aria-label'), el.getAttribute('placeholder'),
+                          el.getAttribute('name'), el.id, el.getAttribute('role')];
+            return keys.some(v => (v || '').toLowerCase().replace(/\\s+/g, ' ').includes(query.toLowerCase()));
         }).sort((a, b) => {
             const score = el => (el.closest('main,[role="main"],article') ? 4 : 0) +
                 (el.getBoundingClientRect().top < innerHeight && el.getBoundingClientRect().bottom > 0 ? 2 : 0);
@@ -1630,7 +1641,8 @@ class BrowserSession:
             except Exception:
                 pass
             try:
-                rows = frame.locator(selector).evaluate_all(script)
+                rows = (frame.locator(selector).evaluate_all(script, control_query)
+                        if control_query is not None else frame.locator(selector).evaluate_all(script))
             except Exception:
                 rows = []
             for item in rows:
@@ -1683,6 +1695,15 @@ class BrowserSession:
         except Exception:
             title = ""
         blocked = self._blocked[-12:]
+        if control_query is not None:
+            return {
+                "ok": True, "url": _safe_url(page.url), "title": _redact_text(title)[:220],
+                "links": links[:MAX_CONTROLS], "buttons": buttons[:MAX_CONTROLS],
+                "form_fields": fields[:MAX_CONTROLS], "frame_count": len(frames),
+                "control_match_counts": {"links": len(links), "buttons": len(buttons), "fields": len(fields)},
+                "scan_limits": {"frames": 12, "matches_per_frame": 120, "returned_per_kind": MAX_CONTROLS},
+                "untrusted_page_content": True,
+            }
         return {
             "ok": True,
             "browser": "isolated Chromium / " + (self._backend or "unknown"),
@@ -1829,6 +1850,10 @@ class BrowserSession:
             if args:
                 raise ValueError("browser_arguments_invalid")
             return self._snapshot()
+        if name == "browser_find_controls":
+            if set(args) != {"query"} or not isinstance(args["query"], str) or not 1 <= len(args["query"].strip()) <= 120:
+                raise ValueError("browser_control_query_invalid")
+            return self._snapshot(control_query=" ".join(args["query"].split()))
         if name == "browser_show":
             if args:
                 raise ValueError("browser_arguments_invalid")
@@ -2008,7 +2033,7 @@ class BrowserSession:
                     "message": "Ссылка может отменить, удалить, отключить или изменить удалённое состояние. Выполни это действие вручную после отдельного подтверждения.",
                 }
             if href and not href.startswith("#"):
-                target = urljoin(self._page.url, href)
+                target = link.evaluate("(el) => new URL(el.getAttribute('href'), el.baseURI).href")
                 validate_public_url(target, self._authorized_hosts)
                 self._page.goto(target, wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
             else:
@@ -2295,7 +2320,7 @@ def browser_control_call(name: str, args: dict, session: BrowserSession) -> tupl
             }, True
         result = {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}
         if "browser_target_not_unique" in message or "browser_field_not_found" in message or "not_unique_or_interactable" in message:
-            result["recovery"] = "Refresh browser_snapshot; inspect the visible role, label and frame. If ambiguous choose a more specific observed target. Do not repeat the same failed action."
+            result["recovery"] = "Use browser_find_controls or refresh browser_snapshot; inspect the visible role, label and frame. If ambiguous choose a more specific observed target. Do not repeat the same failed action."
         return result, True
     except Exception as exc:
         message = str(exc).lower()
