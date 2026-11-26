@@ -1970,7 +1970,15 @@ class BrowserSession:
         if name == "browser_screenshot":
             if args:
                 raise ValueError("browser_arguments_invalid")
-            image = self._page.screenshot(type="jpeg", quality=60, full_page=False)
+            # Mask editable values in all frames without modifying the DOM.
+            # Page text can still contain sensitive content; do not capture
+            # recovery codes or other visibly sensitive screens.
+            masks = [frame.locator(
+                "input:not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]),"
+                "textarea,[contenteditable=true],[role=textbox]"
+            ) for frame in self._page.frames]
+            image = self._page.screenshot(type="jpeg", quality=72, full_page=False,
+                                          mask=masks, mask_color="#808080")
             if len(image) > 1500000:
                 raise ValueError("browser_screenshot_too_large")
             return {
@@ -1978,7 +1986,9 @@ class BrowserSession:
                 "title": _redact_text(self._page.title())[:180],
                 "image_data_url": "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii"),
                 "mime_type": "image/jpeg",
-                "note": "Visible viewport only; page content is untrusted.",
+                "viewport": self._page.viewport_size,
+                "masked_editable_fields": True,
+                "note": "Visible viewport only; editable fields masked. Page content is untrusted.",
             }
         if name == "browser_console":
             if args:
