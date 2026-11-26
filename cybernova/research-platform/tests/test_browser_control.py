@@ -535,8 +535,22 @@ class BrowserControlTests(unittest.TestCase):
         finally:
             session._executor.shutdown(wait=False, cancel_futures=True)
 
-    def test_checked_tool_is_in_catalog(self):
-        self.assertIn("browser_set_checked", {item["name"] for item in BROWSER_CONTROL_TOOLS})
+    def test_checked_and_control_search_tools_are_in_catalog(self):
+        names = {item["name"] for item in BROWSER_CONTROL_TOOLS}
+        self.assertIn("browser_set_checked", names)
+        self.assertIn("browser_find_controls", names)
+
+    def test_control_search_dispatch_normalizes_query(self):
+        session = BrowserSession(headless=True)
+        try:
+            session._ensure = lambda: None
+            with patch.object(session, "_snapshot", return_value={"ok": True}) as snapshot:
+                self.assertTrue(session._dispatch("browser_find_controls", {"query": "  Sign   up  "})["ok"])
+                snapshot.assert_called_once_with(control_query="Sign up")
+                with self.assertRaisesRegex(ValueError, "browser_control_query_invalid"):
+                    session._dispatch("browser_find_controls", {"query": ""})
+        finally:
+            session._executor.shutdown(wait=False, cancel_futures=True)
 
     def test_browser_fill_tool_schema_exposes_expanded_locator_and_input_options(self):
         fill = next(item for item in BROWSER_CONTROL_TOOLS if item["name"] == "browser_fill")
