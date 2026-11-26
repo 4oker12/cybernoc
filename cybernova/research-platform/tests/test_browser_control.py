@@ -189,6 +189,27 @@ class BrowserControlTests(unittest.TestCase):
             "browser_submit", description, "Изучи форму регистрации, ничего не отправляй."
         ))
 
+    def test_registration_intent_with_unrelated_negative_constraints(self):
+        from console.tool_policy import task_intent_matches
+        description = "Submit one visible form."
+        for task in (
+            "Зарегистрировать тестовый аккаунт. Покупку не оформляй. "
+            "Не подменяй браузерные действия прямыми HTTP-запросами. "
+            "Не заявляй об успехе без подтверждения.",
+            "Register a test account. Do not purchase anything.",
+        ):
+            with self.subTest(task=task):
+                self.assertTrue(task_intent_matches("browser_submit", description, task))
+        for task in (
+            "Зарегистрируй аккаунт, но ничего не отправляй.",
+            "Не регистрируй аккаунт.",
+            "Не нужно регистрировать аккаунт.",
+            "Изучи форму регистрации, ничего не отправляй.",
+            "Register a test account, but do not submit the form.",
+        ):
+            with self.subTest(task=task):
+                self.assertFalse(task_intent_matches("browser_submit", description, task))
+
     def test_browser_submit_requires_explicit_current_user_intent_and_dispatches_when_requested(self):
         from console.gpt_tool_runtime import GPTToolRuntime
         runtime = GPTToolRuntime()
