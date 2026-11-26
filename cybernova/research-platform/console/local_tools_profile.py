@@ -140,7 +140,13 @@ LOCAL_TOOLS_PROFILE = """
   HTML-only research_source_open. browser_navigate открывает URL и запускает
   браузер при первом вызове. browser_tabs показывает сессию; new_tab,
   switch_tab, close_tab, back, forward и reload управляют вкладками и историей.
-- Начинай каждую страницу с browser_snapshot: сверь URL, title, headings,
+- Действия браузера уже возвращают наблюдение текущего состояния. Не вызывай
+  browser_snapshot сразу после успешного действия, если его результат достаточен.
+  При ошибке цели обнови наблюдение, проверь роль, имя и frame, затем выбери
+  уточнённую цель. Не повторяй одинаковый ошибочный вызов.
+- Для radio/checkbox используй browser_set_checked, не browser_fill. Для ввода
+  проверяй field_verification; mismatch требует повторной оценки формы.
+- Начинай исследование новой страницы с полученного наблюдения: сверь URL, title, headings,
   landmarks, region у ссылок/кнопок, focused_element и content_stats.
   Сначала выбери релевантный main/article, затем следуй видимым ссылкам через
   browser_follow_link или browser_navigate по проверенному URL. Внешний домен
