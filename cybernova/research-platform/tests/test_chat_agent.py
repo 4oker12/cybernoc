@@ -52,6 +52,7 @@ class FakeOllama:
 class FakeVisionClient(FakeOllama):
     provider = "OpenAI-compatible"
     model = "deepseek-flash"
+    supports_tool_images = True
 
 
 class FakeLocalToolRuntime:
@@ -208,9 +209,11 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(client.list_models(), ["deepseek-flash"])
         self.assertEqual(urls, ["https://api.deepseek.com/models"])
 
-    def test_deepseek_flash_receives_desktop_screenshot_as_user_image(self):
+    def test_deepseek_flash_receives_desktop_screenshot_as_tool_image(self):
         local = FakeLocalToolRuntime(image=True)
-        first = calls(("computer_system_overview", {}))
+        local.tools[0]["name"] = "computer_screenshot"
+        local.tool_map = {"computer_screenshot": local.tools[0]}
+        first = calls(("computer_screenshot", {}))
         first["reasoning_content"] = "Need the screenshot to inspect the UI."
         lm = FakeVisionClient([
             first,
@@ -224,14 +227,58 @@ class AgentTests(unittest.TestCase):
         user_message = next(
             item for item in lm.prompts[1][0] if item.get("role") == "user"
         )
-        self.assertIsInstance(user_message["content"], list)
+        self.assertIsInstance(user_message["content"], str)
+        tool_message = next(item for item in lm.prompts[1][0] if item.get("role") == "tool")
         image_block = next(
-            item for item in user_message["content"] if item.get("type") == "image_url"
+            item for item in tool_message["content"] if item.get("type") == "image_url"
         )
+        self.assertNotIn("_visual_image", tool_message)
         self.assertEqual(image_block["image_url"]["url"], "data:image/png;base64,AAAA")
         self.assertTrue(out["events"][0]["result"]["visual_input"]["forwarded_to_model"])
         self.assertNotIn("image_data_url", json.dumps(out["events"], ensure_ascii=False))
         self.assertNotIn("AAAA", json.dumps(out["events"], ensure_ascii=False))
+
+    def test_native_tool_image_wire_format_and_model_capability(self):
+        captured = {}
+        client = OpenAICompatibleClient(base_url="https://api.deepseek.com",
+            model="deepseek-flash", api_key="sk-test",
+            transport=lambda payload: (captured.update(payload) or
+                {"choices": [{"message": {"content": "ok"}}]}))
+        self.assertTrue(client.supports_tool_images)
+        messages = [
+            {"role": "user", "content": "Inspect browser"},
+            {"role": "assistant", "content": "", "reasoning_content": "inspect",
+             "tool_calls": [{"id": "call_1", "function": {"name": "browser_screenshot", "arguments": "{}"}}]},
+            {"role": "tool", "content": [{"type": "text", "text": "viewport"},
+             {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}]},
+        ]
+        client.chat(messages)
+        self.assertEqual(captured["messages"][2]["tool_call_id"], "call_1")
+        self.assertEqual(captured["messages"][2]["content"][1]["type"], "image_url")
+        self.assertEqual(captured["messages"][2]["content"][1]["image_url"]["detail"], "high")
+        for base, model in [("https://api.deepseek.com", "deepseek-v4-pro"),
+                            ("https://example.com", "deepseek-flash")]:
+            other = OpenAICompatibleClient(base_url=base, model=model, api_key="sk-test")
+            self.assertFalse(other.supports_tool_images)
+            with self.assertRaisesRegex(ModelConfigError, "active_model_has_no_supported_tool_vision"):
+                other.chat(messages)
+
+    def test_context_keeps_only_latest_screenshot_at_its_tool_turn(self):
+        messages = [{"role": "user", "content": "Inspect"}]
+        for index, image in enumerate(("AAAA", "BBBB")):
+            messages.extend([
+                {"role": "assistant", "tool_calls": [{"id": str(index),
+                    "function": {"name": "browser_screenshot", "arguments": "{}"}}]},
+                {"role": "tool", "tool_name": "browser_screenshot", "content": '{"ok":true}',
+                 "_visual_image": "data:image/png;base64," + image},
+            ])
+        compact = _compact_context(messages)
+        encoded = json.dumps(compact)
+        self.assertNotIn("AAAA", encoded)
+        self.assertNotIn("_visual_image", encoded)
+        self.assertIn("BBBB", encoded)
+        self.assertIsInstance(compact[-1]["content"], list)
+        self.assertIsInstance(compact[-3]["content"], str)
 
     def test_image_blocks_survive_deepseek_context_normalization(self):
         image = "data:image/jpeg;base64,AAAA"
