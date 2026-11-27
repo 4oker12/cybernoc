@@ -167,10 +167,15 @@ def run():
                 "heading_count": len(x.get("headings", [])),
                 "heading_sample": [h.get("text") for h in x.get("headings", [])[:4]],
                 "link_count": x.get("content_stats", {}).get("link_count"),
+                "page_type": x.get("page_type"),
                 "text_chars": len(x.get("visible_text") or ""),
                 "text_sample": (x.get("visible_text") or "")[:160],
             })
-            if snapshot.get("ok") and (not snapshot.get("headings") or not snapshot.get("page_type")):
+            stats = snapshot.get("content_stats") or {}
+            if (snapshot.get("ok") and (
+                    not snapshot.get("headings") or not snapshot.get("page_type")
+                    or not isinstance(stats.get("link_count"), int)
+                    or stats.get("link_count", 0) < 1)):
                 failures.append("browser_snapshot_semantic_map_incomplete")
             found = call("browser_find_text", {
                 "query": "Installation", "max_matches": 3,

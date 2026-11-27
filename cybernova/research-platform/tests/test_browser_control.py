@@ -16,7 +16,7 @@ from console.browser_control import (
     HIGH_IMPACT, IRREVERSIBLE_SUBMIT_TARGET, PAYMENT_SUBMIT_TARGET,
     _payment_field_kind, _redact_text, _safe_url, validate_public_url,
     _disable_profile_session_restore, _locate_across_frames,
-    _browser_field_is_sensitive,
+    _browser_field_is_sensitive, _classify_page_type,
 )
 
 
@@ -842,6 +842,30 @@ class BrowserControlTests(unittest.TestCase):
                     context.close()
             finally:
                 browser.close()
+
+    def test_page_type_classifier_uses_url_and_visible_semantics(self):
+        self.assertEqual(
+            _classify_page_type(
+                "https://playwright.dev/python/docs/intro", "Installation | Playwright Python",
+                "Install and use Playwright", [{"text": "Installation"}], [], [],
+            ),
+            "documentation",
+        )
+        self.assertEqual(
+            _classify_page_type("https://example.org/search?q=router", "Search results", "",
+                                [], [], []),
+            "search_results",
+        )
+        self.assertEqual(
+            _classify_page_type("https://example.org/contact", "Contact", "Send us a message",
+                                [], [{"label": "Email"}], []),
+            "form",
+        )
+        self.assertEqual(
+            _classify_page_type("https://example.org/data", "Inventory", "",
+                                [{"text": "Inventory"}], [], [{"rows": 4}]),
+            "data_table",
+        )
 
     def test_perception_tools_use_closed_required_schemas(self):
         tools = {row["name"]: row["inputSchema"] for row in BROWSER_CONTROL_TOOLS}

@@ -59,7 +59,7 @@ MAX_CONTEXT_TOOL_CALLS = 8
 MAX_CONTEXT_TOOL_CHARS = 3500
 MAX_CONTEXT_SUMMARY_CHARS = 5000
 _BROWSER_PAGE_FIELDS = ("visible_text", "links", "buttons", "form_fields", "headings",
-                        "landmarks", "tables", "focused_elements")
+                        "landmarks", "tables", "focused_elements", "page_type", "content_stats")
 _ROUTINE_READ_TOOLS = frozenset({
     "browser_navigate", "browser_snapshot", "browser_follow_link", "browser_tabs",
     "browser_back", "browser_forward", "browser_reload", "terminal_status",
