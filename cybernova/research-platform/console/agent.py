@@ -711,7 +711,7 @@ class Agent:
     def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True,
             scope: dict | None = None, user_context: str = "",
             profile_instructions: str = "", tool_groups: list[str] | None = None,
-            tools_enabled: bool = True, on_usage=None, on_tool_event=None,
+            tools_enabled: bool = True, on_usage=None, on_tool_event=None, should_stop=None,
             trusted_user_messages: list[dict] | None = None,
             session_id: str | None = None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
@@ -1069,9 +1069,24 @@ class Agent:
                 "и сохранения результата; не расходуй все итерации на инвентаризацию. "
                 "Сохраняй краткий рабочий checkpoint: завершённые этапы, оставшиеся "
                 "критерии, конкретный следующий шаг. Не выдавай предположения за выполненную работу."})
+        def stop_requested():
+            return callable(should_stop) and should_stop()
+
+        def stopped_result():
+            diagnostic_event("agent_execution_limit",status="partial",
+                             error_code="user_stop",tool_calls=executed)
+            outcome = result_payload(
+                "Задача остановлена по запросу пользователя. Завершённых вызовов: " +
+                str(executed) + ". Новые действия не запускаются. Перед продолжением "
+                "сверь уже выполненные операции и журнал задачи.",review_tools=False)
+            outcome["stop_reason"] = "user_stop"
+            return outcome
+
         checkpoint = None
         try:
             for round_no in range(MAX_ROUNDS):
+                if stop_requested():
+                    return stopped_result()
                 if round_no and round_no % PLAN_CHECKPOINT_INTERVAL == 0:
                     if checkpoint in context:
                         context.remove(checkpoint)
@@ -1107,6 +1122,8 @@ class Agent:
                 assistant_reasoning_content = history_reasoning_content
                 record_usage(result)
                 publish_usage()
+                if stop_requested():
+                    return stopped_result()
                 dsml_calls, clean_content, had_dsml = _extract_dsml_calls(
                     result.get("content"), set(descriptors) if tools_enabled else set()
                 )
@@ -1156,11 +1173,15 @@ class Agent:
                                 "о предполагаемом плане:\n" + previous_draft[:1600]
                             ),
                         })
+                    if stop_requested():
+                        return stopped_result()
                     candidate = self._model_chat(selection_messages, json_mode=True)
                     if isinstance(candidate.get("reasoning_content"), str):
                         assistant_reasoning_content = candidate["reasoning_content"]
                     record_usage(candidate)
                     publish_usage()
+                    if stop_requested():
+                        return stopped_result()
                     try:
                         suggested = json.loads(candidate.get("content", "{}")).get("calls", [])
                         if isinstance(suggested, list):
@@ -1233,6 +1254,8 @@ class Agent:
                         else:
                             chosen, chosen_args = "browser_open", {"url": selected_url}
                         if chosen in descriptors:
+                            if stop_requested():
+                                return stopped_result()
                             observed, error_flag = self._call_registered_tool(
                                 chosen, chosen_args, mcp=mcp,
                                 authorized_targets=authorized_targets,
@@ -1249,6 +1272,8 @@ class Agent:
                                 "is_error": bool(error_flag),
                                 "result": observed,
                             })
+                            if on_tool_event is not None:
+                                on_tool_event(events[-1])
                             context.append({"role": "system", "content":
                                 "Реальный инструмент " + chosen +
                                 " уже вызван контроллером. Отдели полученные факты "
@@ -1271,6 +1296,8 @@ class Agent:
                         r"улучш|создай|напиши|доработ|рефактор|разбер)",
                         text))
                     if wants_dev and "dev_list" in descriptors:
+                        if stop_requested():
+                            return stopped_result()
                         observed, error_flag = self._call_mcp(mcp, "dev_list", {"limit": 100})
                         executed += 1
                         selected_by = "developer_evidence_fallback"
@@ -1279,6 +1306,8 @@ class Agent:
                             "arguments": {"limit": 100},
                             "is_error": bool(error_flag), "result": observed,
                         })
+                        if on_tool_event is not None:
+                            on_tool_event(events[-1])
                         context.append({"role": "system", "content":
                             "Получена реальная структура Git-проекта dev_list. "
                             "Если нужен конкретный исходный файл, вызывай dev_read; "
@@ -1314,6 +1343,8 @@ class Agent:
                     assistant_turn["reasoning_content"] = assistant_reasoning_content
                 context.append(assistant_turn)
                 for raw in calls[:MAX_CALLS-count]:
+                    if stop_requested():
+                        return stopped_result()
                     function = raw.get("function", {}) if isinstance(raw, dict) else {}
                     function = function if isinstance(function, dict) else {}
                     name = function.get("name")
@@ -1474,6 +1505,8 @@ class Agent:
                         tool_message["_visual_image"] = visual_image
                     context.append(tool_message)
                     count += 1
+                if stop_requested():
+                    return stopped_result()
                 if count >= MAX_CALLS:
                     context.append({"role": "system", "content":
                         "Лимит инструментов достигнут. Подготовь итог по уже собранным данным."})

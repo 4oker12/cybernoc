@@ -54,6 +54,7 @@ ALLOWED_POST = frozenset({
     "/api/chat",
     "/api/chat/start",
     "/api/chat/result",
+    "/api/chat/stop",
     "/api/import",
     "/api/approve",
     "/api/followups",

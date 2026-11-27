@@ -633,13 +633,12 @@ function updateDiagnosticsLinks(){
 
 async function watchUsageProgress(runId,mode="qwen"){
   const isRunning=()=>mode==="gpt"?state.gptRunning:state.qwenRunning;
-  const started=Date.now();
-  while(isRunning()&&Date.now()-started<180000){
+  while(isRunning()){
     await new Promise(resolve=>setTimeout(resolve,650));
     if(!isRunning())break;
     try{
       const response=await fetch("/api/usage-progress?run_id="+encodeURIComponent(runId),
-        {cache:"no-store",headers:{"Accept":"application/json"}});
+        {cache:"no-store",headers:{"Accept":"application/json"},signal:AbortSignal.timeout(10000)});
       if(!response.ok)continue;
       const progress=await response.json(),usage=progress.usage||{};
       if(state.mode===mode&&usage.available===true){
@@ -666,46 +665,128 @@ async function requestJson(path,data,signal){
   if(!response.ok)throw Object.assign(Error(body.detail||"HTTP "+response.status),{status:response.status});
   return body;
 }
-async function requestChatTurn(data,pending){
-  const receipt=newRunId();
-  const deadline=Date.now()+15*60*1000;
-  let accepted=false, failures=0;
+const CHAT_RECEIPT_KEY="cybernova_active_research_receipt";
+function rememberChatReceipt(record){
+  try{sessionStorage.setItem(CHAT_RECEIPT_KEY,JSON.stringify(record));localStorage.setItem(CHAT_RECEIPT_KEY,JSON.stringify(record));}catch(_){}
+}
+function savedChatReceipt(){
   try{
-    await requestJson("/api/chat/start",{...data,receipt},AbortSignal.timeout(10000));
+    const r=JSON.parse(sessionStorage.getItem(CHAT_RECEIPT_KEY)||localStorage.getItem(CHAT_RECEIPT_KEY)||"null");
+    return r&&/^[0-9a-f]{32}$/.test(r.receipt)&&/^[0-9a-f]{32}$/.test(r.runId)?r:null;
+  }catch(_){return null;}
+}
+function clearChatReceipt(receipt){
+  for(const storage of [sessionStorage,localStorage]){
+    try{if(JSON.parse(storage.getItem(CHAT_RECEIPT_KEY)||"null")?.receipt===receipt)storage.removeItem(CHAT_RECEIPT_KEY);}catch(_){}
+  }
+}
+function chatElapsed(seconds){
+  const n=Math.max(0,Math.floor(seconds||0));
+  return [Math.floor(n/3600),Math.floor(n/60)%60,n%60].map(v=>String(v).padStart(2,"0")).join(":");
+}
+async function pollChatJob(record,pending,accepted=true){
+  let failures=0;
+  const stop=node("button","","Остановить задачу");
+  stop.type="button";
+  stop.addEventListener("click",async()=>{
+    stop.disabled=true;
+    try{
+      const r=await requestJson("/api/chat/stop",{receipt:record.receipt},AbortSignal.timeout(10000));
+      if(r.status==="stopping")stop.textContent="Остановка после текущей операции";
+    }catch(_){stop.disabled=false;stop.textContent="Повторить остановку";}
+  });
+  pending.wrap.append(stop);
+  try{
+    // The worker, not the HTTP connection, owns task lifetime.
+    for(;;){
+      await new Promise(resolve=>setTimeout(resolve,Math.min(10000,1000*2**Math.min(failures,4))));
+      let job;
+      try{
+        job=await requestJson("/api/chat/result",{receipt:record.receipt},AbortSignal.timeout(10000));
+      }catch(exc){
+        const transient=exc instanceof TypeError||exc.name==="TimeoutError"||exc.status>=500||(!accepted&&exc.status===404&&failures<5);
+        if(!transient){
+          if(exc.status===404)clearChatReceipt(record.receipt);
+          throw exc;
+        }
+        failures++;
+        pending.body.textContent="Связь прервана. Переподключаемся к тому же заданию…";
+        continue;
+      }
+      accepted=true;failures=0;
+      if(job.session_id)state.sessionId=job.session_id;
+      if(job.task_id)state.taskId=job.task_id;
+      if(!["running","stopping"].includes(job.status)){
+        clearChatReceipt(record.receipt);
+        if(job.result)return {...job.result,job_status:job.status};
+        if(job.status==="interrupted")return {
+          answer:"Сервер был перезапущен. Задание прервано; операции не повторялись автоматически. Открой историю и продолжи после сверки результатов.",
+          task_id:job.task_id,session_id:job.session_id,run_id:record.runId,job_status:"interrupted",
+          recovered:true,stop_reason:"backend_restart"};
+        throw Error(job.detail||"Задание завершилось без результата");
+      }
+      const p=job.progress,elapsed=" · "+chatElapsed(job.elapsed_seconds);
+      if(job.status==="stopping"){
+        stop.disabled=true;pending.body.textContent="Остановка после текущей операции…"+elapsed;
+      }else if(p?.event==="model_request_start")pending.body.textContent="Модель планирует следующий шаг…"+elapsed;
+      else if(p?.event==="tool_call_start"&&p.tool)pending.body.textContent="Выполняется "+p.tool+"…"+elapsed;
+      else if(p?.event==="agent_plan_checkpoint")pending.body.textContent="Контрольная точка · раунд "+(p.round||0)+elapsed;
+      else if(p?.tool)pending.body.textContent=p.tool+" · "+(p.status||"проверка результата")+elapsed;
+      else pending.body.textContent="Задание выполняется"+elapsed;
+    }
+  }finally{stop.remove();}
+}
+async function requestChatTurn(data,pending){
+  const record={receipt:newRunId(),runId:data.run_id,sessionId:data.session_id};
+  rememberChatReceipt(record);
+  let accepted=false;
+  try{
+    await requestJson("/api/chat/start",{...data,receipt:record.receipt},AbortSignal.timeout(10000));
     accepted=true;
   }catch(exc){
-    if(!(exc instanceof TypeError)&&exc.name!=="TimeoutError"&&!(exc.status>=500))throw exc;
-  }
-  pending.body.textContent=accepted?"Задача принята. Ожидаем результат…":"Проверяем, принял ли сервер задачу…";
-  while(Date.now()<deadline){
-    await new Promise(resolve=>setTimeout(resolve,1000));
-    let job;
-    try{
-      job=await requestJson("/api/chat/result",{receipt},AbortSignal.timeout(10000));
-    }catch(exc){
-      const transient=exc instanceof TypeError||exc.name==="TimeoutError"||
-        exc.status>=500||(!accepted&&exc.status===404);
-      if(!transient||++failures>=15)throw exc;
-      pending.body.textContent="Связь прервалась. Проверяем статус задачи…";
-      continue;
+    if(!(exc instanceof TypeError)&&exc.name!=="TimeoutError"&&!(exc.status>=500)){
+      clearChatReceipt(record.receipt);throw exc;
     }
-    if(job.status==="completed")return job.result;
-    if(job.status==="failed")throw Error(job.detail||"Выполнение задачи завершилось ошибкой");
-    const progress=job.progress;
-    if(progress?.event==="model_request_start"){
-      pending.body.textContent="Ожидаем ответ модели…";
-    }else if(progress?.event==="tool_call_start"&&progress.tool){
-      pending.body.textContent="Выполняется инструмент "+progress.tool+"…";
-    }else if(["tool_call_completed","tool_call_failed"].includes(progress?.event)&&progress.tool){
-      pending.body.textContent=progress.tool+(progress.status==="ok"?" завершил работу.":" завершился с ошибкой.");
-    }else if(!accepted||failures){
-      pending.body.textContent="Задача принята. Ожидаем результат…";
-    }
-    accepted=true;
-    failures=0;
   }
-  throw Error("Истекло время ожидания результата. Задача может продолжаться на сервере.");
+  return pollChatJob(record,pending,accepted);
 }
+async function reconnectChatJob(){
+  const record=savedChatReceipt();
+  if(!record||state.qwenRunning)return;
+  state.sessionId=record.sessionId||null;
+  $("welcome")?.remove();
+  const pending=renderMessage("assistant","Восстанавливаем связь с заданием…",true);
+  busy(true,"qwen");
+  startOwnerInputPolling();
+  setDiagnosticsContext({run_id:record.runId},"qwen");
+  const usageWatch=watchUsageProgress(record.runId,"qwen");
+  let result=null;
+  try{
+    result=await pollChatJob(record,pending);
+    pending.wrap.classList.remove("working");
+    state.sessionId=result.session_id||state.sessionId;
+    state.taskId=result.task_id||state.taskId;
+    state.turns=result.turn||state.turns;
+    state.lastSeq=Math.max(state.lastSeq,result.event_seq||0);
+    setDiagnosticsContext(result.diagnostics||{run_id:record.runId},"qwen");
+    setFormatted(pending.body,result.answer||"Ответ сохранён в истории.");
+    if(result.review)showReviewStatus(pending,result.review);
+    if(result.usage)recordUsage(result.usage,"qwen",pending);
+    if(result.events)showEvents(result.events,result.tool_calls,result.selected_by,pending);
+    if(result.protected_input)pending.wrap.append(protectedInputCard(result.protected_input,result.session_id));
+    showTaskStatus(result.job_status==="completed"?"completed":"blocked");
+  }catch(exc){
+    pending.wrap.classList.remove("working");
+    pending.body.textContent="Не удалось восстановить задание: "+String(exc.message||exc);
+  }finally{
+    stopOwnerInputPolling();busy(false,"qwen");await usageWatch;void refreshTaskList();
+  }
+  if(result?.recovered&&result.task_id){
+    await resumeTask(result.task_id);
+    if(result.stop_reason==="backend_restart")renderMessage("assistant",result.answer);
+  }
+}
+
 function resetOwnerInputValues(){
   $("ownerInputValue").value="";
   $("ownerInputSaveToVault").checked=false;
@@ -951,11 +1032,11 @@ async function send(){
     // A pending approval is the next user decision, not a generic follow-up.
     if(result.protected_input){
       pending.wrap.append(protectedInputCard(result.protected_input,result.session_id));
-    }else if(!result.events?.some(e=>e.type==="approval_required")){
+    }else if(!result.stop_reason&&!result.recovered&&!result.events?.some(e=>e.type==="approval_required")){
       void loadFollowups(result.session_id,result.turn,pending);
     }
     if(result.task_id)void refreshTaskList();
-    if(result.protected_input){
+    if(result.protected_input||result.stop_reason||["blocked","failed","partial","stopped","interrupted"].includes(result.job_status)){
       showTaskStatus("blocked");
     }else if(result.events?.some(e=>e.name==="comm_request_review"&&e.result?.ok)){
       showTaskStatus("needs_review");
@@ -2456,6 +2537,7 @@ function init(){
   void refreshTaskList();
   void refreshGPTThreads();
   void refreshCollabRuns();
+  void reconnectChatJob();
   window.setInterval(()=>{void pollTask();},5000);
   window.setInterval(()=>{void refreshTaskList();},15000);
   window.setInterval(()=>{if(state.mode==="collab")void refreshCollabRuns();},15000);

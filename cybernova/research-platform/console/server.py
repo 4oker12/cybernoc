@@ -57,6 +57,7 @@ try:
     )
     from .lab_scanners import SCANNER_TOOLS, inventory
     from .communication import CommunicationStore, CommunicationError
+    from .chat_jobs import ChatJobStore, ChatJobError
     from .communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
     from .developer_tools import DEV_TOOLS
     from .communication_worker import CommunicationWorker
@@ -98,6 +99,7 @@ except ImportError:
     )
     from lab_scanners import SCANNER_TOOLS, inventory
     from communication import CommunicationStore, CommunicationError
+    from chat_jobs import ChatJobStore, ChatJobError
     from communication_tools import CommunicationToolClient, COMMUNICATION_TOOLS
     from developer_tools import DEV_TOOLS
     from communication_worker import CommunicationWorker
@@ -292,6 +294,7 @@ def _record_collaboration_tool_event(task_id: str, event: dict) -> None:
 async def lifespan(app):
     # Uncertain in-flight phases are blocked after restart, never replayed.
     work_item_store().recover_interrupted()
+    chat_job_store().recover_interrupted()
     worker = None
     # Recover durable account missions before accepting work. Interrupted
     # external actions are marked for reconciliation, never replayed.
@@ -1407,6 +1410,17 @@ def chat(payload: ChatRequest):
             )["task_id"]
             research_scope_store().save(state["task_id"], state["scope"])
         task_id = state["task_id"]
+        receipt = getattr(payload, "receipt", None)
+        jobs = chat_job_store() if receipt else None
+        if jobs:
+            jobs.bind(receipt, sid, task_id)
+        journal = EvidenceJournal(store)
+        recorded_events = set()
+
+        def persist_tool_event(event):
+            journal.record_tool_events(task_id, [event])
+            recorded_events.add(id(event))
+
         set_context(session_id=sid, task_id=task_id,
                     agent="deepseek", mode="researcher")
         diagnostic_event("task_turn_started", kind="session", status="running")
@@ -1461,8 +1475,10 @@ def chat(payload: ChatRequest):
                 tools_enabled=payload.tools_enabled,
                 session_id=sid,
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
+                on_tool_event=persist_tool_event,
+                should_stop=(lambda: jobs.should_stop(receipt)) if jobs else None,
             )
-            run_status = "completed"
+            run_status = "partial" if outcome.get("stop_reason") else "completed"
         except Exception as exc:
             store.append(task_id, "controller", "system",
                          "Agent failed: " + type(exc).__name__, status="blocked")
@@ -1478,9 +1494,10 @@ def chat(payload: ChatRequest):
         for request_item in requests[:6]:
             diagnostic_event("approval_requested", kind="approval",
                              tool=request_item.get("tool", "unknown"), status="pending")
-        EvidenceJournal(store).record_tool_events(
-            task_id, outcome.get("events") or [],
-        )
+        remaining = [event for event in (outcome.get("events") or [])
+                     if id(event) not in recorded_events]
+        for offset in range(0,len(remaining),64):
+            journal.record_tool_events(task_id,remaining[offset:offset+64])
         state["pending_approvals"].clear()
         for item in requests[:6]:
             state["pending_approvals"][item["request_id"]] = {
@@ -1495,8 +1512,13 @@ def chat(payload: ChatRequest):
         state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
         current_status = store.get_task(task_id)["status"]
-        final_status = ("needs_review" if current_status == "needs_review"
-                        else "blocked" if requests or outcome.get("protected_input") else "completed")
+        incomplete = requests or outcome.get("protected_input") or outcome.get("stop_reason") or outcome.get("error_code")
+        incomplete = incomplete or any(
+            e.get("type") == "agent_error" or (isinstance(e.get("result"),dict)
+                and e["result"].get("status") == "human_challenge_required")
+            for e in outcome.get("events",[]) if isinstance(e,dict))
+        final_status = ("blocked" if incomplete else
+                        "needs_review" if current_status == "needs_review" else "completed")
         event = store.append(
             task_id, "qwen", "result", outcome["answer"][:12000],
             status=final_status,
@@ -1511,8 +1533,13 @@ def chat(payload: ChatRequest):
             }, **outcome}
 
 
+# Full live result cache; durable state and answer reference are in SQLite.
 chat_jobs: OrderedDict[str, dict] = OrderedDict()
 chat_jobs_lock = RLock()
+
+
+def chat_job_store():
+    return ChatJobStore(communication_store())
 
 
 class ChatJobReceipt(BaseModel):
@@ -1524,52 +1551,70 @@ class ChatJobRequest(ChatRequest, ChatJobReceipt):
 
 
 def _complete_chat_job(payload: ChatJobRequest):
+    jobs = chat_job_store()
+    if not jobs.claim(payload.receipt):
+        return
+
     def publish(event):
-        if event["event"] not in {"model_request_start", "tool_call_start", "tool_call_completed", "tool_call_failed"}:
-            return
-        progress = {key: event[key] for key in ("event", "tool", "status") if key in event}
-        with chat_jobs_lock:
-            chat_jobs[payload.receipt]["progress"] = progress
+        if event["event"] in {"model_request_start","tool_call_start","tool_call_completed",
+                             "tool_call_failed","agent_plan_checkpoint"}:
+            jobs.progress(payload.receipt,event)
 
     token = CHAT_PROGRESS_SINK.set(publish)
+    outcome = None
+    status, detail = "failed", None
     try:
-        result = {"status": "completed", "result": chat(payload)}
-    except HTTPException as exc:
-        result = {"status": "failed", "detail": "chat_job_failed", "http_status": exc.status_code}
-    except Exception:
-        result = {"status": "failed", "detail": "chat_job_failed"}
+        outcome = chat(payload)
+        reason = outcome.get("stop_reason")
+        status = ("stopped" if reason == "user_stop" else "partial" if reason
+                  else "blocked" if outcome.get("protected_input") else
+                  "failed" if outcome.get("error_code") or any(
+                      e.get("type") == "agent_error" for e in outcome.get("events",[]) if isinstance(e,dict))
+                  else "completed")
+    except HTTPException:
+        detail = "chat_job_failed"
+    except Exception as exc:
+        detail = "chat_job_failed"
+        log_failure("console","chat_job",exc)
     finally:
         CHAT_PROGRESS_SINK.reset(token)
     with chat_jobs_lock:
-        chat_jobs[payload.receipt].update(result)
+        if outcome is not None:
+            chat_jobs[payload.receipt] = outcome
+            while len(chat_jobs) > 32:
+                chat_jobs.popitem(last=False)
+        jobs.finish(payload.receipt,status,outcome,detail)
 
 
 @app.post("/api/chat/start", status_code=202)
 def start_chat_job(payload: ChatJobRequest, background: BackgroundTasks):
-    with chat_jobs_lock:
-        existing = chat_jobs.get(payload.receipt)
-        if existing is not None:
-            if existing["run_id"] != payload.run_id:
-                raise HTTPException(status_code=409, detail="chat_receipt_conflict")
-            return {"status": existing["status"]}
-        if sum(job["status"] == "running" for job in chat_jobs.values()) >= 4:
-            raise HTTPException(status_code=429, detail="chat_queue_full")
-        if len(chat_jobs) >= 32:
-            oldest_finished = next(key for key, job in chat_jobs.items()
-                                   if job["status"] != "running")
-            del chat_jobs[oldest_finished]
-        chat_jobs[payload.receipt] = {"status": "running", "run_id": payload.run_id}
-        background.add_task(_complete_chat_job, payload)
-    return {"status": "running"}
+    try:
+        status, created = chat_job_store().start(payload)
+    except ChatJobError as exc:
+        raise HTTPException(status_code=429 if str(exc) == "chat_queue_full" else 409,
+                            detail=str(exc)) from None
+    if created:
+        background.add_task(_complete_chat_job,payload)
+    return {"status":status}
 
 
 @app.post("/api/chat/result")
 def chat_job_result(payload: ChatJobReceipt):
     with chat_jobs_lock:
-        job = chat_jobs.get(payload.receipt)
+        job = chat_job_store().read(payload.receipt)
         if job is None:
-            raise HTTPException(status_code=404, detail="chat_result_not_found")
-        return dict(job)
+            raise HTTPException(status_code=404,detail="chat_result_not_found")
+        if payload.receipt in chat_jobs:
+            job["result"] = chat_jobs[payload.receipt]
+    return job
+
+
+@app.post("/api/chat/stop")
+def stop_chat_job(payload: ChatJobReceipt):
+    try:
+        return {"status":chat_job_store().request_stop(payload.receipt)}
+    except ChatJobError as exc:
+        raise HTTPException(status_code=404,detail=str(exc)) from None
 
 
 @app.post("/api/approve")
@@ -1760,6 +1805,8 @@ def communication_resume(payload: ResumeTaskRequest):
         dialog = store.read_dialog(payload.task_id, limit=100)
     except CommunicationError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if chat_job_store().active_task(payload.task_id):
+        raise HTTPException(status_code=409, detail="chat_task_still_running")
     sid, state = _session(None)
     with state["lock"]:
         state["task_id"] = payload.task_id

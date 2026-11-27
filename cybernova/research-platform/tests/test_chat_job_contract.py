@@ -1,5 +1,6 @@
 """Contract between the web client, Console, and a running research turn."""
 import unittest
+import tempfile
 import sys
 from pathlib import Path
 
@@ -10,9 +11,61 @@ from unittest.mock import patch
 from fastapi import BackgroundTasks, HTTPException
 
 from console import diagnostics, server, tunnel_access
+from console.communication import CommunicationStore
+from console.chat_jobs import ChatJobStore
 
 
 class ChatJobContractTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.store = CommunicationStore(Path(tmp.name) / "comm.sqlite3")
+        self.jobs = ChatJobStore(self.store)
+        patcher = patch.object(server,"chat_job_store",return_value=self.jobs)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_restart_preserves_receipt_and_never_replays(self):
+        task = self.store.create_task("Long test")["task_id"]
+        self.store.set_state(task,"running")
+        run = server.ChatJobRequest(message="test",receipt=uuid4().hex,session_id=uuid4().hex)
+        self.assertEqual(self.jobs.start(run),("running",True))
+        self.assertTrue(self.jobs.claim(run.receipt))
+        self.jobs.bind(run.receipt,run.session_id,task)
+        self.jobs.progress(run.receipt,{"event":"tool_call_start","tool":"terminal_status","private":"never"})
+        restored = ChatJobStore(self.store)
+        self.assertEqual(restored.recover_interrupted(),1)
+        result = restored.read(run.receipt)
+        self.assertEqual(result["status"],"interrupted")
+        self.assertEqual(result["progress"],{"event":"tool_call_start","tool":"terminal_status"})
+        self.assertEqual(self.store.get_task(task)["status"],"blocked")
+        self.assertFalse(restored.claim(run.receipt))
+        self.assertEqual(restored.start(run),("interrupted",False))
+
+    def test_completed_answer_survives_cache_loss(self):
+        task = self.store.create_task("Long test")["task_id"]
+        run = server.ChatJobRequest(message="test",receipt=uuid4().hex,session_id=uuid4().hex)
+        self.jobs.start(run)
+        self.jobs.claim(run.receipt)
+        self.jobs.bind(run.receipt,run.session_id,task)
+        msg = self.store.append(task,"qwen","result","Durable final answer",status="completed")
+        self.jobs.finish(run.receipt,"completed",{"task_id":task,"session_id":run.session_id,
+            "event_seq":msg["seq"],"events":[{"private":"never"}]})
+        result = ChatJobStore(self.store).read(run.receipt)
+        self.assertEqual(result["result"]["answer"],"Durable final answer")
+        self.assertTrue(result["result"]["recovered"])
+        self.assertNotIn("events",result["result"])
+
+    def test_stop_and_same_session_guard(self):
+        run = server.ChatJobRequest(message="test",receipt=uuid4().hex,session_id=uuid4().hex)
+        self.jobs.start(run)
+        self.assertFalse(self.jobs.should_stop(run.receipt))
+        with self.assertRaisesRegex(ValueError,"chat_session_busy"):
+            self.jobs.start(server.ChatJobRequest(message="other",receipt=uuid4().hex,session_id=run.session_id))
+        self.assertTrue(tunnel_access.allowed_path("/api/chat/stop","POST"))
+        self.assertEqual(server.stop_chat_job(server.ChatJobReceipt(receipt=run.receipt)),{"status":"stopping"})
+        self.assertTrue(self.jobs.should_stop(run.receipt))
+
     def test_status_result_and_deduplication(self):
         run = server.ChatJobRequest(message="test", receipt=uuid4().hex)
         key = server.ChatJobReceipt(receipt=run.receipt)
