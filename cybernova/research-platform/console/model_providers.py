@@ -7,9 +7,13 @@ content. Do not enable cloud inference for secret or private research material.
 from __future__ import annotations
 
 from collections import deque
+import errno
+import http.client
 import json
 import os
 import re
+import socket
+import time
 from pathlib import Path
 
 try:
@@ -21,6 +25,8 @@ from urllib import error, parse, request
 LOCAL_NAMES = frozenset({"localhost", "127.0.0.1", "::1", "ollama"})
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_IMAGE_DATA_URL_CHARS = 12_000_000
+_LLM_TRANSPORT_MAX_ATTEMPTS = 2
+_LLM_TRANSPORT_RETRY_DELAY_SECONDS = 0.5
 _IMAGE_DATA_URL_RE = re.compile(
     r"^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$"
 )
@@ -51,6 +57,32 @@ def _provider_error_detail(body: bytes) -> str | None:
             if clean and clean.lower() not in {"none", "null"}:
                 parts.append(key + "=" + clean)
     return "; ".join(parts)[:420] or None
+
+
+def _is_retryable_transport_error(exc: BaseException) -> bool:
+    """Identify transient connection failures; never retry provider/config errors."""
+    if isinstance(exc, (
+        http.client.IncompleteRead,
+        http.client.RemoteDisconnected,
+        TimeoutError,
+        ConnectionError,
+    )):
+        return True
+    if isinstance(exc, error.URLError):
+        reason = exc.reason
+        return isinstance(reason, BaseException) and _is_retryable_transport_error(reason)
+    if isinstance(exc, socket.gaierror):
+        return exc.errno == socket.EAI_AGAIN
+    if isinstance(exc, OSError):
+        return exc.errno in {
+            errno.ECONNABORTED,
+            errno.ECONNREFUSED,
+            errno.ECONNRESET,
+            errno.EHOSTUNREACH,
+            errno.ENETUNREACH,
+            errno.ETIMEDOUT,
+        }
+    return False
 
 
 def provider_name() -> str:
@@ -286,29 +318,46 @@ class OpenAICompatibleClient:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.api_key:
             headers["Authorization"] = "Bearer " + self.api_key
-        req = request.Request(self.endpoint, data=raw, method="POST", headers=headers)
         opener = request.build_opener(request.ProxyHandler({}), _NoRedirect())
-        try:
-            with opener.open(req, timeout=240) as resp:
-                if resp.status != 200:
-                    raise ModelConfigError("llm_http_" + str(resp.status))
-                content = resp.read(MAX_RESPONSE_BYTES + 1)
-                if len(content) > MAX_RESPONSE_BYTES:
-                    raise ModelConfigError("llm_response_too_large")
-                result = json.loads(content)
-        except error.HTTPError as exc:
-            # Parse only allowlisted error metadata. Never persist the raw body:
-            # compatible providers may echo credentials or request fragments.
+
+        for attempt in range(_LLM_TRANSPORT_MAX_ATTEMPTS):
+            req = request.Request(self.endpoint, data=raw, method="POST", headers=headers)
             try:
-                error_body = exc.read(8192)
-            except Exception:
-                error_body = b""
-            detail = _provider_error_detail(error_body)
-            raise ModelConfigError("llm_http_" + str(exc.code),
-                                   safe_detail=detail) from None
-        except (error.URLError, TimeoutError, OSError, ValueError) as exc:
-            raise ModelConfigError("llm_transport_" + type(exc).__name__) from None
-        return result
+                with opener.open(req, timeout=240) as resp:
+                    if resp.status != 200:
+                        raise ModelConfigError("llm_http_" + str(resp.status))
+                    content = resp.read(MAX_RESPONSE_BYTES + 1)
+            except error.HTTPError as exc:
+                # HTTP responses are provider decisions, not transport retries.
+                # Parse only allowlisted metadata; never persist the raw body.
+                try:
+                    error_body = exc.read(8192)
+                except Exception:
+                    error_body = b""
+                detail = _provider_error_detail(error_body)
+                raise ModelConfigError("llm_http_" + str(exc.code),
+                                       safe_detail=detail) from None
+            except (
+                http.client.IncompleteRead,
+                http.client.RemoteDisconnected,
+                error.URLError,
+                TimeoutError,
+                OSError,
+            ) as exc:
+                if (attempt + 1 < _LLM_TRANSPORT_MAX_ATTEMPTS
+                        and _is_retryable_transport_error(exc)):
+                    time.sleep(_LLM_TRANSPORT_RETRY_DELAY_SECONDS)
+                    continue
+                raise ModelConfigError("llm_transport_" + type(exc).__name__) from None
+
+            if len(content) > MAX_RESPONSE_BYTES:
+                raise ModelConfigError("llm_response_too_large")
+            try:
+                return json.loads(content)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                raise ModelConfigError("llm_response_invalid_json") from None
+
+        raise ModelConfigError("llm_transport_retry_exhausted")
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              *, json_mode: bool = False) -> dict:

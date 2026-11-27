@@ -1,11 +1,12 @@
 """No-network tests of pluggable local/hosted model providers."""
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import os
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 import sys
 import tempfile
 import unittest
@@ -266,6 +267,118 @@ class ModelProviderTests(unittest.TestCase):
             with self.assertRaises(ModelConfigError):
                 backend.chat([{"role":"user","content":"test"}])
 
+    def test_incomplete_read_retries_once_and_returns_complete_response(self):
+        class TruncatedResponse:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, _limit):
+                raise http.client.IncompleteRead(b'{"partial":', 20)
+
+        class CompleteResponse:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, _limit):
+                return b'{"ok":true}'
+
+        class SequencedOpener:
+            def __init__(self):
+                self.calls = 0
+            def open(self, *_args, **_kwargs):
+                self.calls += 1
+                return TruncatedResponse() if self.calls == 1 else CompleteResponse()
+
+        opener = SequencedOpener()
+        backend = OpenAICompatibleClient(
+            base_url="https://api.example/v1", model="deepseek-flash",
+            api_key="test-api-key",
+        )
+        with patch("console.model_providers.request.build_opener", return_value=opener), patch("console.model_providers.time.sleep") as sleep:
+            self.assertEqual(backend._request({"model": "deepseek-flash"}), {"ok": True})
+        self.assertEqual(opener.calls, 2)
+        sleep.assert_called_once_with(0.5)
+
+    def test_incomplete_read_stops_after_one_retry(self):
+        class TruncatedResponse:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, _limit):
+                raise http.client.IncompleteRead(b'{"partial":', 20)
+
+        class TruncatedOpener:
+            def __init__(self):
+                self.calls = 0
+            def open(self, *_args, **_kwargs):
+                self.calls += 1
+                return TruncatedResponse()
+
+        opener = TruncatedOpener()
+        backend = OpenAICompatibleClient(
+            base_url="https://api.example/v1", model="deepseek-flash",
+            api_key="test-api-key",
+        )
+        with patch("console.model_providers.request.build_opener", return_value=opener), patch("console.model_providers.time.sleep"):
+            with self.assertRaises(ModelConfigError) as ctx:
+                backend._request({"model": "deepseek-flash"})
+        self.assertEqual(str(ctx.exception), "llm_transport_IncompleteRead")
+        self.assertEqual(opener.calls, 2)
+
+    def test_transient_url_error_retries_once(self):
+        class CompleteResponse:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, _limit):
+                return b'{"ok":true}'
+
+        class SequencedOpener:
+            def __init__(self):
+                self.calls = 0
+            def open(self, *_args, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    raise URLError(ConnectionResetError("connection reset"))
+                return CompleteResponse()
+
+        opener = SequencedOpener()
+        backend = OpenAICompatibleClient(
+            base_url="https://api.example/v1", model="deepseek-flash",
+            api_key="test-api-key",
+        )
+        with patch("console.model_providers.request.build_opener", return_value=opener), patch("console.model_providers.time.sleep"):
+            self.assertEqual(backend._request({"model": "deepseek-flash"}), {"ok": True})
+        self.assertEqual(opener.calls, 2)
+
+    def test_non_transient_url_error_is_not_retried(self):
+        class FailingOpener:
+            def __init__(self):
+                self.calls = 0
+            def open(self, *_args, **_kwargs):
+                self.calls += 1
+                raise URLError("permanent name resolution failure")
+
+        opener = FailingOpener()
+        backend = OpenAICompatibleClient(
+            base_url="https://api.example/v1", model="deepseek-flash",
+            api_key="test-api-key",
+        )
+        with patch("console.model_providers.request.build_opener", return_value=opener), patch("console.model_providers.time.sleep") as sleep:
+            with self.assertRaises(ModelConfigError) as ctx:
+                backend._request({"model": "deepseek-flash"})
+        self.assertEqual(str(ctx.exception), "llm_transport_URLError")
+        self.assertEqual(opener.calls, 1)
+        sleep.assert_not_called()
+
     def test_http_400_exposes_only_redacted_provider_error_metadata(self):
         backend=OpenAICompatibleClient(
             base_url="https://api.example/v1",model="deepseek-flash",
@@ -278,13 +391,17 @@ class ModelProviderTests(unittest.TestCase):
             "message":"Unsupported parameter reasoning_content; api_key=sk-1234567890ABCDEFGHIJ",
         }}).encode()
         class RejectingOpener:
+            def __init__(self):
+                self.calls = 0
             def open(self,*args,**kwargs):
+                self.calls += 1
                 raise HTTPError("https://api.example/v1/chat/completions",400,
                                 "Bad Request",{},io.BytesIO(body))
-        with patch("console.model_providers.request.build_opener",
-                   return_value=RejectingOpener()):
+        opener = RejectingOpener()
+        with patch("console.model_providers.request.build_opener", return_value=opener):
             with self.assertRaises(ModelConfigError) as ctx:
                 backend._request({"model":"deepseek-flash"})
+        self.assertEqual(opener.calls, 1)
         self.assertEqual(str(ctx.exception),"llm_http_400")
         self.assertIn("unsupported_parameter",ctx.exception.safe_detail)
         self.assertIn("reasoning_content",ctx.exception.safe_detail)
