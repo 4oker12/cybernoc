@@ -41,6 +41,7 @@ try:
     from .safe_terminal import TERMINAL_TOOLS, safe_terminal
     from .research_web import research_web_call
     from .collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
+    from .work_items import WorkItemStore, WorkItemError, MAX_CONCURRENT_ITEMS
     from .gpt_tool_runtime import (
         runtime as gpt_tool_runtime, deepseek_runtime as deepseek_tool_runtime,
         extract_user_targets, normalize_tool_groups, tool_group_summary,
@@ -77,6 +78,7 @@ except ImportError:
     from safe_terminal import TERMINAL_TOOLS, safe_terminal
     from research_web import research_web_call
     from collaboration import CollaborationStore, CollaborationError, mentor_messages, researcher_messages, MENTOR_PROFILE
+    from work_items import WorkItemStore, WorkItemError, MAX_CONCURRENT_ITEMS
     from gpt_tool_runtime import (
         runtime as gpt_tool_runtime, deepseek_runtime as deepseek_tool_runtime,
         extract_user_targets, normalize_tool_groups, tool_group_summary,
@@ -240,11 +242,39 @@ def collaboration_store() -> CollaborationStore:
     return CollaborationStore(communication_store())
 
 
-collaboration_step_lock = RLock()
+@lru_cache(maxsize=1)
+def work_item_store() -> WorkItemStore:
+    return WorkItemStore(collaboration_store())
+
+
+_collaboration_step_locks: dict[str, RLock] = {}
+_collaboration_step_locks_guard = RLock()
+
+
+def _collaboration_step_lock(task_id: str) -> RLock:
+    with _collaboration_step_locks_guard:
+        return _collaboration_step_locks.setdefault(task_id, RLock())
+
+
+def _record_collaboration_tool_event(task_id: str, event: dict) -> None:
+    if not isinstance(event, dict):
+        return
+    event_type = event.get("type")
+    if event_type not in {"tool_result", "tool_error", "approval_required", "scope_change_required"}:
+        event_type = "tool_result" if event.get("ok") else "tool_error"
+    EvidenceJournal(communication_store()).record_tool_events(task_id, [{
+        "type": event_type,
+        "name": event.get("name") or event.get("tool_name") or "",
+        "is_error": bool(event.get("is_error", event_type == "tool_error" or event.get("ok") is False)),
+        "arguments": event.get("arguments") or {},
+        "result": event.get("result") or {},
+    }])
 
 
 @asynccontextmanager
 async def lifespan(app):
+    # Uncertain in-flight phases are blocked after restart, never replayed.
+    work_item_store().recover_interrupted()
     worker = None
     if os.environ.get("CYBERNOVA_COMM_WORKER", "1") == "1":
         worker = CommunicationWorker(communication_store())
@@ -444,11 +474,20 @@ class CollaborationStartRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=3000)
     model: str = Field(min_length=1, max_length=160)
     cycles: int = Field(default=5, ge=1, le=12)
+    mode: str = Field(default="dialog", pattern="^(dialog|parallel)$")
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
 
 
 class CollaborationActionRequest(BaseModel):
     task_id: str = Field(min_length=12, max_length=100)
+
+
+class CollaborationMessageRequest(CollaborationActionRequest):
+    message: str = Field(min_length=1, max_length=10000)
+
+
+class WorkItemRequest(CollaborationActionRequest):
+    item_id: str = Field(min_length=12, max_length=100)
 
 
 class SharedToolRequest(BaseModel):
