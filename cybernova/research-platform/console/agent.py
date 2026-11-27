@@ -694,7 +694,8 @@ class Agent:
     def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True,
             scope: dict | None = None, user_context: str = "",
             profile_instructions: str = "", tool_groups: list[str] | None = None,
-            tools_enabled: bool = True, on_usage=None,
+            tools_enabled: bool = True, on_usage=None, on_tool_event=None,
+            trusted_user_messages: list[dict] | None = None,
             session_id: str | None = None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
@@ -924,12 +925,20 @@ class Agent:
         context.append({"role": "user", "content": text})
         events = []
         pending_requests = []
-        task_messages = [
-            {"role": item["role"], "content": item["content"]}
-            for item in history[-16:]
-            if isinstance(item, dict) and item.get("role") in {"user", "assistant"}
-            and isinstance(item.get("content"), str)
-        ] + [{"role": "user", "content": text}]
+        if trusted_user_messages is None:
+            task_messages = [
+                {"role": "user", "content": item["content"]}
+                for item in history[-16:]
+                if isinstance(item, dict) and item.get("role") == "user"
+                and isinstance(item.get("content"), str)
+            ] + [{"role": "user", "content": text}]
+        else:
+            task_messages = [
+                {"role": "user", "content": item["content"][:MAX_PROMPT]}
+                for item in trusted_user_messages
+                if isinstance(item, dict) and item.get("role") == "user"
+                and isinstance(item.get("content"), str) and item.get("content").strip()
+            ]
         authorized_targets = extract_user_targets(task_messages)
         authorized_targets.update(
             str(host).lower().rstrip(".") for host in scope_hosts
@@ -1311,6 +1320,8 @@ class Agent:
                     }
                     safe_event.update(event)
                     events.append(safe_event)
+                    if on_tool_event is not None:
+                        on_tool_event(safe_event)
                     if safe_result.get("status") == "human_challenge_required":
                         count += 1
                         return result_payload("Сайт показал браузерную проверку. Выполнение приостановлено.",
