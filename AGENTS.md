@@ -106,6 +106,14 @@ Verify all expected ports listening and HTTP application readiness, not merely
 
 ## 5. Changes, testing, security and evidence
 
+- One active engineering initiative uses one agreed integration branch. For the
+  current browser-agent initiative use `feature/full-shell-computer-discovery`.
+  Check existing related branches before implementing a capability again. Do not
+  create or switch to an additional branch for the same initiative without an
+  explicit reason and owner approval. If work must be isolated, record its exact
+  source commit, integration target, tests, and unresolved integration work;
+  pushed code on another branch is not a completed integration.
+
 - Follow the engineering loop: goal → analysis → needs → plan → implementation →
   verification → adaptation → result. Revise the plan when evidence changes and
   report the verified outcome and remaining gaps.

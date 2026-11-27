@@ -143,6 +143,10 @@ LOCAL_TOOLS_PROFILE = """
   browser_snapshot, browser_follow_link, browser_back/forward/reload,
   browser_tabs, browser_new_tab, browser_switch_tab, browser_scroll,
   browser_fill/select, browser_console и browser_network.
+- Для неполного снимка используй browser_find_controls, для длинного текста —
+  browser_read_page с next_offset и проверкой content_sha256, для таблиц —
+  browser_read_table, для локального поиска — browser_find_text.
+  При неоднозначности не выбирай произвольный элемент; уточни текущий контекст.
 - После перехода по ссылке проверяй URL, заголовок и содержимое страницы.
   Внутренние ссылки на уже разрешённом хосте можно проходить обычной навигацией.
   Для нового внутреннего хоста требуется его явное указание пользователем

@@ -56,7 +56,8 @@ MAX_CONTEXT_HISTORY_CHARS = 2500
 MAX_CONTEXT_TOOL_CALLS = 8
 MAX_CONTEXT_TOOL_CHARS = 3500
 MAX_CONTEXT_SUMMARY_CHARS = 5000
-_BROWSER_PAGE_FIELDS = ("visible_text", "links", "buttons", "form_fields", "headings")
+_BROWSER_PAGE_FIELDS = ("visible_text", "links", "buttons", "form_fields", "headings",
+                        "landmarks", "tables", "focused_elements")
 _ROUTINE_READ_TOOLS = frozenset({
     "browser_navigate", "browser_snapshot", "browser_follow_link", "browser_tabs",
     "browser_back", "browser_forward", "browser_reload", "terminal_status",
@@ -510,7 +511,8 @@ def _browser_json(result, limit):
     if len(content) <= limit:
         return content
     list_fields = ("form_fields", "buttons", "links", "headings", "blocked_requests",
-                   "events", "messages", "tabs")
+                   "events", "messages", "tabs", "landmarks", "tables",
+                   "focused_elements", "matches", "rows")
     lists = {key: result[key] for key in list_fields if isinstance(result.get(key), list)}
     bounded = {key: value for key, value in result.items()
                if key not in lists and key != "visible_text"}

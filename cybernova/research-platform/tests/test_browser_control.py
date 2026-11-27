@@ -84,6 +84,27 @@ class BrowserControlTests(unittest.TestCase):
                     self.assertTrue(all(item["in_viewport"] for item in capture["links"]))
 
                     page.set_content("""
+                        <a id="picture-link" href="https://example.org/guide"><img alt="Guide" width="30" height="30"></a>
+                        <iframe srcdoc="<label for='nested'>Nested field</label><input id='nested'>"></iframe>
+                        <main><h1>Article</h1><p>Literal sample phrase</p>
+                        <table><tr><th>Name</th></tr><tr><td>Example row</td></tr></table></main>
+                    """)
+                    page.frame_locator("iframe").locator("#nested").wait_for()
+                    found = session._dispatch("browser_find_controls", {"query": "Guide"})
+                    self.assertEqual(found["links"][0]["name"], "Guide")
+                    self.assertEqual(found["links"][0]["id"], "picture-link")
+                    nested = session._dispatch("browser_find_controls", {"query": "Nested field"})
+                    self.assertEqual(nested["form_fields"][0]["frame_index"], 1)
+                    filled = session._dispatch("browser_fill", {"label": "Nested field", "value": "sample"})
+                    self.assertTrue(filled["field_verified"])
+                    self.assertEqual(page.frame_locator("iframe").locator("#nested").input_value(), "sample")
+                    self.assertTrue(session._dispatch("browser_find_text", {
+                        "query": "Literal sample phrase", "max_matches": 3})["matches"])
+                    self.assertIn("Literal sample phrase", session._dispatch("browser_read_page", {"offset": 0})["text"])
+                    self.assertEqual(session._dispatch("browser_read_table", {
+                        "frame_index": 0, "table_index": 0, "row_offset": 0})["rows"][-1], ["Example row"])
+
+                    page.set_content("""
                         <div><h2>Plus</h2><input type=radio name=plan aria-label=Plan checked></div>
                         <div><h2>Free</h2><input type=radio name=plan aria-label=Plan></div>
                     """)
@@ -104,6 +125,38 @@ class BrowserControlTests(unittest.TestCase):
                     context.close()
             finally:
                 browser.close()
+
+    def test_perception_tools_use_closed_required_schemas(self):
+        tools = {row["name"]: row["inputSchema"] for row in BROWSER_CONTROL_TOOLS}
+        for name in ("browser_find_controls", "browser_read_page", "browser_read_table", "browser_find_text"):
+            self.assertIn(name, tools)
+            self.assertFalse(tools[name]["additionalProperties"])
+            self.assertEqual(set(tools[name]["properties"]), set(tools[name]["required"]))
+
+    def test_targeted_control_discovery_preserves_current_query(self):
+        session = BrowserSession()
+        self.addCleanup(session._executor.shutdown, wait=False)
+        with patch.object(session, "_ensure"), patch.object(
+                session, "_snapshot", return_value={"ok": True}) as snapshot:
+            self.assertEqual(session._dispatch("browser_find_controls", {"query": "  Search   field "}),
+                             {"ok": True})
+            snapshot.assert_called_once_with(control_query="Search field")
+            with self.assertRaisesRegex(ValueError, "browser_control_query_invalid"):
+                session._dispatch("browser_find_controls", {"query": " "})
+
+    def test_frame_target_resolution_rejects_cross_frame_ambiguity(self):
+        session = BrowserSession()
+        self.addCleanup(session._executor.shutdown, wait=False)
+        main, child, second = Mock(), Mock(), Mock()
+        session._page = main
+        main.main_frame = Mock()
+        main.frames = [main.main_frame, child]
+        self.assertEqual(session._frame_contexts(), [main, child])
+        with patch.object(session, "_unique", side_effect=[None, second]):
+            self.assertIs(session._unique_across(lambda frame: frame), second)
+        with patch.object(session, "_unique", side_effect=[main, second]):
+            with self.assertRaisesRegex(ValueError, "browser_target_not_unique:2"):
+                session._unique_across(lambda frame: frame)
 
     def test_default_chromium_is_headless_on_windows_unless_opted_out(self):
         with patch.dict("os.environ", {"CYBERNOVA_GPT_BROWSER_HEADLESS": ""}):
