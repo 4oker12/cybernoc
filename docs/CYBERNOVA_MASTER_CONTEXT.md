@@ -1,6 +1,6 @@
 # Cybernova / CyberNoc — operational master context
 
-**Updated:** 2026-11-21  
+**Updated:** 2026-11-27  
 **Repository:** https://github.com/4oker12/cybernoc  
 **Scope:** local Windows development and operation. This document is an operational handoff, not proof that the laptop is currently running the application.
 
@@ -30,16 +30,15 @@ A separate branch, `feature/account-gpt-local-tools`, exists and must not be con
 - local HEAD: `28e4a35`;
 - worktree output showed the branch name and commit, with no visible dirty-file entries.
 
-**Last observed GitHub state before the documentation commits in this update:**
-- remote branch HEAD: `ab5d68259a908fe7cf3a8cc897a8bff7bc498c3b);
-- local `28e4a35` was an ancestor of that remote HEAD;
-- CI runs observed for the relevant branch were successful.
+**Latest verified GitHub code state (2026-11-27):**
+- primary branch: `feature/full-shell-computer-discovery`;
+- latest tested code commit: `716112c9750584d5bd67c60be766d18cc375aa8e`;
+- integration merge commit: `e587c80bd81c97928c30906312dcaa08093a59d9`, with the previous full-shell branch head and `main` as its two parents;
+- `main` remains unchanged at `dac7c4b1771dfe963b3cfef5e61c03d385d8f3e7`;
+- Research Platform Quality Gate: success, **585 unit tests**; compile, JavaScript, repository guard, portable deployment, registry and scope checks passed;
+- Windows Readonly Integration Smoke: success on an ephemeral GitHub Windows runner; browser semantic snapshot reported `page_type=documentation` and 82 links, with zero hard failures.
 
-This repository has since received documentation-only commits in this task:
-- `ba0fa8a` — update `AGENTS.md` for PowerShell 5.1 and project workflow;
-- `625ff7e` — add `docs/CHATGPT_PROJECT_INSTRUCTIONS.md`.
-
-Re-fetch the branch HEAD before any further update. The user's laptop has **not** been confirmed to have pulled these commits.
+These CI results verify the pushed GitHub commit and the ephemeral runners only. The user's laptop has **not** been confirmed to have pulled this code. Its local branch/worktree, processes, ports, installed dependencies, authenticated UI, MCP and live model/provider behavior must be checked independently.
 
 Never switch branches just to make the update easier. Before Git operations, inspect repository root, branch, status, origin, local and remote HEAD, ancestry and relevant port owners. Update only with a verified fast-forward. Do not use `reset --hard`, `git clean -fd`, force push or blind overwrite. Stop if the worktree is dirty, branch unexpected, origin wrong or history diverged.
 

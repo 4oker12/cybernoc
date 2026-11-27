@@ -5,33 +5,21 @@
 > `4oker12/cybernoc`; the 2026-11-16 status is retained as history, not as
 > the current blocker.
 
-## Current verified state — 2026-11-25
+## Current verified state — 2026-11-27
 
 - GitHub repository: `4oker12/cybernoc`.
-- Main working branch baseline: `feature/full-shell-computer-discovery`,
-  HEAD `2ab19ba97387f9d04199645ed11a74a89232532f`.
-- Current review branch: `agent/agent-cycle-routing-consistency`.
-- Draft PR: [#38 — Align agent tool routing across providers](https://github.com/4oker12/cybernoc/pull/38).
-- Review head: `0d76a157243aa01c74ca66a319b91705071cd1f8`.
-- GitHub Actions Quality Gate: success; 476 unit tests passed, compile,
-  JavaScript parsing, portable deployment validation, registry checks and
-  default-closed scope checks passed.
-- The PR changes shared tool guidance, DeepSeek JSON-fallback catalog/context,
-  explicit catalog overflow handling and approval-client scope propagation.
-- High-impact actions without direct user intent remain blocked. Existing tests
-  intentionally reject unsolicited approval prompts for those actions.
-- Local Windows worktree, service processes, ports, live Account GPT calls,
-  live DeepSeek calls and local end-to-end behavior have not been verified.
-- GitHub `main` is 107 commits ahead of the working feature branch. No merge,
-  reset or branch switch was performed; the PR targets the instructed feature
-  branch only.
-
+- Primary working branch: `feature/full-shell-computer-discovery`.
+- Latest tested code commit: `716112c9750584d5bd67c60be766d18cc375aa8e`.
+- Integration merge commit: `e587c80bd81c97928c30906312dcaa08093a59d9`; its parents are the previous full-shell branch head `ae3c262d1441793435f40e9ec3e20aea52d3660a` and `main` head `dac7c4b1771dfe963b3cfef5e61c03d385d8f3e7`. The `main` ref was not rewritten.
+- The integrated tree retains the full-shell/computer-discovery and work-item collaboration changes, plus main's account mission, vault, protected owner-input, and related UI/runtime work.
+- Research Platform Quality Gate [run 46006211723](https://github.com/4oker12/cybernoc/actions/runs/46006211723): **success**. 585 unit tests passed; source compilation, JavaScript parsing, repository secret/data guard, portable deployment, tool registry, and default-closed scope checks passed.
+- Windows Readonly Integration Smoke [run 46006211781](https://github.com/4oker12/cybernoc/actions/runs/46006211781): **success** on an ephemeral GitHub Windows runner. CMD, Windows PowerShell, pwsh, read-only system/computer inventory, Chromium navigation, semantic page snapshot, text search, network metadata, public search/source opening, and shared DeepSeek tool dispatch passed. The only warning was that the test page had no suitable link for `browser_follow_link`; no hard failures remained.
+- Browser snapshots now expose a page type and bounded content statistics in addition to headings, landmarks, controls, tables, and visible text. Browser page/table reading and targeted control discovery are available through separate bounded tools.
+- Local Windows worktree, installed version, processes, ports, live model/provider calls, authenticated UI and local end-to-end behavior remain unverified. No local files, services, ports, or runtime data were changed in this integration.
+ 
 ### Next step
 
-Review PR #38 and decide whether to merge it into
-`feature/full-shell-computer-discovery`. After that, continue the provider/tool
-catalog parity audit and perform the read-only Windows preflight before any
-local update or service operation.
+Perform the read-only Windows preflight for repository root, branch, worktree, origin, local/remote HEAD, ancestry, and owners of ports 18792, 18794, 18795 and 18796. If the worktree and ownership checks are safe, update the laptop with a fast-forward only. Then verify local startup, authentication, MCP, the selected model/provider, browser actions, and a real multi-agent task separately from GitHub CI.
 
 ---
 
