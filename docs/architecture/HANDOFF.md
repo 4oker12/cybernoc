@@ -9,17 +9,21 @@
 
 - GitHub repository: `4oker12/cybernoc`.
 - Primary working branch: `feature/full-shell-computer-discovery`.
-- Latest tested code commit: `716112c9750584d5bd67c60be766d18cc375aa8e`.
+- Latest tested code commit: `ab1f5ca6702cd83e8b957749b96d1c753f928284`.
 - Integration merge commit: `e587c80bd81c97928c30906312dcaa08093a59d9`; its parents are the previous full-shell branch head `ae3c262d1441793435f40e9ec3e20aea52d3660a` and `main` head `dac7c4b1771dfe963b3cfef5e61c03d385d8f3e7`. The `main` ref was not rewritten.
 - The integrated tree retains the full-shell/computer-discovery and work-item collaboration changes, plus main's account mission, vault, protected owner-input, and related UI/runtime work.
-- Research Platform Quality Gate [run 46006211723](https://github.com/4oker12/cybernoc/actions/runs/46006211723): **success**. 585 unit tests passed; source compilation, JavaScript parsing, repository secret/data guard, portable deployment, tool registry, and default-closed scope checks passed.
-- Windows Readonly Integration Smoke [run 46006211781](https://github.com/4oker12/cybernoc/actions/runs/46006211781): **success** on an ephemeral GitHub Windows runner. CMD, Windows PowerShell, pwsh, read-only system/computer inventory, Chromium navigation, semantic page snapshot, text search, network metadata, public search/source opening, and shared DeepSeek tool dispatch passed. The only warning was that the test page had no suitable link for `browser_follow_link`; no hard failures remained.
-- Browser snapshots now expose a page type and bounded content statistics in addition to headings, landmarks, controls, tables, and visible text. Browser page/table reading and targeted control discovery are available through separate bounded tools.
-- Local Windows worktree, installed version, processes, ports, live model/provider calls, authenticated UI and local end-to-end behavior remain unverified. No local files, services, ports, or runtime data were changed in this integration.
- 
+- Research Platform Quality Gate [run 46010900519](https://github.com/4oker12/cybernoc/actions/runs/46010900519): **success**. 585 unit tests passed; source compilation, JavaScript parsing, repository secret/data guard, portable deployment, tool registry and default-closed scope checks passed.
+- Windows Readonly Integration Smoke [run 46010900593](https://github.com/4oker12/cybernoc/actions/runs/46010900593): **success** on an ephemeral Windows runner. CMD, Windows PowerShell, pwsh, read-only system/computer inventory, Chromium navigation, semantic snapshots, text search, exact-URL link following, tabs/history, public source opening and shared DeepSeek tool dispatch passed. Final summary: zero hard failures and zero warnings.
+- Browser navigation supports exact visible link names and an exact safe-URL selector (`url:<URL>`) for cases where labels are ambiguous. Existing session isolation, private-host authorization, sensitive-field redaction and protected-submit controls remain in place.
+- Search fallback pagination is explicitly **unverified** when Google returns a JavaScript shell and Bing HTML/RSS is used. The smoke test reports this as `UNVERIFIED`, not as a pass or a hard failure; it does not bypass CAPTCHA, consent or anti-bot challenges.
+- A manual live-provider test was added at `cybernova/research-platform/tests/browser_agent_e2e.py`. It starts a loopback-only fixture page and asks the configured DeepSeek model to navigate links, read a long page/table, fill a harmless field, click a local test button and report the resulting state. It is compiled by CI but has **not** been run against the user's local provider/runtime.
+- Related PRs #42 and #43 were not merged: their CI runs failed because `dialog_action` was present in browser tool definitions but absent from the GPT/MCP adapter schemas. PR #46 remains an audit-only conflicting snapshot and must not be merged.
+- Last observed local Windows copy (2026-11-27 10:07): `C:\Users\Andrei\Cybernova-browser-agent-continuation`, branch `feature/full-shell-computer-discovery`, HEAD `cdca3210122eeabc45affcc51ea696bbe75df360`, clean worktree, origin `https://github.com/4oker12/cybernoc.git`. GitHub has since advanced to `ab1f5ca6702cd83e8b957749b96d1c753f928284`; the laptop has not been updated or rechecked in this session.
+- No local files, services, ports, SQLite data, venv, secrets or runtime data were changed.
+
 ### Next step
 
-Perform the read-only Windows preflight for repository root, branch, worktree, origin, local/remote HEAD, ancestry, and owners of ports 18792, 18794, 18795 and 18796. If the worktree and ownership checks are safe, update the laptop with a fast-forward only. Then verify local startup, authentication, MCP, the selected model/provider, browser actions, and a real multi-agent task separately from GitHub CI.
+Run a read-only local preflight for the recorded repository, branch, worktree, origin, remote HEAD and owners of ports 18792, 18794, 18795 and 18796. If the branch/worktree/origin and process ownership are safe, update with the repository's fast-forward-only updater. Then run `tests/browser_agent_e2e.py` against the local configured DeepSeek provider and verify the authenticated UI/MCP/model separately from GitHub CI.
 
 ---
 

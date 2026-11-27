@@ -25,20 +25,26 @@ The active branch for the current full-shell work is:
 
 A separate branch, `feature/account-gpt-local-tools`, exists and must not be confused or merged into the current work without an explicit reason.
 
-**Last observed local state from the user's terminal (2026-11-21):**
+**Last observed local state from the user's terminal (2026-11-27 10:07):**
+- repository path: `C:\Users\Andrei\Cybernova-browser-agent-continuation`;
 - branch: `feature/full-shell-computer-discovery`;
-- local HEAD: `28e4a35`;
-- worktree output showed the branch name and commit, with no visible dirty-file entries.
+- local HEAD: `cdca3210122eeabc45affcc51ea696bbe75df360`;
+- worktree: clean;
+- origin: `https://github.com/4oker12/cybernoc.git`.
+
+This is a historical observation, not a current preflight. GitHub has since advanced to `ab1f5ca6702cd83e8b957749b96d1c753f928284`; do not update the laptop until its present worktree and port owners are checked.
 
 **Latest verified GitHub code state (2026-11-27):**
 - primary branch: `feature/full-shell-computer-discovery`;
-- latest tested code commit: `716112c9750584d5bd67c60be766d18cc375aa8e`;
+- latest tested code commit: `ab1f5ca6702cd83e8b957749b96d1c753f928284`;
 - integration merge commit: `e587c80bd81c97928c30906312dcaa08093a59d9`, with the previous full-shell branch head and `main` as its two parents;
 - `main` remains unchanged at `dac7c4b1771dfe963b3cfef5e61c03d385d8f3e7`;
-- Research Platform Quality Gate: success, **585 unit tests**; compile, JavaScript, repository guard, portable deployment, registry and scope checks passed;
-- Windows Readonly Integration Smoke: success on an ephemeral GitHub Windows runner; browser semantic snapshot reported `page_type=documentation` and 82 links, with zero hard failures.
+- Research Platform Quality Gate [run 46010900519](https://github.com/4oker12/cybernoc/actions/runs/46010900519): **success, 585 tests**; compile, JavaScript, repository guard, portable deployment, registry and scope checks passed;
+- Windows Readonly Integration Smoke [run 46010900593](https://github.com/4oker12/cybernoc/actions/runs/46010900593): **success**, zero hard failures and zero warnings; Chromium link following and shared DeepSeek tool dispatch passed;
+- manual live DeepSeek browser test: `cybernova/research-platform/tests/browser_agent_e2e.py`; local run still pending;
+- Bing fallback pagination is reported as unverified when the provider does not confirm page offsets. No CAPTCHA/consent challenge bypass is implemented.
 
-These CI results verify the pushed GitHub commit and the ephemeral runners only. The user's laptop has **not** been confirmed to have pulled this code. Its local branch/worktree, processes, ports, installed dependencies, authenticated UI, MCP and live model/provider behavior must be checked independently.
+These CI results verify the pushed GitHub commit and ephemeral runners only. The user's laptop has **not** been updated to this commit. Local branch/worktree, ports, processes, authenticated UI, MCP and live model/provider behavior must be checked independently.
 
 Never switch branches just to make the update easier. Before Git operations, inspect repository root, branch, status, origin, local and remote HEAD, ancestry and relevant port owners. Update only with a verified fast-forward. Do not use `reset --hard`, `git clean -fd`, force push or blind overwrite. Stop if the worktree is dirty, branch unexpected, origin wrong or history diverged.
 
