@@ -720,7 +720,7 @@ class BrowserSession:
         previous_action = self._active_action
         if name in WRITE_TRIGGER_TOOLS:
             raw_label = args.get("name") or args.get("target") or args.get("label") or name
-            action_label = re.sub(r"\\s+", " ", str(raw_label)).strip()[:120]
+            action_label = re.sub(r"\s+", " ", str(raw_label)).strip()[:120]
             self._active_action = {"tool": name, "label": action_label or name}
         try:
             result = self._dispatch(name, args)
