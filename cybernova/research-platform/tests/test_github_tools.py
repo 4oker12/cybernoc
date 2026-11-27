@@ -60,7 +60,7 @@ class GitHubToolsTests(unittest.TestCase):
             gh.touch()
             with patch("console.github_tools.platform.system", return_value="Windows"), \
                  patch("console.github_tools.shutil.which", return_value=None), \
-                 patch.dict(os.environ, {"LOCALAPPDATA": dirname}):
+                 patch.dict(os.environ, {"LOCALAPPDATA": dirname, "ProgramFiles": str(Path(dirname) / "ProgramFiles"), "ProgramFiles(x86)": str(Path(dirname) / "ProgramFiles_x86")}):
                 self.assertEqual(_gh_executable(), str(gh.resolve()))
 
     def test_status_reports_real_repository_permissions_without_credentials(self):
