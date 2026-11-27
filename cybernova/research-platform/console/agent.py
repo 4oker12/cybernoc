@@ -996,7 +996,9 @@ class Agent:
             }
             try:
                 registered = discovered_tools(combined_rows, limit=MAX_DISCOVERED)
-                advertised = route_model_tool_rows(registered, text, limit=MAX_ADVERTISED)
+                advertised = route_model_tool_rows(
+                    registered, text, limit=MAX_ADVERTISED, selected_groups=selected_groups
+                )
                 descriptors = {t["name"]: t for t in advertised}
                 tools = _tool_schema(advertised)
             except ToolPolicyError as exc:
