@@ -182,50 +182,64 @@ def filter_tool_rows(rows, groups=None) -> list[dict]:
     return [row for row in safe_rows if tool_group_for_name(row["name"]) in selected]
 
 
-# Rank existing, already-authorized rows only. This is routing, not permission.
+# Route only task-relevant groups. This is routing, not permission.
 _ROUTE_HINTS = {
-    "browser": r"браузер|хром|страниц|сайт|ссылк|вкладк|форм[ауые]|browser|chrome|https?://|screenshot",
-    "computer": r"компьютер|ноутбук|файл|папк|процесс|служб|диск|окн[оа]|памят|windows|desktop|computer|defender|cpu|ram",
-    "terminal": r"терминал|команд|powershell|\bcmd\b|\bshell\b|\bgit\b|terminal|консол|окружени",
-    "web": r"интернет|поиск|поищи|гугл|источник|search|research|web",
-    "network": r"\bdns\b|\btls\b|\bssl\b|\bip\b|\bhttp\b|сеть|сетев|маршрут|шлюз|network",
-    "security": r"security|аудит|безопасност|проверка защит",
-    "traffic": r"\bhar\b|трафик|traffic|devtools",
+    "browser": r"браузер|хром|страниц|сайт|ссылк|вкладк|форм[ауые]|browser|chrome|https?://|screenshot|открой страницу|открой сайт",
+    "computer": r"компьютер|ноутбук|локальн.{0,12}файл|папк|процесс|служб|диск|окн[оа]|памят|windows|desktop|computer|defender|cpu|ram",
+    "terminal": r"терминал|команд[уы]? в (?:powershell|cmd|терминал)|powershell|\\bcmd\\b|\\bshell\\b|terminal|консол|выполни команду|запусти команду",
+    "web": r"интернет|поиск|поищи|найди в сети|найди в интернете|гугл|источник|search|research|web|погод|weather|forecast|прогноз|курс валют|новост",
+    "network": r"\\bdns\\b|\\btls\\b|\\bssl\\b|\\bip\\b|\\bhttp\\b|сеть|сетев|маршрут|шлюз|network|ping|traceroute",
+    "security": r"security|аудит|безопасност|уязвимост|сканирован",
+    "traffic": r"\\bhar\\b|трафик|traffic|devtools",
     "developer": r"git|репозитори|ветк|коммит|исходник|тест|разработ|проект|repository|branch|commit|code|test",
     "github": r"github|pull request|issue|репозитори|ветк|коммит",
-    "mcp": r"\bmcp\b|инструмент|tools|координац",
+    "mcp": r"\\bmcp\\b|tools/list|mcp-сервис",
 }
 
 
-def route_model_tool_rows(rows: list[dict], task: str, *, limit: int) -> list[dict]:
-    """Keep exact requested names and relevant groups first; balance the rest.
+def route_model_tool_rows(
+    rows: list[dict], task: str, *, limit: int, selected_groups=None
+) -> list[dict]:
+    """Expose only exact task-mentioned tools and task-relevant selected groups.
 
-    The complete catalog remains discoverable on each turn. Never widen the
-    caller's group selection, register an invented tool, or change dispatch policy.
+    An explicit user group selection is authoritative. In automatic mode, no
+    unrelated groups are appended merely to fill the provider schema budget.
     """
-    if len(rows) <= limit:
-        return rows
+    if type(limit) is not int or limit < 1:
+        return []
     task = task.casefold()
     exact = []
     buckets = {}
     for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+            continue
         name = row["name"]
-        if re.search(r"(?<![\w.-])" + re.escape(name.casefold()) + r"(?![\w.-])", task):
+        group = tool_group_for_name(name)
+        if re.search(r"(?<![\\w.-])" + re.escape(name.casefold()) + r"(?![\\w.-])", task):
             exact.append(row)
         else:
-            buckets.setdefault(tool_group_for_name(name), []).append(row)
-    selected = exact[:limit]
-    relevant = [key for key in buckets if re.search(_ROUTE_HINTS.get(key, r"(?!)"), task)]
-    other = [key for key in buckets if key not in relevant]
-    for group_keys in (relevant, other):
-        offset = 0
-        while len(selected) < limit:
-            batch = [buckets[key][offset] for key in group_keys if offset < len(buckets[key])]
-            if not batch:
-                break
-            selected.extend(batch[:limit - len(selected)])
-            offset += 1
-    return selected
+            buckets.setdefault(group, []).append(row)
+
+    if selected_groups:
+        relevant = set(normalize_tool_groups(selected_groups))
+    else:
+        relevant = {
+            key for key, pattern in _ROUTE_HINTS.items()
+            if re.search(pattern, task, flags=re.IGNORECASE)
+        }
+
+    selected = []
+    seen = set()
+    for row in exact:
+        if row["name"] not in seen:
+            selected.append(row)
+            seen.add(row["name"])
+    for group in relevant:
+        for row in buckets.get(group, []):
+            if row["name"] not in seen:
+                selected.append(row)
+                seen.add(row["name"])
+    return selected[:limit]
 
 
 def tool_group_summary(tool_names) -> list[dict]:

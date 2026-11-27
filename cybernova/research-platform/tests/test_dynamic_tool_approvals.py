@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from console.agent import Agent, BackendError, APPROVAL_TTL_SECONDS
+from console.gpt_tool_runtime import route_model_tool_rows
 from console.tool_policy import (
     MAX_ADVERTISED, MAX_DISCOVERED, ToolPolicyError, discovered_tools, model_tools, validate_dynamic_arguments,
     safe_preview, schema_digest, action_description,
@@ -105,6 +106,44 @@ class DynamicToolPolicyTests(unittest.TestCase):
         ready = [call.kwargs for call in log.call_args_list if call.args == ("tool_catalog_ready",)]
         self.assertEqual(ready[0]["discovered_count"], 160)
         self.assertEqual(ready[0]["omitted_count"], 160 - len(offered))
+
+    def test_weather_task_does_not_advertise_terminal_or_computer_tools(self):
+        rows = [
+            {"name": "google_search", "description": "Search", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "research_source_open", "description": "Open source", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "browser_navigate", "description": "Navigate", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "browser_read_page", "description": "Read page", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "terminal_run", "description": "Run command", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "terminal_status", "description": "Terminal status", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "computer_status", "description": "Computer status", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "github_list_repositories", "description": "GitHub", "inputSchema": {"type": "object", "properties": {}}},
+        ]
+        selected = route_model_tool_rows(rows, "Какая погода сегодня в Киеве?", limit=MAX_ADVERTISED)
+        names = {row["name"] for row in selected}
+        self.assertTrue({"google_search", "research_source_open"} <= names)
+        self.assertFalse({"terminal_run", "terminal_status", "computer_status",
+                          "github_list_repositories"} & names)
+
+    def test_explicit_terminal_task_advertises_terminal_but_not_browser(self):
+        rows = [
+            {"name": "terminal_run", "description": "Run command", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "terminal_status", "description": "Terminal status", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "browser_navigate", "description": "Navigate", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "google_search", "description": "Search", "inputSchema": {"type": "object", "properties": {}}},
+        ]
+        selected = route_model_tool_rows(rows, "Выполни команду PowerShell Get-Location", limit=MAX_ADVERTISED)
+        names = {row["name"] for row in selected}
+        self.assertTrue({"terminal_run", "terminal_status"} <= names)
+        self.assertFalse({"browser_navigate", "google_search"} & names)
+
+    def test_explicit_group_selection_is_preserved(self):
+        rows = [
+            {"name": "terminal_run", "description": "Run command", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "browser_navigate", "description": "Navigate", "inputSchema": {"type": "object", "properties": {}}},
+        ]
+        selected = route_model_tool_rows(rows, "Какая погода сегодня?", limit=MAX_ADVERTISED,
+                                         selected_groups=["terminal"])
+        self.assertEqual([row["name"] for row in selected], ["terminal_run"])
 
     def test_dynamic_args_enforce_required_and_type(self):
         schema = NEW["inputSchema"]
