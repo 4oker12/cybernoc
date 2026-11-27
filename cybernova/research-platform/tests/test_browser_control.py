@@ -815,13 +815,29 @@ class BrowserControlTests(unittest.TestCase):
                     nested = session._dispatch("browser_find_controls", {"query": "Nested field"})
                     self.assertEqual(nested["form_fields"][0]["frame_index"], 1)
                     filled = session._dispatch("browser_fill", {"label": "Nested field", "value": "sample"})
-                    self.assertTrue(filled["field_verified"])
+                    self.assertTrue(filled["ok"])
                     self.assertEqual(page.frame_locator("iframe").locator("#nested").input_value(), "sample")
                     self.assertTrue(session._dispatch("browser_find_text", {
                         "query": "Literal sample phrase", "max_matches": 3})["matches"])
                     self.assertIn("Literal sample phrase", session._dispatch("browser_read_page", {"offset": 0})["text"])
                     self.assertEqual(session._dispatch("browser_read_table", {
                         "frame_index": 0, "table_index": 0, "row_offset": 0})["rows"][-1], ["Example row"])
+
+                    page.set_content("""
+                        <details><summary>Details</summary><p>Main page</p></details>
+                        <iframe srcdoc="<details><summary>Details</summary><p>Frame result</p></details>"></iframe>
+                    """)
+                    page.frame_locator("iframe").locator("summary").wait_for()
+                    found = session._dispatch("browser_find_controls", {"query": "Details"})
+                    target = next(item for item in found["buttons"] if item["frame_index"] == 1)
+                    self.assertFalse(target["expanded"])
+                    opened = session._dispatch("browser_click_button", {"name": target["action_target"]})
+                    self.assertTrue(opened["disclosure_changed"])
+                    self.assertTrue(opened["expanded_after"])
+                    self.assertIn("Frame result", opened["visible_text"])
+                    self.assertFalse(page.locator("details").evaluate("el => el.open"))
+                    with self.assertRaisesRegex(ValueError, "browser_target_disclosure_stale"):
+                        session._dispatch("browser_click_button", {"name": target["action_target"]})
 
                     page.set_content("""
                         <div><h2>Plus</h2><input type=radio name=plan aria-label=Plan checked></div>
@@ -844,6 +860,17 @@ class BrowserControlTests(unittest.TestCase):
                     context.close()
             finally:
                 browser.close()
+
+    def test_navigation_reports_access_limits_without_inferring_cause(self):
+        session = BrowserSession()
+        try:
+            with patch.object(session, "_snapshot", return_value={"ok": True, "url": "https://example.org"}):
+                result = session._navigation_snapshot(Mock(status=403))
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["http_status"], 403)
+            self.assertEqual(result["status"], "browser_access_limited")
+        finally:
+            session.close()
 
     def test_page_type_classifier_uses_url_and_visible_semantics(self):
         self.assertEqual(

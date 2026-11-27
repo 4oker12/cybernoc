@@ -55,7 +55,11 @@ class Fixture(BaseHTTPRequestHandler):
                 <button onclick="document.getElementById('result').textContent =
                   document.getElementById('q').value === 'status'
                   ? 'SEARCH_RESULT: active' : 'SEARCH_RESULT: none'">Search records</button>
-                <p id="result"></p></main>"""
+                <p id="result"></p>
+                <iframe title="Archive widget" src="/archive/widget"></iframe></main>"""
+        elif self.path == "/archive/widget":
+            html = """<!doctype html><title>Archive widget</title>
+                <details><summary>Widget details</summary><p>prism-willow-88</p></details>"""
         else:
             self.send_error(404)
             return
@@ -92,8 +96,10 @@ def main() -> None:
         "Прочитай страницу полностью, включая конец длинного текста. "
         "Найди маркер FINAL_ARCHIVE_MARKER и код Atlas в таблице. "
         "На странице архива введи status в поле Record search, нажми Search records "
-        "и проверь появившийся результат. В ответе укажи маркер, код, результат "
-        "поиска и конечный URL. Используй браузерные инструменты; не угадывай."
+        "и проверь появившийся результат. Раскрой Widget details во вложенном "
+        "Archive widget и проверь, что появилось внутри. В ответе укажи маркер, "
+        "код, результат поиска, текст из раскрытого блока и конечный URL. "
+        "Используй браузерные инструменты; не угадывай."
     )
     body = json.dumps({
         "message": prompt,
@@ -141,6 +147,13 @@ def main() -> None:
             "long_page_marker": "orbital-cedar-71" in answer,
             "table_code": "AC-42" in answer,
             "dynamic_search_result": "active" in answer.lower(),
+            "disclosure_verified": any(
+                isinstance(event.get("result"), dict)
+                and event["result"].get("disclosure_changed") is True
+                and event["result"].get("expanded_after") is True
+                for event in tool_events
+            ),
+            "disclosure_text": "prism-willow-88" in answer,
             "final_url": origin + "/archive/2026" in answer,
         }
         report = {

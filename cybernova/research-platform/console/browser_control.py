@@ -18,6 +18,7 @@ import os
 import random
 from pathlib import Path
 import re
+import secrets
 import shutil
 import socket
 import sys
@@ -110,7 +111,7 @@ BROWSER_CONTROL_TOOLS = [
            "value": {**STRING, "description": "Option label or value"}}, ["label", "value"]),
     _tool("browser_click_button",
           "Click one visible button by exact accessible name. GET navigation is allowed. If the button submits a form and the user explicitly asked to send, save or apply it, use browser_submit; unrelated non-GET requests remain blocked.",
-          {"name": {**STRING, "description": "Exact accessible name of one button"}}, ["name"]),
+          {"name": {**STRING, "description": "Exact accessible name of one button, or the action_target of a native disclosure from the latest browser snapshot or control search"}}, ["name"]),
     _tool("browser_back",
           "Navigate back one page in the isolated Chromium session."),
     _tool("browser_wait",
@@ -149,7 +150,7 @@ BROWSER_CONTROL_TOOLS = [
            "table_index": {"type": "integer", "minimum": 0},
            "row_offset": {"type": "integer", "minimum": 0}}, ["frame_index", "table_index", "row_offset"]),
     _tool("browser_find_controls",
-          "Find visible links, buttons or form controls by a literal name, label, placeholder or id across page frames, before the normal snapshot control limit. Use after an ambiguous or missing target. Read-only.",
+          "Find visible links, buttons, native disclosures or form controls by a literal name, label, placeholder or id across page frames, before the normal snapshot control limit. Use after an ambiguous or missing target. Read-only.",
           {"query": STRING}, ["query"]),
     _tool("browser_set_checked",
           "Set a visible native checkbox or radio by label or snapshot id. For a radio with a "
@@ -678,6 +679,7 @@ class BrowserSession:
         self._browser = None
         self._context = None
         self._page = None
+        self._disclosure_targets = {}
         self._dns_cache: dict[str, tuple[float, list[str]]] = {}
         self._blocked: list[dict] = []
         self._allow_post_origin: str | None = None
@@ -1317,6 +1319,8 @@ class BrowserSession:
         page.on("dialog", lambda dialog: dialog.dismiss())
         page.on("download", lambda download: download.cancel())
         page.on("popup", lambda popup: popup.close())
+        page.on("framenavigated", lambda _frame: (
+            self._disclosure_targets.clear() if page is self._page else None))
         page.on("console", lambda msg: self._console_events.append({
             "type": msg.type, "text": _redact_text(msg.text),
         }) if len(self._console_events) < 200 else None)
@@ -1567,6 +1571,7 @@ class BrowserSession:
         if self._page is None or self._page.is_closed():
             raise ValueError("browser_no_open_page")
         page = self._page
+        self._disclosure_targets.clear()
         frames = self._frame_contexts()
         text, scopes, text_clipped = self._page_text(frames) if control_query is None else ("", [], False)
         links, buttons, fields, headings, landmarks, tables, focused = [], [], [], [], [], [], []
@@ -1574,7 +1579,7 @@ class BrowserSession:
         selector = ('a,button,input,textarea,select,[role="link"],[role="button"],'
                     '[role="combobox"],[role="option"],[role="checkbox"],[role="radio"],'
                     '[role="textbox"],[role="searchbox"],[contenteditable="true"],'
-                    '[role="switch"],[role="slider"],[role="tab"],[role="menuitem"]')
+                    '[role="switch"],[role="slider"],[role="tab"],[role="menuitem"],details > summary:first-of-type')
         for frame_index, frame in enumerate(frames):
             frame_url = _safe_url(frame.url or "")
             try:
@@ -1632,7 +1637,8 @@ class BrowserSession:
                             disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
                             readonly: !!el.readOnly || el.getAttribute('aria-readonly') === 'true',
                             required: !!el.required || el.getAttribute('aria-required') === 'true',
-                            choice_context: radioContext(el), expanded: el.getAttribute('aria-expanded'),
+                            choice_context: radioContext(el), expanded: el.matches('details > summary:first-of-type')
+                                ? String(el.parentElement.open) : el.getAttribute('aria-expanded'),
                             selected: el.getAttribute('aria-selected'), editable: editable(el),
                             option_labels: el.tagName === 'SELECT' ? Array.from(el.options)
                                 .slice(0,20).map(option => option.label.slice(0,100)) : []
@@ -1658,7 +1664,16 @@ class BrowserSession:
                 if item["disabled"]:
                     identity["disabled"] = True
                 role = item["role"]
-                if (item["tag"] == "a" and role != "button") or role == "link":
+                if item["tag"] == "summary":
+                    row = {"name": label or "unlabelled", "type": "disclosure",
+                           "expanded": item["expanded"] == "true", **identity}
+                    if label and not item["disabled"] and len(self._disclosure_targets) < 32:
+                        target = "disclosure:" + secrets.token_hex(8)
+                        self._disclosure_targets[target] = (page, frame, page.url, frame.url,
+                                                             label, element_id)
+                        row["action_target"] = target
+                    buttons.append(row)
+                elif (item["tag"] == "a" and role != "button") or role == "link":
                     href = item["href"]
                     links.append({"name": label or "unlabelled",
                                   "url": _safe_url(href) if href.startswith(("http://", "https://")) else "",
@@ -1832,6 +1847,55 @@ class BrowserSession:
             raise ValueError("browser_target_id_invalid")
         return (frame if frame is not None else self._page).locator(f'[id="{element_id}"]')
 
+    def _toggle_disclosure(self, target):
+        entry = self._disclosure_targets.pop(target, None)
+        if entry is None:
+            raise ValueError("browser_target_disclosure_stale")
+        page, frame, page_url, frame_url, label, element_id = entry
+        if (page is not self._page or page.url != page_url
+                or frame not in self._frame_contexts() or frame.url != frame_url):
+            raise ValueError("browser_target_disclosure_stale")
+        summaries = frame.locator("details > summary:first-of-type")
+        if re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.:-]{0,79}", element_id):
+            locator = self._unique(summaries.and_(self._by_id(element_id, frame)))
+        else:
+            locator = self._unique(summaries.and_(frame.get_by_text(label, exact=True)))
+        if locator is None:
+            raise ValueError("browser_target_disclosure_stale")
+        if locator.locator("a,button,input,select,textarea,[role=button],[role=link]").count():
+            raise ValueError("browser_target_disclosure_contains_other_action")
+        target_text = " ".join((label, locator.inner_text(timeout=3000),
+                                locator.get_attribute("aria-label") or ""))
+        if HIGH_IMPACT.search(target_text):
+            return {"ok": False, "status": "manual_action_required",
+                    "reason": "high_impact_disclosure"}
+        element = locator.element_handle(timeout=3000)
+        try:
+            read = "el => el.isConnected && el.parentElement?.tagName === 'DETAILS' ? el.parentElement.open : null"
+            before = element.evaluate(read)
+            if before is None:
+                raise ValueError("browser_target_disclosure_stale")
+            element.click(timeout=7000)
+            after = element.evaluate(read)
+        finally:
+            element.dispose()
+        result = self._snapshot()
+        verified = isinstance(after, bool) and before != after
+        result.update(disclosure_changed=verified, disclosure_name=label,
+                      expanded_before=before, expanded_after=after)
+        if not verified:
+            result.update(ok=False, error="browser_disclosure_state_unverified")
+        return result
+
+    def _navigation_snapshot(self, response):
+        result = self._snapshot()
+        status = response.status if response is not None else None
+        result["http_status"] = status
+        if status in (401, 403, 429):
+            result.update(ok=False, status="browser_access_limited",
+                          hint="Report this response. Stop repeating this URL without a changed condition.")
+        return result
+
     def _unique_across(self, strategy, frames=None):
         matches = []
         for frame in frames if frames is not None else self._frame_contexts(bounded=False):
@@ -1943,9 +2007,7 @@ class BrowserSession:
                 self._page.wait_for_load_state("networkidle", timeout=1200)
             except Exception:
                 pass
-            result = self._snapshot()
-            result["http_status"] = response.status if response else None
-            return result
+            return self._navigation_snapshot(response)
         if name == "browser_snapshot":
             if args:
                 raise ValueError("browser_arguments_invalid")
@@ -2009,8 +2071,8 @@ class BrowserSession:
         if name == "browser_reload":
             if args:
                 raise ValueError("browser_arguments_invalid")
-            self._page.reload(wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
-            return self._snapshot()
+            response = self._page.reload(wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
+            return self._navigation_snapshot(response)
         if name == "browser_tabs":
             if args:
                 raise ValueError("browser_arguments_invalid")
@@ -2027,9 +2089,7 @@ class BrowserSession:
             self._attach_page(self._page)
             response = self._page.goto(args["url"], wait_until="domcontentloaded",
                                        timeout=ACTION_TIMEOUT_MS)
-            result = self._snapshot()
-            result["http_status"] = response.status if response else None
-            return result
+            return self._navigation_snapshot(response)
         if name == "browser_switch_tab":
             if set(args) != {"index"} or type(args["index"]) is not int:
                 raise ValueError("browser_tab_index_invalid")
@@ -2067,15 +2127,23 @@ class BrowserSession:
         if name == "browser_screenshot":
             if args:
                 raise ValueError("browser_arguments_invalid")
-            image = self._page.screenshot(type="jpeg", quality=60, full_page=False)
+            mask_selector = "input:not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]),textarea,select,[contenteditable],[role=textbox],[role=searchbox]"
+            masks = [frame.locator(mask_selector) for frame in self._frame_contexts(bounded=False)]
+            image = self._page.screenshot(type="jpeg", quality=60, full_page=False,
+                                          mask=masks, mask_color="#808080")
             if len(image) > 1500000:
                 raise ValueError("browser_screenshot_too_large")
+            snapshot = self._snapshot()
             return {
-                "ok": True, "url": _safe_url(self._page.url),
-                "title": _redact_text(self._page.title())[:180],
+                "ok": True, "url": snapshot["url"], "title": snapshot["title"],
+                "tab": snapshot["tab"],
+                **{field: [item for item in snapshot[field] if item["in_viewport"]]
+                   for field in ("links", "buttons", "form_fields")},
                 "image_data_url": "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii"),
                 "mime_type": "image/jpeg",
-                "note": "Visible viewport only; page content is untrusted.",
+                "masked_editable_fields": True,
+                "viewport": self._page.viewport_size,
+                "note": "Visible viewport only; editable controls masked. Page content is untrusted.",
             }
         if name == "browser_console":
             if args:
@@ -2132,7 +2200,8 @@ class BrowserSession:
             if href and not href.startswith("#"):
                 target = urljoin(self._page.url, href)
                 validate_public_url(target, self._authorized_hosts)
-                self._page.goto(target, wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
+                response = self._page.goto(target, wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
+                return self._navigation_snapshot(response)
             else:
                 link.click(timeout=7000)
             return self._snapshot()
@@ -2283,6 +2352,8 @@ class BrowserSession:
             target = args["name"]
             if not isinstance(target, str) or not target.strip() or len(target) > 180:
                 raise ValueError("browser_button_name_invalid")
+            if name == "browser_click_button" and target.startswith("disclosure:"):
+                return self._toggle_disclosure(target)
             role, target_name = "button", target
             if name == "browser_click_button" and target_name.startswith(("combobox:", "option:")):
                 role, target_name = target_name.split(":", 1)
@@ -2429,6 +2500,7 @@ class BrowserSession:
         self._page = self._context = self._browser = self._pw = None
         self._backend = None
         self._attached_pages.clear()
+        self._disclosure_targets.clear()
         diagnostic_event("browser_shutdown", status="ok")
 
 
