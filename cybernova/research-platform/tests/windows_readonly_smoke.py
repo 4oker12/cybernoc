@@ -257,8 +257,8 @@ def run():
         )
         pagination_ok = bool(page_one and page_two and len(page_two - page_one) > 0)
         pagination_status = (
-            "PASS" if pagination_ok and first_search_url else
             "UNVERIFIED" if page_one and page_two and not pagination_verified else
+            "PASS" if pagination_ok and first_search_url else
             "WARN"
         )
         print(json.dumps({
