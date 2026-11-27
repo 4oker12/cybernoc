@@ -396,6 +396,40 @@ def _clear_payment_form_for_owner(session):
         return {"ok": False, "cleared_fields": []}
 
 
+def _confirm_browser_write(conversation_key, details):
+    if not isinstance(conversation_key, str) or not conversation_key:
+        return False
+    if not isinstance(details, dict):
+        return False
+    method = str(details.get("method") or "UNKNOWN").upper()[:16]
+    request_label = str(details.get("request_label") or (method + " request"))[:120]
+    page_origin = details.get("page_origin")
+    target_origin = details.get("target_origin")
+    action_label = str(details.get("action_label") or "browser action")[:120]
+    resource_type = str(details.get("resource_type") or "other")[:40]
+    purpose = (
+        "Действие «" + action_label + "» инициировало " + resource_type
+        + ": " + request_label + ". Подтверждение разрешает только этот запрос."
+    )[:240]
+    try:
+        pending = owner_input_broker.request_and_wait(
+            conversation_key, purpose, "browser_action_confirmation",
+            request_label, timeout=300, expected_origin=page_origin,
+            action_origin=target_origin, action_button=request_label,
+        )
+        if not pending.get("ok"):
+            return False
+        decision, expected, target, button = owner_input_broker.consume_browser_action_confirmation(
+            conversation_key, pending["request_id"]
+        )
+        return bool(
+            decision and expected == page_origin
+            and target == target_origin and button == request_label
+        )
+    except Exception:
+        return False
+
+
 def extract_user_targets(messages: list[dict]) -> set[str]:
     """Only allow active host checks against targets explicitly named by the user."""
     text = "\n".join(
@@ -1233,37 +1267,20 @@ class GPTToolRuntime:
             # Browser operations use their own per-conversation lock and worker
             # thread. They never hold the runtime-wide lock while Playwright runs.
             if name.startswith("browser_"):
-                if name in APPROVAL_TOOL_NAMES:
-                    latest_user = ""
-                    for message in reversed(user_messages or []):
-                        if isinstance(message, dict) and message.get("role") == "user":
-                            content = message.get("content")
-                            if isinstance(content, str):
-                                latest_user = content
-                            elif isinstance(content, list):
-                                latest_user = " ".join(
-                                    str(part.get("text") or "") for part in content
-                                    if isinstance(part, dict) and part.get("type") == "text"
-                                )
-                            break
-                    description = str(self.tool_map[name].get("description") or "")
-                    if not task_intent_matches(name, description, latest_user):
-                        return {
-                            "ok": False, "status": "task_intent_required",
-                            "error": name + "_requires_explicit_user_intent",
-                            "message": (
-                                "Последнее сообщение должно прямо просить зарегистрировать аккаунт на этом сайте."
-                                if name == "browser_register" else
-                                "Последнее сообщение должно прямо просить войти в аккаунт на этом сайте."
-                                if name == "browser_login" else
-                                "Последнее сообщение должно прямо просить отправить или сохранить эту форму."
-                            ),
-                        }, True
+                if name in APPROVAL_TOOL_NAMES and (
+                        not isinstance(conversation_key, str) or not conversation_key):
+                    return {
+                        "ok": False, "error": "browser_conversation_required_for_write_approval",
+                    }, True
                 key, entry = self._browser_pool.acquire(conversation_key)
                 try:
                     with entry["call_lock"]:
-                        entry["session"].set_authorized_hosts(authorized_targets or set())
-                        return browser_control_call(name, args, entry["session"])
+                        session = entry["session"]
+                        session.set_authorized_hosts(authorized_targets or set())
+                        setter = getattr(session, "set_write_approval_handler", None)
+                        if callable(setter):
+                            setter(lambda details: _confirm_browser_write(conversation_key, details))
+                        return browser_control_call(name, args, session)
                 finally:
                     self._browser_pool.release(key, entry)
 
