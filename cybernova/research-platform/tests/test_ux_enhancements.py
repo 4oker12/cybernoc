@@ -144,7 +144,9 @@ class UXEnhancementTests(unittest.TestCase):
         self.assertIn("selection-ask", ux)
         self.assertIn("Разбери выделенный фрагмент", ux)
         self.assertNotIn('$("messageInput").disabled=on;', app)
-        self.assertIn('if((mode==="collab"&&(state.qwenRunning||state.gptRunning||state.collabRunning))', app)
+        self.assertIn("const collabActive=state.collabLoopTasks.size>0||state.collabWorkLoops.size>0;", app)
+        self.assertIn('$("modeCollab").disabled=false;', app)
+        self.assertIn('$("messageInput").disabled=collab?!collabWritable:false;', app)
 
     @unittest.skipUnless(shutil.which("node"), "Node runtime unavailable")
     def test_new_frontend_scripts_have_valid_syntax(self):

@@ -524,13 +524,33 @@ class BrowserSessionPool:
         return key, selected
 
     def release(self, key: str, entry: dict) -> None:
+        retired = None
         with self._lock:
             current = self._sessions.get(key)
             if current is not entry:
                 return
             current["active"] = max(0, current["active"] - 1)
             current["last_used"] = self._clock()
-            self._sessions.move_to_end(key)
+            if current["active"] == 0 and current.get("close_when_idle"):
+                retired = self._sessions.pop(key)
+            else:
+                self._sessions.move_to_end(key)
+        if retired is not None:
+            self._close_entries([retired])
+
+    def close_conversation(self, conversation_key: str) -> None:
+        key = self._key(conversation_key)
+        retired = None
+        with self._lock:
+            current = self._sessions.get(key)
+            if current is None:
+                return
+            if current["active"] == 0:
+                retired = self._sessions.pop(key)
+            else:
+                current["close_when_idle"] = True
+        if retired is not None:
+            self._close_entries([retired])
 
     def close(self) -> None:
         with self._lock:
@@ -726,6 +746,9 @@ class GPTToolRuntime:
                 "error": type(exc).__name__ + ":" + detail[:400],
                 "error_id": error_id,
             }, True
+
+    def close_conversation(self, conversation_key: str) -> None:
+        self._browser_pool.close_conversation(conversation_key)
 
     def close(self):
         self._browser_pool.close()
