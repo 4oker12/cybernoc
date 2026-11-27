@@ -105,12 +105,14 @@ def main() -> None:
         f"Самостоятельно исследуй тестовый сайт {origin}/ в настоящем браузере. "
         "Начни с главной страницы, сам найди архив за 2026 год через ссылки. "
         "Прочитай страницу полностью, включая конец длинного текста. "
-        "Найди маркер FINAL_ARCHIVE_MARKER и код Atlas в таблице. "
+        "Найди маркер FINAL_ARCHIVE_MARKER. Для кода Atlas используй "
+        "browser_read_table и проверь строку таблицы в его результате. "
         "На странице архива введи status в поле Record search, нажми Search records "
         "и проверь появившийся результат. Раскрой Widget details во вложенном "
         "Archive widget и проверь, что появилось внутри. Там же открой вкладку "
         "Checks в группе Archive views и проверь текст связанной панели. "
-        "В ответе укажи маркер, код, результат поиска, оба текста и конечный URL. "
+        "В ответе укажи маркер, код, результат поиска, оба текста и конечный URL "
+        "так, как его показывает браузерный инструмент. "
         "Используй браузерные инструменты; не угадывай."
     )
     body = json.dumps({
@@ -159,8 +161,18 @@ def main() -> None:
                 })
             ),
             "long_page_marker": "orbital-cedar-71" in answer,
-            "table_code": "AC-42" in answer,
-            "dynamic_search_result": "active" in answer.lower(),
+            "table_code": "AC-42" in answer and any(
+                event.get("name") == "browser_read_table"
+                and isinstance(event.get("result"), dict)
+                and ["Atlas", "eu-central", "AC-42"] in event["result"].get("rows", [])
+                for event in tool_events
+            ),
+            "dynamic_search_result": "SEARCH_RESULT: active" in answer and any(
+                isinstance(event.get("result"), dict)
+                and any("SEARCH_RESULT: active" in event["result"].get(field, "")
+                        for field in ("visible_text", "text"))
+                for event in tool_events
+            ),
             "disclosure_verified": any(
                 isinstance(event.get("result"), dict)
                 and event["result"].get("disclosure_changed") is True
@@ -176,7 +188,14 @@ def main() -> None:
                 for event in tool_events
             ),
             "shadow_tab_text": "indigo-sparrow-43" in answer,
-            "final_url": origin + "/archive/2026" in answer,
+            "final_url": any(url in answer for url in (
+                origin + "/archive/2026", "http://127.0.0.1/archive/2026",
+            )) and any(
+                isinstance(event.get("result"), dict)
+                and urlsplit(event["result"].get("url") or "").path == "/archive/2026"
+                and event["result"].get("tab_verified") is True
+                for event in tool_events
+            ),
         }
         report = {
             "passed": all(checks.values()),
