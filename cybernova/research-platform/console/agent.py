@@ -247,7 +247,9 @@ def _safe_args(name: str, args: dict) -> dict:
 
 
 def _diagnostic_tool_args(name: str, args: dict) -> dict:
-    """Metadata-safe argument preview for the private JSONL journal."""
+    """Keep useful argument shape without persisting free text or credentials."""
+    if not isinstance(args, dict):
+        return {"argument_type": type(args).__name__}
     if name == "google_search":
         query = args.get("query")
         return {
@@ -255,7 +257,48 @@ def _diagnostic_tool_args(name: str, args: dict) -> dict:
             "query_chars": len(query) if isinstance(query, str) else 0,
             "page": args.get("page") if type(args.get("page")) is int else 1,
         }
-    return safe_preview(args)
+    if name in {"research_source_open", "http_get", "browser_navigate",
+                "browser_open", "browser_follow_link"}:
+        raw_url = args.get("url")
+        preview = {"url_chars": len(raw_url) if isinstance(raw_url, str) else 0}
+        if isinstance(raw_url, str):
+            try:
+                parsed = parse.urlsplit(raw_url)
+                if parsed.scheme and parsed.hostname:
+                    preview["url"] = (parsed.scheme + "://" + parsed.netloc + (parsed.path or "/"))[:360]
+            except ValueError:
+                preview["url"] = "[invalid-url]"
+        return preview
+    if name == "ip_network_summary":
+        cidr = args.get("cidr")
+        return {"cidr": str(cidr)[:80] if isinstance(cidr, str) else "[missing]"}
+    if name.startswith("terminal_") or name == "safe_terminal":
+        command = args.get("command")
+        cwd = args.get("cwd")
+        return {
+            "shell": args.get("shell") if isinstance(args.get("shell"), str) else "unknown",
+            "command_chars": len(command) if isinstance(command, str) else 0,
+            "cwd_chars": len(cwd) if isinstance(cwd, str) else 0,
+            "timeout_seconds": args.get("timeout_seconds") if type(args.get("timeout_seconds")) is int else None,
+            "max_output_chars": args.get("max_output_chars") if type(args.get("max_output_chars")) is int else None,
+        }
+    safe_scalars = {"page", "limit", "offset", "timeout_seconds", "max_output_chars",
+                    "port", "protocol", "method", "shell", "mode", "index", "tab",
+                    "count", "depth", "enabled", "recursive"}
+    preview = {}
+    for raw_key, value in list(args.items())[:24]:
+        key = str(raw_key)[:80]
+        if re.search(r"(?i)token|password|secret|cookie|authorization|credential|cvv|card", key):
+            preview[key] = "[REDACTED]"
+        elif key in safe_scalars and type(value) in {bool, int, float, str}:
+            preview[key] = value if not isinstance(value, str) else value[:80]
+        elif isinstance(value, str):
+            preview[key] = {"type": "str", "chars": len(value)}
+        elif isinstance(value, (list, dict)):
+            preview[key] = {"type": type(value).__name__, "items": len(value)}
+        else:
+            preview[key] = {"type": type(value).__name__}
+    return preview
 
 
 _DSML_BAR = r"(?:[|｜]\s*){1,2}"
