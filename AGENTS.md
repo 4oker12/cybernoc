@@ -106,6 +106,9 @@ Verify all expected ports listening and HTTP application readiness, not merely
 
 ## 5. Changes, testing, security and evidence
 
+- Follow the engineering loop: goal → analysis → needs → plan → implementation →
+  verification → adaptation → result. Revise the plan when evidence changes and
+  report the verified outcome and remaining gaps.
 - Reproduce the issue, isolate the responsible layer, prefer the smallest change,
   keep rollback paths, then test at the layer that failed.
 - Test command syntax for **the actual requested shell**. Do not mix Git Bash,

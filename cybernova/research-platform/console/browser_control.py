@@ -655,12 +655,21 @@ class BrowserSession:
             text = ""
         try:
             rows = page.locator("a,button,input,textarea,select,[role=\"button\"],[role=\"combobox\"],[role=\"option\"],[role=\"checkbox\"],[role=\"radio\"]").evaluate_all(
-                """els => els.filter(el => {
+                """els => {
+                const inViewport = el => {
+                    const r = el.getBoundingClientRect();
+                    return r.bottom > 0 && r.top < innerHeight &&
+                           r.right > 0 && r.left < innerWidth;
+                };
+                const visible = els.filter(el => {
                     const r = el.getBoundingClientRect();
                     const s = getComputedStyle(el);
                     return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' &&
                            s.display !== 'none' && !el.disabled;
-                }).slice(0, 120).map(el => ({
+                });
+                const current = visible.filter(inViewport);
+                const other = visible.filter(el => !inViewport(el));
+                return current.concat(other).slice(0, 120).map(el => ({
                     tag: el.tagName.toLowerCase(),
                     role: el.getAttribute('role') || '',
                     text: (el.innerText || el.getAttribute('aria-label') ||
@@ -671,13 +680,13 @@ class BrowserSession:
                     labels: Array.from(el.labels || []).map(x => x.innerText.trim()).join(' ').slice(0,120),
                     name: el.getAttribute('name') || '',
                     id: el.id,
-                    in_viewport: el.getBoundingClientRect().bottom > 0 &&
-                                 el.getBoundingClientRect().top < innerHeight,
+                    in_viewport: inViewport(el),
                     checked: ['checkbox', 'radio'].includes(el.type) ? el.checked : null,
                     expanded: el.getAttribute('aria-expanded'),
                     option_labels: el.tagName === 'SELECT' ? Array.from(el.options)
                         .slice(0, 20).map(option => option.label.slice(0, 100)) : []
-                }))"""
+                }));
+                }"""
             )
         except Exception:
             rows = []

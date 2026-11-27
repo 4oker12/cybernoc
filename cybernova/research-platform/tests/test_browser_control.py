@@ -47,6 +47,41 @@ class FakeRoute:
 
 
 class BrowserControlTests(unittest.TestCase):
+    def test_snapshot_keeps_scrolled_viewport_controls_on_long_pages(self):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self.skipTest("Playwright is not installed")
+        with sync_playwright() as playwright:
+            try:
+                browser = playwright.chromium.launch(headless=True)
+            except Exception as exc:
+                if "Executable doesn't exist" in str(exc):
+                    self.skipTest("Playwright Chromium is not installed")
+                raise
+            try:
+                context = browser.new_context(viewport={"width": 800, "height": 600})
+                page = context.new_page()
+                links = "".join(
+                    f'<a href="https://example.org/{index}" style="display:block;height:40px">'
+                    f'Link {index}</a>' for index in range(150)
+                )
+                page.set_content(links + '<button id="last-action">Last action</button>')
+                session = BrowserSession(headless=True)
+                try:
+                    session._context = context
+                    session._page = page
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    snapshot = session._snapshot()
+                    self.assertIn("Last action", [item["name"] for item in snapshot["buttons"]])
+                    self.assertTrue(next(item for item in snapshot["buttons"]
+                                         if item["name"] == "Last action")["in_viewport"])
+                finally:
+                    session._executor.shutdown(wait=False, cancel_futures=True)
+                    context.close()
+            finally:
+                browser.close()
+
     def test_default_chromium_is_headless_on_windows_unless_opted_out(self):
         with patch.dict("os.environ", {"CYBERNOVA_GPT_BROWSER_HEADLESS": ""}):
             session = BrowserSession()
