@@ -86,6 +86,11 @@ class CollaborationStore:
                     "ALTER TABLE collaboration_runs ADD COLUMN pause_at INTEGER "
                     "NOT NULL DEFAULT 0"
                 )
+            if "mode" not in columns:
+                db.execute(
+                    "ALTER TABLE collaboration_runs ADD COLUMN mode TEXT "
+                    "NOT NULL DEFAULT 'dialog'"
+                )
             db.execute(
                 "UPDATE collaboration_runs SET pause_at = "
                 "CASE WHEN step >= 2 * max_cycles THEN step ELSE 2 * max_cycles END "
@@ -93,13 +98,15 @@ class CollaborationStore:
             )
 
     def create(self, goal: str, model: str, max_cycles: int,
-               scope: dict | None = None) -> dict:
+               scope: dict | None = None, mode: str = "dialog") -> dict:
         if not isinstance(goal, str) or not 1 <= len(goal.strip()) <= MAX_GOAL or "\x00" in goal:
             raise CollaborationError("invalid_collaboration_goal")
         if not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9_.:/+\-]{1,160}", model):
             raise CollaborationError("invalid_collaboration_model")
         if type(max_cycles) is not int or not 1 <= max_cycles <= MAX_CYCLES:
             raise CollaborationError("invalid_collaboration_cycles")
+        if mode not in {"dialog", "parallel"}:
+            raise CollaborationError("invalid_collaboration_mode")
         with self.lock:
             task = self.comm.create_task(goal.strip()[:150], origin="human")
             task_id = task["task_id"]
@@ -107,14 +114,14 @@ class CollaborationStore:
             now = _utc()
             with self.comm._lock, self.comm._connection() as db:
                 db.execute(
-                    "INSERT INTO collaboration_runs(task_id,model,goal,max_cycles,pause_at,step,state,created_at,updated_at)"
-                    " VALUES(?,?,?,?,?,0,'active',?,?)",
-                    (task_id, model, goal.strip(), max_cycles, 2 * max_cycles, now, now),
+                    "INSERT INTO collaboration_runs(task_id,model,goal,max_cycles,pause_at,step,state,created_at,updated_at,mode)"
+                    " VALUES(?,?,?,?,?,0,'active',?,?,?)",
+                    (task_id, model, goal.strip(), max_cycles, 2 * max_cycles, now, now, mode),
                 )
             self.comm.append(task_id, "human", "instruction", goal.strip(), status="running")
             return self.read(task_id)
 
-    def read(self, task_id: str, *, after: int = 0) -> dict:
+    def read(self, task_id: str, *, after: int = 0, recover: bool = True) -> dict:
         self.comm.get_task(task_id)
         with self.comm._connection() as db:
             row = db.execute(
@@ -143,7 +150,7 @@ class CollaborationStore:
         # A process can terminate between committing a message and updating
         # the run cursor. Never replay that model call or silently duplicate a
         # turn on recovery: require manual review instead.
-        if after == 0:
+        if after == 0 and recover and run["mode"] == "dialog":
             with self.comm._connection() as db:
                 observed = db.execute(
                     "SELECT COUNT(*) FROM messages WHERE task_id=? AND "
@@ -163,10 +170,23 @@ class CollaborationStore:
         if dialog["task"]["status"] == "blocked" and run["state"] == "active":
             run["state"] = "blocked"
         run["next_actor"] = (
-            None if run["state"] != "active" else
+            None if run["state"] != "active" or run["mode"] == "parallel" else
             "chatgpt" if run["step"] % 2 == 0 else "qwen"
         )
         return {**run, "messages": dialog["messages"], "next_after": dialog["next_after"]}
+
+    def user_message(self, task_id: str, message: str) -> dict:
+        """Append a human intervention to an active or paused collaboration."""
+        if not isinstance(message, str) or not 1 <= len(message.strip()) <= 10000 or "\x00" in message:
+            raise CollaborationError("invalid_collaboration_message")
+        with self.lock:
+            run = self.read(task_id, recover=False)
+            if run["state"] not in {"active", "paused"}:
+                raise CollaborationError("collaboration_not_writable")
+            status = "running" if run["state"] == "active" else "idle"
+            self.comm.append(task_id, "human", "instruction", message.strip(),
+                             status=status)
+            return self.read(task_id, recover=False)
 
     def list_runs(self, limit=20) -> list[dict]:
         with self.comm._connection() as db:
@@ -182,7 +202,7 @@ class CollaborationStore:
     def halt(self, task_id: str) -> dict:
         """Manual pause; a subsequent explicit resume continues the same chat."""
         with self.lock:
-            run = self.read(task_id)
+            run = self.read(task_id, recover=False)
             if run["state"] == "active":
                 with self.comm._lock, self.comm._connection() as db:
                     db.execute(
@@ -217,7 +237,7 @@ class CollaborationStore:
     def finish(self, task_id: str) -> dict:
         """Only the owner explicitly closes the durable conversation."""
         with self.lock:
-            run = self.read(task_id)
+            run = self.read(task_id, recover=False)
             if run["state"] in {"active", "paused"}:
                 with self.comm._lock, self.comm._connection() as db:
                     db.execute(
@@ -236,7 +256,7 @@ class CollaborationStore:
             raise CollaborationError("collaboration_empty_answer")
         with self.lock:
             run = self.read(task_id)
-            if run["state"] != "active":
+            if run["state"] != "active" or run["mode"] != "dialog":
                 raise CollaborationError("collaboration_not_active")
             if run["next_actor"] != actor:
                 raise CollaborationError("collaboration_actor_mismatch")
@@ -280,6 +300,9 @@ def mentor_messages(run: dict) -> list[dict]:
         elif item["actor"] == "qwen" and item["kind"] == "result":
             history.append({"role": "user", "content":
                             "Отчёт DeepSeek по твоему заданию:\n" + text})
+        elif item["actor"] == "human" and item["kind"] == "instruction" and item["body"] != run["goal"]:
+            history.append({"role": "user", "content":
+                            "Сообщение пользователя в ходе совместной работы:\n" + text})
     if run["step"] > 0 and history[-1]["role"] == "assistant":
         raise CollaborationError("mentor_waits_for_researcher")
     # A batch only pauses; the owner alone decides whether the discussion
@@ -297,6 +320,9 @@ def researcher_messages(run: dict) -> tuple[list[dict], str]:
                             "[Наставник ChatGPT] " + item["body"][:9500]})
         elif item["actor"] == "qwen" and item["kind"] == "result":
             context.append({"role": "assistant", "content": item["body"][:9500]})
+        elif item["actor"] == "human" and item["kind"] == "instruction" and item["body"] != run["goal"]:
+            context.append({"role": "user", "content":
+                            "[Сообщение пользователя] " + item["body"][:9500]})
     if context[-1]["role"] != "user" or len(context) < 2:
         raise CollaborationError("researcher_waits_for_mentor")
     return context[-15:-1], context[-1]["content"]
