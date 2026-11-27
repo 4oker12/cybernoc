@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Cybernova Quick Send",
+  "version": "3.0.2",
+  "description": "Send selected text from any website or clipboard text to ChatGPT and supported local Cybernova pages.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "contextMenus",
+    "tabs",
+    "scripting",
+    "clipboardRead",
+    "commands"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "send-clipboard-to-chatgpt": {
+      "suggested_key": {
+        "default": "Alt+Shift+Y"
+      },
+      "description": "Send clipboard text to the latest ChatGPT conversation"
+    }
+  },
+  "action": {
+    "default_title": "Cybernova Quick Send"
+  }
+}

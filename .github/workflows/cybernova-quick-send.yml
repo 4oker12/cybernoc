@@ -1,0 +1,54 @@
+name: Cybernova Quick Send Package
+
+on:
+  push:
+    branches:
+      - feature/cybernova-universal-chat-send
+    paths:
+      - tools/cybernova-quick-send-v3/**
+      - .github/workflows/cybernova-quick-send.yml
+  pull_request:
+    paths:
+      - tools/cybernova-quick-send-v3/**
+      - .github/workflows/cybernova-quick-send.yml
+
+permissions:
+  contents: read
+
+jobs:
+  package-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate manifest JSON
+        run: python -m json.tool tools/cybernova-quick-send-v3/extension/manifest.json > /dev/null
+      - name: Check JavaScript syntax
+        run: |
+          node --check tools/cybernova-quick-send-v3/extension/service-worker.js
+          node --check tools/cybernova-quick-send-v3/extension/content.js
+      - name: Run package and scope tests
+        run: python -m unittest discover -s tools/cybernova-quick-send-v3/tests -p 'test_*.py' -v
+
+  windows-package-check:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Run package and scope tests
+        run: python -m unittest discover -s tools/cybernova-quick-send-v3/tests -p "test_*.py" -v
+      - name: Run native CMD package checker
+        shell: cmd
+        run: call tools\cybernova-quick-send-v3\extension\CHECK_PACKAGE.cmd
