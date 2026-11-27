@@ -1,4 +1,5 @@
 """Offline regression: live upgrade preserves communications before restart."""
+from contextlib import closing
 import os
 from pathlib import Path
 import sqlite3
@@ -18,14 +19,14 @@ class LiveUpgradeTests(unittest.TestCase):
             private=Path(tmp)/"private"
             private.mkdir(mode=0o700)
             path=private/"communications.sqlite3"
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.execute("CREATE TABLE task(test TEXT NOT NULL)")
                 db.execute("INSERT INTO task VALUES ('preserved')")
             with patch.object(up,"PRIVATE",private), patch.object(up,"DB",path):
                 up.backup_db()
             backups=list((private/"upgrade-backups").glob("*.sqlite3"))
             self.assertEqual(len(backups),1)
-            with sqlite3.connect(backups[0]) as copy:
+            with closing(sqlite3.connect(backups[0])) as copy, copy:
                 self.assertEqual(copy.execute("SELECT test FROM task").fetchone()[0],
                                  "preserved")
                 self.assertEqual(copy.execute("PRAGMA integrity_check").fetchone()[0],"ok")

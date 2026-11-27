@@ -1,5 +1,6 @@
 """No-network cross-machine restore staging acceptance tests."""
 from __future__ import annotations
+from contextlib import closing
 
 from io import BytesIO
 import os
@@ -34,7 +35,7 @@ class CrossMachineRestoreTests(unittest.TestCase):
         self.key=self.root/"offline.key"
         create_key(self.key)
         self.db=self.root/"original.sqlite3"
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn, conn:
             conn.execute("CREATE TABLE evidence (name TEXT)")
             conn.execute("INSERT INTO evidence VALUES ('test-finding')")
         self.archive=self.root/"snapshot.cnbk"
@@ -47,7 +48,7 @@ class CrossMachineRestoreTests(unittest.TestCase):
             report=stage(make_zip(self.archive),destination=target,incoming=received)
         self.assertFalse(report["activated"])
         self.assertTrue(target.is_file())
-        with sqlite3.connect(target) as db:
+        with closing(sqlite3.connect(target)) as db, db:
             self.assertEqual(db.execute("SELECT name FROM evidence").fetchone()[0],
                              "test-finding")
         self.assertTrue(self.db.is_file())

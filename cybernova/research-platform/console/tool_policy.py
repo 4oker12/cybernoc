@@ -227,7 +227,24 @@ def task_intent_matches(name: str, description: str, user_text: str) -> bool:
     """Check that the current user task directly asks for the high-impact action."""
     text = str(user_text or "")
     if task_explicitly_prohibits_action(text):
-        return False
+        # A request such as "зарегистрируй аккаунт, не спрашивай меня" is
+        # positive registration intent; only negation of the action itself
+        # must suppress the submit.
+        registration_intent = re.search(
+            r"(?i)(зарегистр|регай|создай.{0,20}аккаунт|заведи.{0,20}аккаунт|"
+            r"register|sign.?up|create.{0,20}account)", text,
+        )
+        registration_negated = re.search(
+            r"(?i)(?:не\s+(?:зарегистр|регист|созда|отправ|делай)|"
+            r"(?:do\s+not|don't)\s+(?:register|sign.?up|create.{0,20}account|submit|send))",
+            text,
+        )
+        benign_owner_prompt = re.search(
+            r"(?i)(?:не\s+(?:спрашивай|дергай|уточняй|мешай)|"
+            r"(?:do\s+not|don't)\s+ask)", text,
+        )
+        if not (registration_intent and not registration_negated and benign_owner_prompt):
+            return False
     if name == "browser_register":
         return bool(re.search(
             r"(?i)\bregister\b|\bsign\s+up\b|\bcreate\s+(?:a|an|the|one|test)\s+"
@@ -242,7 +259,7 @@ def task_intent_matches(name: str, description: str, user_text: str) -> bool:
         (r"(?:uninstall|install|package)", r"(?:установ|install|uninstall|поставь|upgrade|обнови)"),
         (r"(?:shell|terminal|command|exec)", r"(?:вызов|вызови|выполн|запусти|run|execute|command|shell|терминал|команд|скрипт)"),
         (r"(?:scan|defender)", r"(?:скан|проверь|провер|scan|check|антивирус|defender|malware)"),
-        (r"(?:send|submit|publish|comment|email)", r"(?:отправ|send|submit|publish|опубликуй|коммент|email|письмо|сохран|save|apply|примен|обнови|update)"),
+        (r"(?:send|submit|publish|comment|email)", r"(?:отправ|send|submit|publish|опубликуй|коммент|email|письмо|сохран|save|apply|примен|обнови|update|зарегистр|регист|создай.{0,20}аккаунт|заведи.{0,20}аккаунт|sign.?up|register|create.{0,20}account)"),
         (r"(?:deploy|release|merge|dispatch)", r"(?:deploy|развер|релиз|release|merge|мерж|объедин|слий|dispatch|workflow)"),
         (r"(?:permission|collaborator|invite|revoke|secret|credential|webhook|branch.?protection)", r"(?:доступ|прав|permission|collaborator|участник|приглас|revoke|секрет|secret|credential|webhook|защит|protection)"),
         (r"(?:archive.?extract|extract|unpack)", r"(?:распак|извлеч|extract|unpack)"),

@@ -151,30 +151,38 @@ def install_browser(data: Path) -> dict:
             check=False,
         )
         if proc.returncode:
-            raise NativeError(f"{backend}_chromium_install_failed")
-    return {"chromium_installed": True, "browser": "Chromium"}
+            raise NativeError(backend + "_chromium_install_failed")
+    return {
+        "chromium_installed": True,
+        "browser": "Chromium",
+        "primary_backend": "patchright",
+        "fallback_backend": "playwright",
+    }
 
 
 def _chromium_installed(data: Path) -> bool:
     python = _python(data)
     if not python.exists():
         return False
-    probe = (
-        "from pathlib import Path; "
-        "from patchright.sync_api import sync_playwright; "
-        "p=sync_playwright().start(); "
-        "print(Path(p.chromium.executable_path).is_file()); "
-        "p.stop()"
-    )
-    try:
-        proc = subprocess.run(
-            [str(python), "-c", probe],
-            check=False, capture_output=True, text=True, timeout=20,
-        )
-        return proc.returncode == 0 and proc.stdout.strip().splitlines()[-1:] == ["True"]
-    except (OSError, subprocess.TimeoutExpired):
-        return False
 
+    def _installed_for(backend: str) -> bool:
+        probe = (
+            "from pathlib import Path; "
+            f"from {backend}.sync_api import sync_playwright; "
+            "p=sync_playwright().start(); "
+            "print(Path(p.chromium.executable_path).is_file()); "
+            "p.stop()"
+        )
+        try:
+            proc = subprocess.run(
+                [str(python), "-c", probe],
+                check=False, capture_output=True, text=True, timeout=20,
+            )
+            return proc.returncode == 0 and proc.stdout.strip().splitlines()[-1:] == ["True"]
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+    return _installed_for("patchright") and _installed_for("playwright")
 
 def set_key(data: Path):
     values=_load(data)

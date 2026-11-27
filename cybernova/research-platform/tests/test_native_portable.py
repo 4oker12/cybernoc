@@ -52,7 +52,7 @@ class NativeInstallerTests(unittest.TestCase):
         with self.assertRaises(native.NativeError):
             native._load(self.data)
 
-    def test_install_browser_uses_native_venv_and_only_installs_chromium(self):
+    def test_install_browser_uses_native_venv_for_patchright_and_playwright_chromium(self):
         native.init(self.data,"ollama","test:latest")
         python=self.data/"venv"/"Scripts"/"python.exe"
         python.parent.mkdir(parents=True,exist_ok=True)
@@ -63,10 +63,15 @@ class NativeInstallerTests(unittest.TestCase):
              )()) as run:
             result=native.install_browser(self.data)
         self.assertTrue(result["chromium_installed"])
-        self.assertEqual([item.args[0] for item in run.call_args_list], [
-            [str(python), "-m", "patchright", "install", "chromium"],
-            [str(python), "-m", "playwright", "install", "chromium"],
-        ])
+        self.assertEqual(result["primary_backend"],"patchright")
+        self.assertEqual(result["fallback_backend"],"playwright")
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                [str(python),"-m","patchright","install","chromium"],
+                [str(python),"-m","playwright","install","chromium"],
+            ],
+        )
 
     def test_backups_are_never_activated_implicitly(self):
         native.init(self.data,"ollama","test:latest")

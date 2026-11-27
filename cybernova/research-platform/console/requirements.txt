@@ -5,8 +5,8 @@ mcp>=1.13,<2
 cryptography>=44,<49
 PyJWT>=2.9,<3
 
-# Pin Playwright: its Python package bundles the Node driver and browser revision.
-# Upgrade only after reviewing the matching signed upstream release.
+# Patchright is the default Chromium backend; Playwright remains the fallback.
+# Keep both versions pinned and upgrade only after reviewing browser compatibility.
 patchright==1.64.4
 playwright==1.65.2
 psutil>=5.9,<8

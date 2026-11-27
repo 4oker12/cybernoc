@@ -135,7 +135,7 @@ class WebUIBootTests(unittest.TestCase):
         app=(STATIC/"app.js").read_text(encoding="utf-8")
         script=r"""
 const vm=require('node:vm');
-const html=process.argv[1], app=process.argv[2];
+const [html, app] = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);
 const nodes=new Map();
 class Elem {
@@ -297,8 +297,9 @@ if(!byId('collabCyclesLabel').hidden)
  throw Error('Parallel planning must hide unused dialog cycle selector');
 
 """
-        run=subprocess.run(["node","-e",script,html,app],
-                           capture_output=True,text=True,timeout=20)
+        run=subprocess.run(["node","-e",script],
+                           input=json.dumps([html, app]),
+                           capture_output=True,text=True,encoding="utf-8",timeout=20)
         self.assertEqual(run.returncode,0,run.stderr)
 
 

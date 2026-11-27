@@ -5,6 +5,7 @@ calls the scope API. A copy is stored per task in the private SQLite database,
 so queued/reopened tasks retain the operator's exact authorized scope.
 """
 from __future__ import annotations
+from contextlib import contextmanager
 
 import ipaddress
 import json
@@ -75,10 +76,15 @@ class ResearchScopeStore:
                 "task_id TEXT PRIMARY KEY, profile_json TEXT NOT NULL)"
             )
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(str(self.path), timeout=10)
-        db.execute("PRAGMA busy_timeout=10000")
-        return db
+        try:
+            db.execute("PRAGMA busy_timeout=10000")
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def save(self, task_id: str, profile: dict) -> None:
         validated = scope_profile(profile.get("hosts", []),

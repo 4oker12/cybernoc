@@ -1,7 +1,10 @@
 """Offline tests for the Account GPT-only local tool runtime."""
 from pathlib import Path
 import sys
+import threading
+import time
 import unittest
+from threading import RLock
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +77,15 @@ class GPTToolRuntimeTests(unittest.TestCase):
         from console.github_write_tools import GITHUB_WRITE_NAMES
         self.assertTrue(GITHUB_WRITE_NAMES.issubset(names))
         self.assertIn("browser_submit", names)
+        self.assertIn("browser_submit_payment", names)
+        self.assertIn("browser_request_and_fill_payment_card", names)
+        self.assertTrue({
+            "account_mission_create", "account_mission_checkpoint",
+            "account_mission_get", "account_mission_list", "account_mission_resume",
+            "browser_generate_and_fill_password", "browser_fill_saved_credential",
+            "browser_request_and_fill_payment_card", "browser_submit_payment",
+            "account_vault_list", "account_vault_mark_verified",
+        }.issubset(names))
         self.assertTrue({
             "computer_system_overview", "computer_performance_snapshot",
             "computer_process_list", "computer_disk_overview",
@@ -114,6 +126,13 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertIn("browser_navigate", names)
         self.assertIn("browser_tabs", names)
         self.assertIn("browser_switch_tab", names)
+        self.assertIn("account_mission_create", names)
+        self.assertIn("account_mission_checkpoint", names)
+        self.assertIn("browser_generate_and_fill_password", names)
+        self.assertIn("browser_fill_saved_credential", names)
+        self.assertIn("browser_request_and_fill_payment_card", names)
+        self.assertIn("browser_submit_payment", names)
+        self.assertIn("account_vault_list", names)
         self.assertNotIn("computer_system_overview", names)
         self.assertNotIn("terminal_run", names)
         self.assertEqual(
@@ -141,6 +160,338 @@ class GPTToolRuntimeTests(unittest.TestCase):
         result, failed = runtime.call("github_repo_info", {"repo": "owner/repo"}, enabled_groups=["browser"])
         self.assertTrue(failed)
         self.assertEqual(result["error"], "tool_group_not_enabled")
+
+    def test_account_mission_tools_persist_checkpoints_and_resume_without_replay(self):
+        from tempfile import TemporaryDirectory
+        from console.account_missions import AccountMissionStore
+        from console.gpt_tool_runtime import tool_group_for_name
+
+        with TemporaryDirectory() as root:
+            store = AccountMissionStore(Path(root) / "missions.sqlite3")
+            runtime = GPTToolRuntime()
+            with patch("console.gpt_tool_runtime.account_mission_store", return_value=store):
+                created, failed = runtime.call(
+                    "account_mission_create",
+                    {"service": "AWS", "goal": "Create and verify account",
+                     "success_criteria": "Account dashboard is reachable"},
+                    enabled_groups=["browser"],
+                )
+                self.assertFalse(failed)
+                mission_id = created["mission"]["mission_id"]
+                checkpoint, failed = runtime.call(
+                    "account_mission_checkpoint",
+                    {"mission_id": mission_id, "step_key": "email",
+                     "step_name": "Confirm email", "step_status": "waiting_owner",
+                     "summary": "Provider sent a one-time code",
+                     "next_action": "Wait for owner code", "page_url": "",
+                     "mission_status": ""},
+                    enabled_groups=["browser"],
+                )
+                self.assertFalse(failed)
+                self.assertEqual(checkpoint["mission"]["status"], "waiting_owner")
+                resumed, failed = runtime.call(
+                    "account_mission_resume", {"mission_id": mission_id},
+                    enabled_groups=["browser"],
+                )
+                self.assertFalse(failed)
+                self.assertEqual(resumed["mission"]["status"], "running")
+                self.assertEqual(resumed["mission"]["steps"][0]["status"], "waiting_owner")
+                self.assertEqual(tool_group_for_name("account_mission_get"), "browser")
+
+    def test_generated_and_saved_passwords_never_return_to_the_model(self):
+        from threading import RLock
+
+        class FakeSession:
+            def __init__(self):
+                self.filled = []
+            def set_authorized_hosts(self, hosts):
+                pass
+            def current_origin(self):
+                return "https://signin.aws.amazon.com"
+            def fill_owner_input(self, label, value, kind, expected_origin=""):
+                self.filled.append((label, value, kind, expected_origin))
+                return {"ok": True, "visible_text": "Password saved"}
+
+        class FakeVault:
+            def __init__(self):
+                self.password = None
+            def store_password(self, service, username, password, origin, label):
+                self.password = password
+                return {"record_id": "av_" + "z" * 20, "service": service,
+                        "username": username, "origin": origin, "status": "pending"}
+            def _secret_for_browser_fill(self, record_id, origin):
+                return ({"record_id": record_id, "service": "AWS",
+                         "username": "owner@example.net", "origin": origin,
+                         "status": "active"}, "ExistingSavedPassword!456")
+            def list_entries(self, limit, service):
+                return [{"record_id": "av_" + "z" * 20, "service": "AWS"}]
+            def mark_verified(self, record_id):
+                return {"record_id": record_id, "status": "active"}
+
+        runtime = GPTToolRuntime()
+        session = FakeSession()
+        vault = FakeVault()
+        entry = {"session": session, "call_lock": RLock()}
+        with patch.object(runtime._browser_pool, "acquire", return_value=("fake", entry)), \
+             patch.object(runtime._browser_pool, "release"), \
+             patch("console.gpt_tool_runtime.account_vault", return_value=vault):
+            generated, failed = runtime.call(
+                "browser_generate_and_fill_password",
+                {"service": "AWS", "username": "owner@example.net",
+                 "account_label": "personal", "field_label": "Password"},
+                conversation_key="deepseek:" + "a" * 32, enabled_groups=["browser"],
+                user_messages=[{"role": "user", "content": "Create an AWS account"}],
+            )
+            self.assertFalse(failed)
+            self.assertTrue(generated["password_generated_locally"])
+            self.assertEqual(generated["credential_record"]["status"], "pending")
+            self.assertNotIn(vault.password, str(generated))
+            self.assertEqual(session.filled[-1][1], vault.password)
+
+            saved, failed = runtime.call(
+                "browser_fill_saved_credential",
+                {"record_id": "av_" + "z" * 20, "field_label": "Password"},
+                conversation_key="deepseek:" + "a" * 32, enabled_groups=["browser"],
+            )
+            self.assertFalse(failed)
+            self.assertTrue(saved["saved_credential_filled"])
+            self.assertNotIn("ExistingSavedPassword!456", str(saved))
+            self.assertEqual(session.filled[-1][1], "ExistingSavedPassword!456")
+            self.assertEqual(session.filled[-1][3], "https://signin.aws.amazon.com")
+
+    def test_protected_fill_errors_never_echo_password_values(self):
+        from threading import RLock
+
+        captured = {}
+        class FakeSession:
+            def set_authorized_hosts(self, hosts):
+                pass
+            def current_origin(self):
+                return "https://signin.aws.amazon.com"
+            def fill_owner_input(self, label, value, kind, expected_origin=""):
+                captured["value"] = value
+                raise RuntimeError("Playwright fill failed value=" + value)
+
+        class FakeVault:
+            def store_password(self, service, username, password, origin, label):
+                return {"record_id": "av_" + "p" * 20, "service": service}
+
+        runtime = GPTToolRuntime()
+        entry = {"session": FakeSession(), "call_lock": RLock()}
+        with patch.object(runtime._browser_pool, "acquire", return_value=("fake", entry)), \
+             patch.object(runtime._browser_pool, "release"), \
+             patch("console.gpt_tool_runtime.account_vault", return_value=FakeVault()), \
+             patch("console.gpt_tool_runtime.secrets.choice", side_effect=lambda alphabet: alphabet[0]):
+            result, failed = runtime.call(
+                "browser_generate_and_fill_password",
+                {"service": "AWS", "username": "owner@example.net",
+                 "account_label": "personal", "field_label": "Password"},
+                conversation_key="deepseek:" + "c" * 32, enabled_groups=["browser"],
+                user_messages=[{"role": "user", "content": "Create an AWS account"}],
+            )
+        self.assertTrue(failed)
+        self.assertTrue(captured["value"])
+        self.assertNotIn(captured["value"], str(result))
+        self.assertIn("protected_browser_fill_failed", result["error"])
+
+    def test_payment_card_flow_keeps_card_data_out_of_tool_result(self):
+        from console.owner_input import OwnerInputBroker
+
+        runtime = GPTToolRuntime()
+        broker = OwnerInputBroker()
+        captured = {}
+        class FakeSession:
+            def set_authorized_hosts(self, hosts):
+                pass
+            def inspect_payment_form(self):
+                return {
+                    "ok": True, "origin": "https://signin.aws.amazon.com",
+                    "fields": ["card_number", "expiry", "cvv", "cardholder_name"],
+                    "field_hosts": {
+                        "card_number": "signin.aws.amazon.com",
+                        "expiry": "js.stripe.com",
+                        "cvv": "js.stripe.com",
+                        "cardholder_name": "signin.aws.amazon.com",
+                    },
+                    "payment_frame_hosts": ["js.stripe.com"],
+                }
+            def fill_owner_payment_card(self, card, origin, field_hosts, approved_hosts):
+                captured.update(card)
+                captured["approved_hosts"] = list(approved_hosts)
+                return {"ok": True, "payment_card_filled": True,
+                        "filled_fields": sorted(field_hosts), "card_data_saved": False}
+
+        entry = {"session": FakeSession(), "call_lock": RLock()}
+        session_id = "deepseek:" + "j" * 32
+        outcome = {}
+        with patch.object(runtime._browser_pool, "acquire", return_value=("fake", entry)), \
+             patch.object(runtime._browser_pool, "release"), \
+             patch("console.gpt_tool_runtime.owner_input_broker", broker):
+            worker = threading.Thread(target=lambda: outcome.update(
+                value=runtime.call(
+                    "browser_request_and_fill_payment_card",
+                    {"purpose": "AWS requires a card to verify the account"},
+                    conversation_key=session_id, enabled_groups=["browser"],
+                    user_messages=[{"role": "user", "content": "Create an AWS account"}],
+                )
+            ))
+            worker.start()
+            deadline = time.monotonic() + 2
+            pending = None
+            while time.monotonic() < deadline and pending is None:
+                pending = broker.pending(session_id)
+                time.sleep(0.01)
+            self.assertIsNotNone(pending)
+            self.assertEqual(pending["input_type"], "payment_card")
+            self.assertNotIn("value", pending)
+            broker.submit(
+                session_id, pending["request_id"],
+                payment_card={
+                    "card_number": "4242 4242 4242 4242",
+                    "expiry_month": "12", "expiry_year": "30",
+                    "cvv": "123", "cardholder_name": "Test Owner",
+                },
+                approved_frame_hosts=["js.stripe.com"],
+            )
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+        result, failed = outcome["value"]
+        self.assertFalse(failed)
+        self.assertTrue(result["payment_card_filled"])
+        self.assertNotIn("4242424242424242", str(result))
+        self.assertNotIn("123", str(result))
+        self.assertEqual(captured["card_number"], "4242424242424242")
+        self.assertEqual(captured["cvv"], "123")
+        self.assertEqual(captured["approved_hosts"], ["js.stripe.com"])
+
+    def test_payment_submit_requires_and_consumes_in_chat_confirmation(self):
+        from console.owner_input import OwnerInputBroker
+
+        runtime = GPTToolRuntime()
+        broker = OwnerInputBroker()
+        actions = []
+        class FakeSession:
+            def set_authorized_hosts(self, hosts):
+                pass
+            def inspect_submit_target(self, button):
+                return {
+                    "ok": True, "button": button,
+                    "merchant_origin": "https://signin.aws.amazon.com",
+                    "action_origin": "https://payments.aws.amazon.com",
+                    "payment_target": True,
+                }
+            def submit_payment_after_owner_approval(self, button, origin, action_origin):
+                actions.append((button, origin, action_origin))
+                return {"ok": True, "payment_action_submitted": True}
+
+        entry = {"session": FakeSession(), "call_lock": RLock()}
+        session_id = "deepseek:" + "k" * 32
+        outcome = {}
+        with patch.object(runtime._browser_pool, "acquire", return_value=("fake", entry)), \
+             patch.object(runtime._browser_pool, "release"), \
+             patch("console.gpt_tool_runtime.owner_input_broker", broker):
+            worker = threading.Thread(target=lambda: outcome.update(
+                value=runtime.call(
+                    "browser_submit_payment",
+                    {"name": "Verify payment method",
+                     "purpose": "AWS may place a temporary authorization; no recurring plan shown"},
+                    conversation_key=session_id, enabled_groups=["browser"],
+                )
+            ))
+            worker.start()
+            deadline = time.monotonic() + 2
+            pending = None
+            while time.monotonic() < deadline and pending is None:
+                pending = broker.pending(session_id)
+                time.sleep(0.01)
+            self.assertEqual(pending["input_type"], "payment_confirmation")
+            broker.submit(session_id, pending["request_id"], decision=True)
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+        result, failed = outcome["value"]
+        self.assertFalse(failed)
+        self.assertTrue(result["payment_action_submitted"])
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0][0], "Verify payment method")
+
+    def test_payment_submit_decline_never_invokes_browser_action(self):
+        from console.owner_input import OwnerInputBroker
+
+        runtime = GPTToolRuntime()
+        broker = OwnerInputBroker()
+        actions = []
+        class FakeSession:
+            def set_authorized_hosts(self, hosts):
+                pass
+            def inspect_submit_target(self, button):
+                return {"payment_target": True,
+                        "merchant_origin": "https://signin.aws.amazon.com",
+                        "action_origin": "https://payments.aws.amazon.com"}
+            def submit_payment_after_owner_approval(self, *args):
+                actions.append(args)
+                return {"ok": True}
+
+        entry = {"session": FakeSession(), "call_lock": RLock()}
+        session_id = "deepseek:" + "l" * 32
+        outcome = {}
+        with patch.object(runtime._browser_pool, "acquire", return_value=("fake", entry)), \
+             patch.object(runtime._browser_pool, "release"), \
+             patch("console.gpt_tool_runtime.owner_input_broker", broker):
+            worker = threading.Thread(target=lambda: outcome.update(
+                value=runtime.call(
+                    "browser_submit_payment",
+                    {"name": "Verify payment method", "purpose": "Temporary card authorization"},
+                    conversation_key=session_id, enabled_groups=["browser"],
+                )
+            ))
+            worker.start()
+            deadline = time.monotonic() + 2
+            pending = None
+            while time.monotonic() < deadline and pending is None:
+                pending = broker.pending(session_id)
+                time.sleep(0.01)
+            broker.submit(session_id, pending["request_id"], decision=False)
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+        result, failed = outcome["value"]
+        self.assertTrue(failed)
+        self.assertEqual(result["status"], "owner_declined_payment_action")
+        self.assertEqual(actions, [])
+
+    def test_generated_password_requires_explicit_account_creation_intent(self):
+        runtime = GPTToolRuntime()
+        result, failed = runtime.call(
+            "browser_generate_and_fill_password",
+            {"service": "AWS", "username": "owner@example.net",
+             "account_label": "personal", "field_label": "Password"},
+            conversation_key="deepseek:" + "b" * 32,
+            enabled_groups=["browser"],
+            user_messages=[{"role": "user", "content": "Inspect this login page"}],
+        )
+        self.assertTrue(failed)
+        self.assertEqual(result["error"], "account_creation_intent_required")
+
+    def test_account_vault_metadata_tools_do_not_expose_passwords(self):
+        class FakeVault:
+            def list_entries(self, limit, service):
+                return [{"record_id": "av_" + "q" * 20, "service": service}]
+            def mark_verified(self, record_id):
+                return {"record_id": record_id, "status": "active"}
+
+        runtime = GPTToolRuntime()
+        with patch("console.gpt_tool_runtime.account_vault", return_value=FakeVault()):
+            listed, failed = runtime.call(
+                "account_vault_list", {"service": "AWS", "limit": 10},
+                enabled_groups=["browser"],
+            )
+            self.assertFalse(failed)
+            self.assertEqual(listed["entries"][0]["service"], "AWS")
+            verified, failed = runtime.call(
+                "account_vault_mark_verified", {"record_id": "av_" + "q" * 20},
+                enabled_groups=["browser"],
+            )
+            self.assertFalse(failed)
+            self.assertEqual(verified["entry"]["status"], "active")
 
     def test_all_account_gpt_function_schemas_are_strict_and_closed(self):
         for tool in build_tool_catalog():
