@@ -29,12 +29,12 @@ except ImportError:
 try:
     from .gpt_tool_runtime import (
         extract_user_targets, filter_tool_rows, normalize_tool_groups, route_model_tool_rows,
-        GITHUB_WRITE_NAMES,
+        tool_group_for_name, GITHUB_WRITE_NAMES,
     )
 except ImportError:
     from gpt_tool_runtime import (
         extract_user_targets, filter_tool_rows, normalize_tool_groups, route_model_tool_rows,
-        GITHUB_WRITE_NAMES,
+        tool_group_for_name, GITHUB_WRITE_NAMES,
     )
 
 try:
@@ -47,12 +47,13 @@ except ImportError:
 OLLAMA_URL = os.environ.get("CYBERNOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MCP_URL = os.environ.get("CYBERNOVA_MCP_URL", "http://127.0.0.1:18792/mcp")
 MODEL = os.environ.get("CYBERNOVA_MODEL", "cybernova-security:30b")
-MAX_ROUNDS = 16
-MAX_CALLS = 64
+MAX_ROUNDS = 48
+MAX_CALLS = 128
 MAX_HTTP_GETS = 3
 MAX_PROMPT = 10000
 MAX_RESULT = 12000
-MAX_INPUT_TOKENS = 500000
+MAX_INPUT_TOKENS = 0  # No cumulative local token ceiling by default.
+PLAN_CHECKPOINT_INTERVAL = 6
 MAX_CONTEXT_HISTORY_MESSAGES = 8
 MAX_CONTEXT_HISTORY_CHARS = 2500
 MAX_CONTEXT_TOOL_CALLS = 8
@@ -716,6 +717,12 @@ class Agent:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
         selected_groups = normalize_tool_groups(tool_groups or [])
+        try:
+            input_token_budget = int(os.environ.get("CYBERNOVA_AGENT_INPUT_TOKEN_BUDGET", MAX_INPUT_TOKENS))
+        except (ValueError, TypeError):
+            raise ValueError("agent_input_token_budget_invalid") from None
+        if input_token_budget < 0:
+            raise ValueError("agent_input_token_budget_invalid")
         conversation_key = ("deepseek:" + session_id) if isinstance(session_id, str) and session_id.strip() else None
         usage_totals = {
             "input_tokens": 0, "output_tokens": 0, "requests": 0,
@@ -960,6 +967,15 @@ class Agent:
             str(host).lower().rstrip(".") for host in scope_hosts
             if isinstance(host, str) and host.strip()
         )
+        # Recover the last substantive user task for a short continuation.
+        # Tool results and assistant text never authorize a new capability.
+        route_text = text
+        continuation = r"(?i)\s*(?:продолжи(?:ть| работу)?|дальше|continue|go on)[.! ]*\s*"
+        if re.fullmatch(continuation, text):
+            prior_tasks = [item["content"] for item in task_messages
+                           if not re.fullmatch(continuation, item["content"])]
+            if prior_tasks:
+                route_text = prior_tasks[-1] + "\n" + text
         mcp = None
         remote_rows = []
         descriptors, tools = {}, []
@@ -997,7 +1013,7 @@ class Agent:
             try:
                 registered = discovered_tools(combined_rows, limit=MAX_DISCOVERED)
                 advertised = route_model_tool_rows(
-                    registered, text, limit=MAX_ADVERTISED, selected_groups=selected_groups
+                    registered, route_text, limit=MAX_ADVERTISED, selected_groups=selected_groups
                 )
                 descriptors = {t["name"]: t for t in advertised}
                 tools = _tool_schema(advertised)
@@ -1012,6 +1028,8 @@ class Agent:
             diagnostic_event("tool_catalog_ready", **catalog_counts,
                              discovered_count=len(registered), advertised_count=len(tools),
                              omitted_count=omitted,
+                             groups=".".join(dict.fromkeys(tool_group_for_name(t["name"]) for t in advertised)) or "none",
+                             decision="manual_groups" if selected_groups else "task_capabilities",
                              status="partial" if omitted else "ok" if tools else "empty")
             if omitted:
                 context.append({"role": "system", "content":
@@ -1020,12 +1038,44 @@ class Agent:
                     "Если нужной функции нет, прямо укажи это для следующего целевого запроса."})
         else:
             diagnostic_event("tool_catalog_ready", status="disabled", advertised_count=0)
+        if tools and (len(text) >= 180 or len({tool_group_for_name(t["name"]) for t in advertised}) > 1):
+            context.append({"role": "system", "content":
+                "Веди многоэтапную задачу по проверяемым результатам: цель → план → "
+                "действие → проверка → следующий этап. Не повторяй законченные проверки "
+                "без нового основания. Для разработки резервируй этапы правки, тестов "
+                "и сохранения результата; не расходуй все итерации на инвентаризацию. "
+                "Сохраняй краткий рабочий checkpoint: завершённые этапы, оставшиеся "
+                "критерии, конкретный следующий шаг. Не выдавай предположения за выполненную работу."})
+        checkpoint = None
         try:
             for round_no in range(MAX_ROUNDS):
+                if round_no and round_no % PLAN_CHECKPOINT_INTERVAL == 0:
+                    if checkpoint in context:
+                        context.remove(checkpoint)
+                    completed = list(dict.fromkeys(
+                        str(item.get("name"))[:80] for item in events
+                        if item.get("type") == "tool_result" and not item.get("is_error")
+                        and item.get("name")
+                    ))
+                    checkpoint = {"role": "system", "content":
+                        "Контрольная точка Runtime: раунд " + str(round_no + 1) +
+                        ", выполнено вызовов " + str(executed) +
+                        ". Инструменты без зарегистрированной ошибки: " +
+                        ", ".join(completed[-18:]) +
+                        ". Сверь план с наблюдениями; выбери следующий незавершённый "
+                        "этап, не повторяй инвентаризацию без причины. Имена инструментов "
+                        "не доказывают достижения цели."}
+                    context.append(checkpoint)
+                    diagnostic_event("agent_plan_checkpoint", status="active",
+                                     round=round_no, tool_calls=executed)
                 if round_no == MAX_ROUNDS - 1:
                     context.append({"role": "system", "content":
                         "Достигнут лимит инструментальных итераций. Подготовь итог по уже собранным данным."})
-                    return result_payload(finalize_answer())
+                    diagnostic_event("agent_execution_limit", status="partial",
+                                     error_code="round_limit", round=round_no, tool_calls=executed)
+                    outcome = result_payload(finalize_answer())
+                    outcome["stop_reason"] = "round_limit"
+                    return outcome
                 result = self._model_chat(_compact_context(context), tools if tools_enabled else [])
                 history_reasoning_content = (
                     result.get("reasoning_content")
@@ -1408,15 +1458,24 @@ class Agent:
                     if pending_requests:
                         answer += "\n\nДля продолжения нужны отдельные разрешения. "
                         answer += "Запрошенные действия ещё не выполнены."
-                    return result_payload(answer)
-                if usage_totals["input_reports"] and usage_totals["input_tokens"] >= MAX_INPUT_TOKENS:
+                    diagnostic_event("agent_execution_limit", status="partial",
+                                     error_code="tool_call_limit", round=round_no, tool_calls=executed)
+                    outcome = result_payload(answer)
+                    outcome["stop_reason"] = "tool_call_limit"
+                    return outcome
+                if input_token_budget and usage_totals["input_reports"] and usage_totals["input_tokens"] >= input_token_budget:
                     context.append({"role": "system", "content":
-                        "Достигнут бюджет входных токенов. Останови исследование и подведи итог."})
+                        "Достигнут явно настроенный бюджет входных токенов. Укажи оставшиеся этапы и следующий шаг."})
                     answer = finalize_answer()
                     if pending_requests:
                         answer += "\n\nДля продолжения нужны отдельные разрешения. "
                         answer += "Запрошенные действия ещё не выполнены."
-                    return result_payload(answer)
+                    diagnostic_event("agent_execution_limit", status="partial",
+                                     error_code="configured_input_token_budget", round=round_no,
+                                     tool_calls=executed, input_tokens=usage_totals["input_tokens"])
+                    outcome = result_payload(answer)
+                    outcome["stop_reason"] = "configured_input_token_budget"
+                    return outcome
             raise BackendError("agent_round_limit")
         except (BackendError, ValueError, TypeError) as exc:
             detail = getattr(exc, "safe_detail", None)

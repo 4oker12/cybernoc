@@ -182,65 +182,176 @@ def filter_tool_rows(rows, groups=None) -> list[dict]:
     return [row for row in safe_rows if tool_group_for_name(row["name"]) in selected]
 
 
-# Route only task-relevant groups. This is routing, not permission.
+# Routing chooses capabilities; dispatch still enforces the existing policy.
 _ROUTE_HINTS = {
-    "browser": r"браузер|хром|страниц|сайт|ссылк|вкладк|форм[ауые]|browser|chrome|https?://|screenshot|открой страницу|открой сайт",
+    "browser": r"браузер|хром|страниц|сайт|ссылк|вкладк|browser|chrome|https?://|html|\bdom\b|\bh1\b",
     "computer": r"компьютер|ноутбук|локальн.{0,12}файл|папк|процесс|служб|диск|окн[оа]|памят|windows|desktop|computer|defender|cpu|ram",
-    "terminal": r"терминал|команд[уы]? в (?:powershell|cmd|терминал)|powershell|\bcmd\b|\bshell\b|terminal|консол|выполни команду|запусти команду",
-    "web": r"интернет|поиск|поищи|найди в сети|найди в интернете|гугл|источник|search|research|web|погод|weather|forecast|прогноз|курс валют|новост",
-    "network": r"\bdns\b|\btls\b|\bssl\b|\bip\b|\bhttp\b|сеть|сетев|маршрут|шлюз|network|ping|traceroute",
+    "terminal": r"терминал|powershell|\bcmd\b|\bshell\b|\bterminal(?:_run|_status)?\b|консол|выполни команду|запусти команду|\bgit\s+(?:status|diff|log|show|grep|add|commit|push|fetch|branch|ls-remote)\b",
+    "web": r"интернет|поиск|поищи|найди|знайди|гугл|источник|search|research|web|погод|weather|forecast|прогноз|курс валют|новост|\bcve\b|уязвимост",
+    "network": r"\bdns\b|\btls\b|\bssl\b|\bip\b|\bhttp\b|\bget\b|\bcidr\b|\bcve\b|сеть|сетев|подсет|маршрут|шлюз|network|ping|traceroute",
     "security": r"security|аудит|безопасност|уязвимост|сканирован",
     "traffic": r"\bhar\b|трафик|traffic|devtools",
     "developer": r"git|репозитори|ветк|коммит|исходник|тест|разработ|проект|repository|branch|commit|code|test",
     "github": r"github|pull request|issue|репозитори|ветк|коммит",
     "mcp": r"\bmcp\b|tools/list|mcp-сервис",
 }
+_ROUTE_NEGATION = re.compile(
+    r"(?i)(?:\bне\s+(?:используй|вызывай|запускай|подключай|применяй|открывай|выполняй|использовать|вызывать|запускать)"
+    r"|\bбез\b|\bno\b|\b(?:do not|don't|never)\s+(?:use|call|run|execute)|\bwithout\b)"
+    r"\s+(?:инструмент(?:ы|а|ов)?\s+|the\s+|using\s+)?"
+)
+_BROWSER_READ = (
+    "browser_navigate", "browser_snapshot", "browser_read_page", "browser_find_text",
+    "browser_read_table", "browser_follow_link", "browser_tabs", "browser_new_tab",
+    "browser_switch_tab", "browser_back", "browser_forward", "browser_scroll",
+    "browser_wait", "browser_reload", "browser_screenshot", "browser_open",
+)
+_BROWSER_INTERACT = (
+    "browser_find_controls", "browser_click_button", "browser_fill", "browser_select",
+    "browser_set_checked", "browser_press", "browser_submit", "browser_close_tab",
+    "browser_register", "browser_login",
+)
+_COMPUTER_BASE = (
+    "computer_system_overview", "computer_performance_snapshot", "computer_process_list",
+    "computer_disk_overview", "computer_service_overview", "computer_process_inventory",
+)
+_COMPUTER_CAPABILITIES = (
+    (r"файл|папк|директор|file|folder|directory|архив|archive",
+     ("computer_list_directory", "computer_search_files", "computer_search_everywhere",
+      "computer_read_text_file", "computer_file_hash", "computer_open_folder",
+      "computer_archive_inspect", "computer_archive_extract",
+      "computer_plan_file_organization", "computer_apply_file_organization")),
+    (r"окн|интерфейс|ui\b|desktop|скрин|screenshot|приложен|application",
+     ("computer_ui_windows", "computer_ui_controls", "computer_ui_inputs",
+      "computer_desktop_windows", "computer_desktop_tree", "computer_desktop_prepare",
+      "computer_desktop_act", "computer_screenshot", "computer_open_app",
+      "computer_ui_click", "computer_mouse_click", "computer_mouse_scroll",
+      "computer_keyboard_type", "computer_keyboard_keypress")),
+    (r"defender|антивирус|malware|вирус",
+     ("computer_defender_status", "computer_defender_events",
+      "computer_defender_scan", "computer_defender_scan_status")),
+    (r"программ|пакет|установ|package|install",
+     ("computer_installed_programs", "computer_package_search",
+      "computer_package_details", "computer_package_install")),
+    (r"автозагруз|startup|питани|power", ("computer_startup_items", "computer_power_overview")),
+)
+_DEVELOPER_READ = ("dev_workspace", "dev_list", "dev_read", "dev_search", "dev_diff")
+_DEVELOPER_WRITE = ("dev_edit", "dev_move", "dev_delete", "dev_test", "dev_commit",
+                    "dev_command", "dev_push", "dev_open_pr")
 
 
 def route_model_tool_rows(
     rows: list[dict], task: str, *, limit: int, selected_groups=None
 ) -> list[dict]:
-    """Expose only exact task-mentioned tools and task-relevant selected groups.
+    """Prefer task-specific tools and deterministic order; retain manual groups.
 
-    An explicit user group selection is authoritative. In automatic mode, no
-    unrelated groups are appended merely to fill the provider schema budget.
+    Never register a tool absent from the supplied registry or change its
+    schema. Selection is not a grant of authorization.
     """
     if type(limit) is not int or limit < 1:
         return []
     task = task.casefold()
-    exact = []
-    buckets = {}
+    valid = {}
     for row in rows:
-        if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+        if isinstance(row, dict) and isinstance(row.get("name"), str):
+            valid.setdefault(row["name"], row)
+    manual = normalize_tool_groups(selected_groups or [])
+    denied_groups = set()
+    denied_names = set()
+    for neg in _ROUTE_NEGATION.finditer(task):
+        first = re.match(r"[\w.-]+", task[neg.end():])
+        if not first:
             continue
-        name = row["name"]
-        group = tool_group_for_name(name)
-        if re.search(r"(?<![\w.-])" + re.escape(name.casefold()) + r"(?![\w.-])", task):
-            exact.append(row)
-        else:
-            buckets.setdefault(group, []).append(row)
-
-    if selected_groups:
-        relevant = set(normalize_tool_groups(selected_groups))
-    else:
-        relevant = {
-            key for key, pattern in _ROUTE_HINTS.items()
-            if re.search(pattern, task, flags=re.IGNORECASE)
-        }
-
+        word = first.group(0)
+        denied_names.update(name for name in valid if name.casefold() == word)
+        if re.match(r"^(?:терминал|команд|powershell|cmd|shell|terminal|консол)", word):
+            denied_groups.add("terminal")
+        elif re.match(r"^(?:браузер|browser|chrome|хром)", word):
+            denied_groups.add("browser")
+    exact = [
+        name for name in valid
+        if re.search(r"(?<![\w.-])" + re.escape(name.casefold()) + r"(?![\w.-])", task)
+    ]
     selected = []
     seen = set()
-    for row in exact:
-        if row["name"] not in seen:
-            selected.append(row)
-            seen.add(row["name"])
-    for group in relevant:
-        for row in buckets.get(group, []):
-            if row["name"] not in seen:
-                selected.append(row)
-                seen.add(row["name"])
-    return selected[:limit]
 
+    def add(names):
+        for name in names:
+            if name not in valid or name in seen or name in denied_names:
+                continue
+            group = tool_group_for_name(name)
+            if group in denied_groups or (manual and group not in manual):
+                continue
+            if "terminal" in denied_groups and re.search(r"shell|command|terminal|powershell", name, re.I):
+                continue
+            seen.add(name)
+            selected.append(valid[name])
+
+    def group_names(group):
+        return [name for name in valid if tool_group_for_name(name) == group]
+
+    add(exact)
+    if manual:
+        for group in manual:
+            add(group_names(group))
+        return selected[:limit]
+
+    # Inventory explicitly asks about the catalog, not a particular action.
+    if re.search(r"доступн\w*\s+инструмент|список\s+инструмент|available\s+tools|list\s+tools|tools/list", task):
+        for group in _ROUTE_HINTS:
+            add(group_names(group))
+        return selected[:limit]
+
+    relevant = [group for group, pattern in _ROUTE_HINTS.items()
+                if group not in denied_groups and re.search(pattern, task)]
+    if (_DOMAIN.search(task) and "browser" not in relevant and "web" not in relevant
+            and "network" not in denied_groups and "network" not in relevant):
+        relevant.append("network")
+    # A named tool alone needs no broad companion bundle.
+    exact_groups = {tool_group_for_name(name) for name in exact}
+    only_names = re.sub(r"[\w.-]+", lambda m: "" if m.group(0) in valid else m.group(0), task)
+    focused_name = bool(exact) and bool(re.fullmatch(
+        r"[\s.,:;!?]*(?:вызови|используй|call|use|invoke)?[\s.,:;!?]*", only_names))
+
+    for group in relevant:
+        if focused_name and group in exact_groups:
+            continue
+        if group == "browser":
+            add(_BROWSER_READ)
+            if re.search(r"клик|нажм|заполни|форм|выбер|войд|логин|регистрац|вход|submit|click|fill|login|register|interact|интерфейс", task):
+                add(_BROWSER_INTERACT)
+            if re.search(r"devtools|console|network|консол|сетев|трафик", task):
+                add(("browser_console", "browser_network"))
+        elif group == "computer":
+            add(_COMPUTER_BASE)
+            for pattern, names in _COMPUTER_CAPABILITIES:
+                if re.search(pattern, task):
+                    add(names)
+        elif group == "terminal":
+            add(("terminal_status", "terminal_run", "safe_terminal"))
+        elif group == "developer":
+            add(_DEVELOPER_READ)
+            if re.search(r"исправ|измени|реализ|добав|напиши|доработ|тест|коммит|push|commit|edit|fix|implement|test", task):
+                add(_DEVELOPER_WRITE)
+        else:
+            add(group_names(group))
+
+    # Custom MCP services are not restricted to a static name allowlist.
+    terms = set(re.findall(r"[a-z][a-z0-9]{2,}", task))
+    for name in group_names("mcp"):
+        if terms.intersection(re.split(r"[_.-]+", name.casefold())):
+            add((name,))
+
+    # Legacy small, remote-only catalogs and unclassified MCP tasks still
+    # support discovery. Never refill a focused browsing/search selection
+    # with unrelated shell or desktop tools.
+    if not selected and not denied_groups and not denied_names:
+        if len(valid) <= 16 and not any(name.startswith(("terminal_", "computer_", "browser_")) for name in valid):
+            add(valid)
+        else:
+            add(group_names("mcp"))
+            add(("computer_system_overview", "local_webui_health", "gateway_status"))
+    return selected[:limit]
 
 def tool_group_summary(tool_names) -> list[dict]:
     names = {name for name in tool_names if isinstance(name, str)}

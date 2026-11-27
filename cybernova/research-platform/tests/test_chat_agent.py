@@ -570,7 +570,7 @@ class AgentTests(unittest.TestCase):
     def test_unreviewed_high_impact_tool_is_not_run_without_task_intent(self):
         mcp=FakeMCP();lm=FakeOllama([calls(("arbitrary_shell",{"command":"id"})),
                                    {"role":"assistant","content":"Команда не запускалась."}])
-        out=Agent(lm,lambda:mcp).run([],"Покажи краткий статус проекта")
+        out=Agent(lm,lambda:mcp).run([],"Покажи краткий статус проекта", tool_groups=["mcp"])
         self.assertEqual(mcp.calls,[])
         self.assertEqual(out["tool_calls"],0)
         self.assertEqual(out["events"][0]["type"],"task_intent_required")

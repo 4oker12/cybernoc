@@ -145,6 +145,35 @@ class DynamicToolPolicyTests(unittest.TestCase):
                                          selected_groups=["terminal"])
         self.assertEqual([row["name"] for row in selected], ["terminal_run"])
 
+    def test_browser_read_routes_only_read_capabilities_and_honors_denial(self):
+        names = ["browser_navigate", "browser_snapshot", "browser_read_page", "browser_find_text",
+                 "browser_submit", "browser_login", "terminal_run", "terminal_status",
+                 "computer_system_overview", "github_repo_info"]
+        rows = [{"name": name} for name in names]
+        task = "Открой https://example.com и проверь H1. Не используй терминал."
+        offered = [row["name"] for row in route_model_tool_rows(rows, task, limit=128)]
+        self.assertEqual(offered, names[:4])
+        self.assertEqual(offered, [row["name"] for row in route_model_tool_rows(
+            list(reversed(rows)), task, limit=128)])
+
+    def test_manual_group_does_not_widen_exact_named_tool(self):
+        rows = [{"name": "terminal_run"}, {"name": "browser_read_page"}]
+        offered = route_model_tool_rows(rows, "Вызови terminal_run", limit=128,
+                                         selected_groups=["browser"])
+        self.assertEqual([row["name"] for row in offered], ["browser_read_page"])
+
+    def test_cumulative_token_ceiling_disabled_by_default(self):
+        mcp = FakeMCP()
+        first = tool_call()
+        first["_usage"] = {"input_tokens": 600000, "output_tokens": 20}
+        model = FakeQwen([first, {"content": "Фактический итог"}])
+        with patch.dict("os.environ", {"CYBERNOVA_AGENT_INPUT_TOKEN_BUDGET": "0"}):
+            result = Agent(model, lambda: mcp).run([], "Вызови dns_research для example.test")
+        self.assertEqual(result["tool_calls"], 1)
+        self.assertEqual(result["usage"]["input_tokens"], 600000)
+        self.assertNotIn("stop_reason", result)
+        self.assertEqual(result["answer"], "Фактический итог")
+
     def test_dynamic_args_enforce_required_and_type(self):
         schema = NEW["inputSchema"]
         self.assertEqual(validate_dynamic_arguments({"domain": "example.test"}, schema),
