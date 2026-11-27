@@ -1323,6 +1323,11 @@ class Agent:
                             )
                             executed += 1
                             selected_by = "evidence_first_fallback"
+                            diagnostic_event(
+                                "agent_fallback_selected", round=round_no, source=selected_by,
+                                fallback_reason="explicit_url_without_model_tool_call",
+                                tool=chosen, tool_calls=1, status="selected",
+                            )
                             serialized = _serialize_tool_result(chosen, observed)
                             events.append({
                                 "type": "tool_result", "name": chosen,
@@ -1359,6 +1364,11 @@ class Agent:
                         observed, error_flag = self._call_mcp(mcp, "dev_list", {"limit": 100})
                         executed += 1
                         selected_by = "developer_evidence_fallback"
+                        diagnostic_event(
+                            "agent_fallback_selected", round=round_no, source=selected_by,
+                            fallback_reason="repository_task_without_model_tool_call",
+                            tool="dev_list", tool_calls=1, status="selected",
+                        )
                         events.append({
                             "type": "tool_result", "name": "dev_list",
                             "arguments": {"limit": 100},
