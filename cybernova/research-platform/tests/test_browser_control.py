@@ -5,6 +5,8 @@ from tempfile import TemporaryDirectory
 from types import ModuleType
 from unittest.mock import Mock, patch
 import sys
+import threading
+import time
 import unittest
 from threading import RLock
 
@@ -211,17 +213,20 @@ class BrowserControlTests(unittest.TestCase):
             }
             return {"ok": session.write_approval_handler(details)}, False
 
+        def run_call():
+            outcome["value"] = runtime._call_impl(
+                "browser_submit", {"name": "Send"},
+                user_messages=[{"role": "user", "content": "Изучи страницу и проверь поля."}],
+                conversation_key=session_id,
+            )
+
         with (
             patch.object(runtime._browser_pool, "acquire", return_value=("test", entry)),
             patch.object(runtime._browser_pool, "release"),
             patch("console.gpt_tool_runtime.owner_input_broker", broker),
             patch("console.gpt_tool_runtime.browser_control_call", side_effect=dispatch),
         ):
-            worker = threading.Thread(target=lambda: outcome.update(runtime._call_impl(
-                "browser_submit", {"name": "Send"},
-                user_messages=[{"role": "user", "content": "Изучи страницу и проверь поля."}],
-                conversation_key=session_id,
-            )))
+            worker = threading.Thread(target=run_call)
             worker.start()
             deadline = time.monotonic() + 2
             pending = None
@@ -409,7 +414,7 @@ class BrowserControlTests(unittest.TestCase):
         finally:
             browser._executor.shutdown(wait=False, cancel_futures=True)
 
-    def test_browser_route_requires_one_approved_same_origin_post(self):
+    def test_browser_route_requires_one_approved_same_origin_write(self):
         browser = BrowserSession()
         try:
             with patch("console.browser_control.validate_public_url", return_value=("forms.example.net", ["8.8.8.8"])):
@@ -418,7 +423,7 @@ class BrowserControlTests(unittest.TestCase):
                 self.assertTrue(denied.aborted)
                 self.assertEqual(browser._blocked[-1]["reason"], "write_request_requires_owner_confirmation")
 
-                # One user-approved POST may go to the exact visible form action origin.
+                # One owner-approved write may go to the exact visible form action origin.
                 browser._allow_post_origin = "https://forms.example.net"
                 browser._allow_post_remaining = 1
                 allowed = FakeRoute("https://forms.example.net/submit", "POST")
