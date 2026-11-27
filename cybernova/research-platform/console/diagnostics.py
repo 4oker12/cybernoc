@@ -42,10 +42,13 @@ _TIMELINE_STRINGS = frozenset({
     "error_type", "error_code", "method", "session_kind", "backend", "preferred_backend", "fallback_reason", "agent", "source",
     "tool_group", "target_host", "resource_type", "shell", "operation",
     "decision", "action", "component", "result_code", "input_type",
+    "call_ref", "finish_reason", "groups",
 })
 _TIMELINE_INTS = frozenset({
     "duration_ms", "http_status", "upstream_http_status", "pid", "exit_code",
     "round", "tool_calls", "input_tokens", "output_tokens",
+    "local_count", "remote_count", "filtered_remote_count", "combined_count",
+    "discovered_count", "advertised_count", "omitted_count", "raw_tool_calls", "dropped_tool_calls",
 })
 _TIMELINE_BOOLS = frozenset({"headless", "timed_out"})
 _SAFE_LABEL = re.compile(r"[A-Za-z0-9_.:-]{1,160}")
@@ -278,6 +281,10 @@ def _clean_timeline(value):
         raw = value.get(key)
         if isinstance(raw, str) and _SAFE_LABEL.fullmatch(raw):
             result[key] = raw
+    # MCP methods have a slash; permit only the known protocol labels.
+    method = value.get("method")
+    if method in ("initialize", "tools/list", "tools/call", "notifications/initialized", "ping"):
+        result["method"] = method
     for key in _TIMELINE_INTS:
         raw = value.get(key)
         if type(raw) is int and -2147483648 <= raw <= 2147483647:
@@ -322,6 +329,57 @@ def event(name: str, **fields) -> None:
                 sink(clean)
     except Exception:
         pass  # Diagnostics must never affect tool execution.
+
+
+def tool_outcome(result, failed=False):
+    """Distinguish transport completion, task waiting, and verified tool success."""
+    if not isinstance(result, dict):
+        return "failed" if failed else "unverified"
+    state = result.get("status")
+    state = state if isinstance(state, str) else ""
+    if state in {"owner_input_required", "human_challenge_required", "waiting_owner",
+                 "approval_required", "pending", "waiting", "prepared"}:
+        return "waiting"
+    if state in {"not_executed", "task_intent_required", "blocked", "denied", "skipped"}:
+        return "not_executed"
+    if failed or result.get("ok") is False or result.get("success") is False or (
+        type(result.get("exit_code")) is int and result["exit_code"] != 0
+    ) or state in {"failed", "error", "timeout", "expired"}:
+        return "failed"
+    if state in {"partial", "incomplete", "unverified", "unknown", "not_verified"}:
+        return "partial" if state in {"partial", "incomplete"} else "unverified"
+    if result.get("verified") is False or result.get("verification_ok") is False:
+        return "unverified"
+    if result.get("ok") is True or result.get("success") is True or (
+        type(result.get("exit_code")) is int and result["exit_code"] == 0
+    ):
+        return "ok"
+    return "unverified"
+
+
+def observe_tool_call(name, invoke, *, backend, call_ref=None):
+    """One start and one terminal record for an actual dispatch, never its payload."""
+    ref = call_ref or os.urandom(8).hex()
+    started = time.monotonic()
+    fields = {"tool": name, "call_ref": ref, "backend": backend, "stage": "dispatch"}
+    event("agent_tool_dispatch_start", **fields, status="started")
+    try:
+        result, failed = invoke()
+    except BaseException as exc:
+        event("agent_tool_dispatch_finish", **fields, status="failed",
+              error_type=type(exc).__name__,
+              duration_ms=round((time.monotonic() - started) * 1000))
+        raise
+    fields["status"] = tool_outcome(result, failed)
+    if fields["status"] == "failed":
+        fields["error_type"] = "ToolResultError"
+    if isinstance(result, dict):
+        for key in ("exit_code", "http_status"):
+            if type(result.get(key)) is int:
+                fields[key] = result[key]
+    event("agent_tool_dispatch_finish", **fields,
+          duration_ms=round((time.monotonic() - started) * 1000))
+    return result, failed
 
 
 @contextmanager
@@ -401,7 +459,7 @@ def _export_chat_turn(fields):
     agent = fields.get("agent")
     if isinstance(agent, str) and _SAFE_LABEL.fullmatch(agent):
         result["agent"] = agent
-    for key in (*_CHAT_TOKEN_FIELDS, "duration_ms", "tool_errors", "http_status", "upstream_http_status"):
+    for key in (*_CHAT_TOKEN_FIELDS, "duration_ms", "tool_errors", "tool_incomplete", "tool_calls", "http_status", "upstream_http_status"):
         value = fields.get(key)
         result[key] = value if type(value) is int and value >= 0 else None
     for key, limit in (("provider", 80), ("model", 160)):
@@ -485,8 +543,20 @@ def observe_chat(mode, backend, latest_usage):
                     events = result.get("tool_events", result.get("events", []))
                     if isinstance(events, list):
                         fields["tool_errors"] = sum(
-                            event.get("is_error") is True for event in events if isinstance(event, dict)
+                            item.get("is_error") is True or item.get("type") in {
+                                "agent_error", "mcp_error", "tool_catalog_error", "tool_selection_error"
+                            }
+                            for item in events if isinstance(item, dict)
                         ) if result else None
+                        fields["tool_incomplete"] = sum(
+                            tool_outcome(item.get("result"), item.get("is_error") is True)
+                            in {"waiting", "not_executed", "partial", "unverified"}
+                            for item in events if isinstance(item, dict) and
+                            item.get("type") in {"tool_result", "approved_tool_result",
+                                                "scope_change_required", "task_intent_required"}
+                        ) if result else None
+                    if type(result.get("tool_calls")) is int:
+                        fields["tool_calls"] = result["tool_calls"]
                     fields["usage_complete"] = usage.get("complete")
                     for key in _CHAT_TOKEN_FIELDS:
                         value = usage.get(key)

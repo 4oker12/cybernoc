@@ -5,9 +5,9 @@ import html
 import json
 
 try:
-    from .diagnostics import adapter_error_code, span as diagnostic_span
+    from .diagnostics import adapter_error_code, span as diagnostic_span, event as diagnostic_event, observe_tool_call, tool_outcome
 except ImportError:
-    from diagnostics import adapter_error_code, span as diagnostic_span
+    from diagnostics import adapter_error_code, span as diagnostic_span, event as diagnostic_event, observe_tool_call, tool_outcome
 import os
 import re
 import secrets
@@ -16,24 +16,24 @@ from urllib import request, parse, error
 
 try:
     from .tool_policy import (
-        REVIEWED_TOOLS, discovered_tools, model_tools, schema_digest,
+        REVIEWED_TOOLS, discovered_tools, model_tools, schema_digest, MAX_ADVERTISED, MAX_DISCOVERED,
         validate_dynamic_arguments, safe_preview, action_description,
         tool_requires_task_intent, task_intent_matches, ToolPolicyError,
     )
 except ImportError:
     from tool_policy import (
-        REVIEWED_TOOLS, discovered_tools, model_tools, schema_digest,
+        REVIEWED_TOOLS, discovered_tools, model_tools, schema_digest, MAX_ADVERTISED, MAX_DISCOVERED,
         validate_dynamic_arguments, safe_preview, action_description,
         tool_requires_task_intent, task_intent_matches, ToolPolicyError,
     )
 try:
     from .gpt_tool_runtime import (
-        extract_user_targets, filter_tool_rows, normalize_tool_groups,
+        extract_user_targets, filter_tool_rows, normalize_tool_groups, route_model_tool_rows,
         GITHUB_WRITE_NAMES,
     )
 except ImportError:
     from gpt_tool_runtime import (
-        extract_user_targets, filter_tool_rows, normalize_tool_groups,
+        extract_user_targets, filter_tool_rows, normalize_tool_groups, route_model_tool_rows,
         GITHUB_WRITE_NAMES,
     )
 
@@ -123,13 +123,13 @@ class MCPClient:
             body["params"] = params
         with diagnostic_span("mcp_rpc", method=method):
             value = self.transport(self.endpoint, body, 14)
-        if not isinstance(value, dict):
-            raise BackendError("invalid_mcp_response")
-        if "error" in value:
-            raise BackendError("mcp_rpc_error: " + str(value["error"])[:180])
-        if not isinstance(value.get("result"), dict):
-            raise BackendError("mcp_result_missing")
-        return value["result"]
+            if not isinstance(value, dict):
+                raise BackendError("invalid_mcp_response")
+            if "error" in value:
+                raise BackendError("mcp_rpc_error: " + str(value["error"])[:180])
+            if not isinstance(value.get("result"), dict):
+                raise BackendError("mcp_result_missing")
+            return value["result"]
 
     def initialize(self) -> list[dict]:
         self.rpc("initialize", {
@@ -657,17 +657,25 @@ class Agent:
         self.local_tool_runtime = local_tool_runtime
 
     def _model_chat(self, messages, tools=None, **kwargs):
-        with diagnostic_span("model_request",
-                             provider=getattr(self.ollama, "provider", "unknown"),
-                             model=getattr(self.ollama, "model", "unknown")):
-            return self.ollama.chat(messages, tools, **kwargs)
+        metadata = {
+            "provider": getattr(self.ollama, "provider", "unknown"),
+            "model": getattr(self.ollama, "model", "unknown"),
+            "advertised_count": len(tools or []),
+        }
+        with diagnostic_span("model_request", **metadata):
+            result = self.ollama.chat(messages, tools, **kwargs)
+        native = result.get("tool_calls") if isinstance(result, dict) else None
+        native_count = len(native) if isinstance(native, list) else 0
+        diagnostic_event("model_tool_response", **metadata, tool_calls=native_count,
+                         status="calls" if native_count else "no_calls" if tools else "disabled")
+        return result
 
     def _supports_vision(self):
         return bool(getattr(self.ollama, "supports_tool_images", False))
 
     def _call_registered_tool(self, name: str, args: dict, *, mcp=None,
                               authorized_targets=None, user_messages=None,
-                              enabled_groups=None, conversation_key=None):
+                              enabled_groups=None, conversation_key=None, call_ref=None):
         if self.local_tool_runtime is not None and name in self.local_tool_runtime.tool_map:
             runtime_kwargs = {
                 "authorized_targets": authorized_targets,
@@ -676,7 +684,10 @@ class Agent:
             }
             if conversation_key is not None:
                 runtime_kwargs["conversation_key"] = conversation_key
-            result, is_error = self.local_tool_runtime.call(name, args, **runtime_kwargs)
+            result, is_error = observe_tool_call(
+                name, lambda: self.local_tool_runtime.call(name, args, **runtime_kwargs),
+                backend="local", call_ref=call_ref,
+            )
             if isinstance(result, dict) and isinstance(result.get("image_data_url"), str):
                 result = dict(result)
                 if not self._supports_vision():
@@ -689,7 +700,12 @@ class Agent:
             return result, is_error
         if mcp is None:
             return {"ok": False, "error": "mcp_backend_unavailable"}, True
-        return mcp.call(name, args)
+        return self._call_mcp(mcp, name, args, call_ref=call_ref)
+
+    @staticmethod
+    def _call_mcp(mcp, name, args, *, call_ref=None):
+        return observe_tool_call(name, lambda: mcp.call(name, args),
+                                 backend="mcp", call_ref=call_ref)
 
     def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True,
             scope: dict | None = None, user_context: str = "",
@@ -947,12 +963,20 @@ class Agent:
         mcp = None
         remote_rows = []
         descriptors, tools = {}, []
+        count, gets, executed = 0, 0, 0
+        selected_by = "native"
+        diagnostic_event("tool_catalog_start", status="started" if tools_enabled else "disabled",
+                         source="manual" if selected_groups else "auto",
+                         groups=".".join(selected_groups) or "all")
         if tools_enabled:
             try:
                 mcp = self.mcp_factory()
                 remote_rows = mcp.initialize()
             except (BackendError, ToolPolicyError) as exc:
-                events.append({"type": "mcp_error", "message": str(exc)[:240]})
+                events.append({"type": "mcp_error", "is_error": True, "message": str(exc)[:240]})
+                diagnostic_event("tool_catalog_mcp_failure", status="failed",
+                                 error_type=type(exc).__name__)
+            remote_count = len(remote_rows)
             local_rows = (
                 self.local_tool_runtime.mcp_tools(selected_groups)
                 if self.local_tool_runtime is not None else []
@@ -966,15 +990,34 @@ class Agent:
                 and row.get("name") not in local_names
                 and not (self.local_tool_runtime is not None and row.get("name") == "browser_open")
             ]
+            catalog_counts = {
+                "local_count": len(local_rows), "remote_count": remote_count,
+                "filtered_remote_count": len(remote_rows), "combined_count": len(combined_rows),
+            }
             try:
-                registered = discovered_tools(combined_rows)
-                descriptors = {t["name"]: t for t in registered}
-                tools = _tool_schema(registered)
+                registered = discovered_tools(combined_rows, limit=MAX_DISCOVERED)
+                advertised = route_model_tool_rows(registered, text, limit=MAX_ADVERTISED)
+                descriptors = {t["name"]: t for t in advertised}
+                tools = _tool_schema(advertised)
             except ToolPolicyError as exc:
-                events.append({"type": "tool_catalog_error", "message": str(exc)[:240]})
-                descriptors, tools = {}, []
-        count, gets, executed = 0, 0, 0
-        selected_by = "native"
+                events.append({"type": "tool_catalog_error", "is_error": True, "message": str(exc)[:240]})
+                diagnostic_event("tool_catalog_failure", **catalog_counts, status="failed",
+                                 error_type=type(exc).__name__, error_code="tool_catalog_invalid")
+                return result_payload("Не удалось сформировать каталог инструментов. "
+                                      "Модель не вызывалась. Подробности в журнале.",
+                                      review_tools=False)
+            omitted = len(registered) - len(advertised)
+            diagnostic_event("tool_catalog_ready", **catalog_counts,
+                             discovered_count=len(registered), advertised_count=len(tools),
+                             omitted_count=omitted,
+                             status="partial" if omitted else "ok" if tools else "empty")
+            if omitted:
+                context.append({"role": "system", "content":
+                    "Контроллер автоматически выбрал подходящие схемы из большего каталога. "
+                    "Доступны только функции в этом запросе; не имитируй отсутствующие. "
+                    "Если нужной функции нет, прямо укажи это для следующего целевого запроса."})
+        else:
+            diagnostic_event("tool_catalog_ready", status="disabled", advertised_count=0)
         try:
             for round_no in range(MAX_ROUNDS):
                 if round_no == MAX_ROUNDS - 1:
@@ -1051,7 +1094,10 @@ class Agent:
                             if calls:
                                 selected_by = "model_json_fallback"
                     except (ValueError, TypeError, AttributeError):
-                        events.append({"type": "tool_selection_error", "message": "Active model did not return valid JSON"})
+                        events.append({"type": "tool_selection_error", "is_error": True,
+                                       "message": "Active model did not return valid JSON"})
+                        diagnostic_event("agent_tool_selection_failure", status="failed",
+                                         round=round_no, error_code="invalid_selection_json")
                 if not executed and not pending_requests and tools and round_no == 0:
                     # Security cases should be grounded in public advisories and
                     # real incidents. Ensure one privacy-filtered search is part
@@ -1150,7 +1196,7 @@ class Agent:
                         r"улучш|создай|напиши|доработ|рефактор|разбер)",
                         text))
                     if wants_dev and "dev_list" in descriptors:
-                        observed, error_flag = mcp.call("dev_list", {"limit": 100})
+                        observed, error_flag = self._call_mcp(mcp, "dev_list", {"limit": 100})
                         executed += 1
                         selected_by = "developer_evidence_fallback"
                         events.append({
@@ -1169,6 +1215,10 @@ class Agent:
                         context.append({"role": "tool", "tool_name": "dev_list",
                                         "content": json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]})
                         continue
+                diagnostic_event("agent_tool_selection", round=round_no, source=selected_by,
+                                 tool_calls=len(calls) if isinstance(calls, list) else 0,
+                                 advertised_count=len(tools),
+                                 status="selected" if calls else "no_call" if tools else "unavailable")
                 if not calls:
                     answer = _clean_model_answer(result.get("content"))
                     if not answer:
@@ -1190,8 +1240,16 @@ class Agent:
                 context.append(assistant_turn)
                 for raw in calls[:MAX_CALLS-count]:
                     function = raw.get("function", {}) if isinstance(raw, dict) else {}
+                    function = function if isinstance(function, dict) else {}
                     name = function.get("name")
+                    name = name if isinstance(name, str) else ""
                     allowed_names = set(descriptors)
+                    call_ref = secrets.token_hex(8)
+                    log_name = name if name in allowed_names else "unregistered"
+                    diagnostic_event("agent_tool_requested", tool=log_name, call_ref=call_ref,
+                                     round=round_no, source=selected_by, status="requested")
+                    dispatched = False
+                    rejection_code = "not_dispatched"
                     safe_result, failed = {}, False
                     args, kind, event = {}, "tool_result", {}
                     try:
@@ -1215,7 +1273,7 @@ class Agent:
                                 raise BackendError("public_http_not_enabled")
                             if gets >= MAX_HTTP_GETS:
                                 raise BackendError("public_http_budget_exhausted")
-                            gateway, error_flag = mcp.call("gateway_status", {})
+                            gateway, error_flag = self._call_mcp(mcp, "gateway_status", {})
                             if error_flag:
                                 raise BackendError("gateway_status_failed")
                             allowed_hosts = set(gateway.get("authorized_hosts", []))
@@ -1230,21 +1288,24 @@ class Agent:
                                 }
                             else:
                                 gets += 1
-                                safe_result, failed = mcp.call(name, args)
+                                dispatched = True
+                                safe_result, failed = self._call_mcp(mcp, name, args, call_ref=call_ref)
                                 executed += 1
                         elif name in local_names:
+                            dispatched = True
                             safe_result, failed = self._call_registered_tool(
                                 name, args, mcp=mcp,
                                 authorized_targets=authorized_targets,
                                 user_messages=task_messages,
                                 enabled_groups=selected_groups or None,
-                                conversation_key=conversation_key,
+                                conversation_key=conversation_key, call_ref=call_ref,
                             )
                             executed += 1
                         elif name in REVIEWED_TOOLS:
                             if mcp is None:
                                 raise BackendError("mcp_backend_unavailable")
-                            safe_result, failed = mcp.call(name, args)
+                            dispatched = True
+                            safe_result, failed = self._call_mcp(mcp, name, args, call_ref=call_ref)
                             executed += 1
                         else:
                             # Owner-connected MCP tools are autonomous after strict schema validation.
@@ -1262,11 +1323,17 @@ class Agent:
                             else:
                                 if mcp is None:
                                     raise BackendError("mcp_backend_unavailable")
-                                safe_result, failed = mcp.call(name, args)
+                                dispatched = True
+                                safe_result, failed = self._call_mcp(mcp, name, args, call_ref=call_ref)
                                 executed += 1
                     except (BackendError, ToolPolicyError, ValueError, TypeError) as exc:
                         failed = True
+                        rejection_code = type(exc).__name__
                         safe_result = {"ok": False, "error": str(exc)[:200]}
+                    if not dispatched:
+                        diagnostic_event("agent_tool_not_dispatched", tool=log_name,
+                                         call_ref=call_ref, round=round_no, status="not_executed",
+                                         error_code=rejection_code, result_code=kind)
                     visual_image = None
                     if isinstance(safe_result, dict) and isinstance(
                             safe_result.get("image_data_url"), str):
@@ -1352,7 +1419,9 @@ class Agent:
         except (BackendError, ValueError, TypeError) as exc:
             detail = getattr(exc, "safe_detail", None)
             code = adapter_error_code(exc)
-            events.append({"type": "agent_error", "message": str(exc)[:200]})
+            events.append({"type": "agent_error", "is_error": True, "message": str(exc)[:200]})
+            diagnostic_event("agent_execution_failure", status="failed",
+                             error_type=type(exc).__name__, error_code=code or "agent_error")
             answer = "Ошибка исполнения: " + str(exc)[:180]
             if isinstance(detail, str) and detail:
                 answer += "\nДеталь провайдера: " + detail[:420]
@@ -1378,11 +1447,11 @@ class Agent:
         if not isinstance(name, str) or name in REVIEWED_TOOLS:
             raise BackendError("approval_not_applicable")
         mcp = self.mcp_factory()
-        available = {t["name"]: t for t in discovered_tools(mcp.initialize())}
+        available = {t["name"]: t for t in discovered_tools(mcp.initialize(), limit=MAX_DISCOVERED)}
         if name not in available or schema_digest(available[name]) != approval.get("schema_hash"):
             raise BackendError("tool_definition_changed")
         args = validate_dynamic_arguments(args, available[name]["inputSchema"])
-        result, is_error = mcp.call(name, args)
+        result, is_error = self._call_mcp(mcp, name, args)
         # No tool definitions here: a second tool requires another full user turn.
         prompt = [{
             "role": "system", "content":

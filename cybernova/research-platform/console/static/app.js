@@ -446,7 +446,7 @@ function recordUsage(usage,mode,reply){
   const receipt=node("div","token-usage-receipt");
   if(!available){
     receipt.append(node("strong","","Учёт токенов недоступен"),
-      node("span","",usage?.provider?("· "+usage.provider):"· провайдер не передал usage"));
+      node("span","","· данные об использовании отсутствуют"));
     if(usage?.requests)receipt.append(node("span","", "· запросов модели: "+usage.requests));
     reply?.wrap?.append(receipt);
     state.lastUsage[mode]={available:false};
@@ -465,7 +465,6 @@ function recordUsage(usage,mode,reply){
   );
   if(usage.complete===false)receipt.append(node("span","","· частичный учёт"));
   if(Number.isSafeInteger(usage.requests))receipt.append(node("span","","· запросов модели: "+usage.requests));
-  if(usage.provider)receipt.append(node("span","","· "+usage.provider));
   reply?.wrap?.append(receipt);
   const totals=state.usageTotals[mode];
   if(input!==null)totals.input+=input;

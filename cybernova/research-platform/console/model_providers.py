@@ -17,9 +17,9 @@ import time
 from pathlib import Path
 
 try:
-    from .diagnostics import scrub
+    from .diagnostics import scrub, event as diagnostic_event
 except ImportError:
-    from diagnostics import scrub
+    from diagnostics import scrub, event as diagnostic_event
 from urllib import error, parse, request
 
 LOCAL_NAMES = frozenset({"localhost", "127.0.0.1", "::1", "ollama"})
@@ -425,7 +425,11 @@ class OpenAICompatibleClient:
         if not isinstance(message, dict):
             raise ModelConfigError("llm_message_missing")
         calls = []
-        for call in (message.get("tool_calls") or [])[:16]:
+        raw_calls = message.get("tool_calls") or []
+        malformed = not isinstance(raw_calls, list)
+        if malformed:
+            raw_calls = []
+        for call in raw_calls[:16]:
             if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
                 continue
             function = call["function"]
@@ -438,6 +442,15 @@ class OpenAICompatibleClient:
                 "id": str(call.get("id") or ""),
                 "function": {"name": function["name"], "arguments": args},
             })
+        finish = result["choices"][0].get("finish_reason")
+        finish = finish if finish in ("stop", "length", "tool_calls", "content_filter",
+                                      "insufficient_system_resource") else "unknown"
+        diagnostic_event("provider_tool_response", model=self.model,
+                         advertised_count=len(tools or []), raw_tool_calls=len(raw_calls),
+                         tool_calls=len(calls), dropped_tool_calls=len(raw_calls)-len(calls),
+                         finish_reason=finish,
+                         status="partial" if malformed or len(raw_calls) != len(calls)
+                         else "calls" if calls else "no_calls" if tools else "disabled")
         content = message.get("content")
         if isinstance(content, list):
             content = "\n".join(

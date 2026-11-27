@@ -2,6 +2,7 @@
 import sys
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,7 +10,7 @@ sys.path.insert(0, str(ROOT))
 
 from console.agent import Agent, BackendError, APPROVAL_TTL_SECONDS
 from console.tool_policy import (
-    MAX_ADVERTISED, ToolPolicyError, discovered_tools, model_tools, validate_dynamic_arguments,
+    MAX_ADVERTISED, MAX_DISCOVERED, ToolPolicyError, discovered_tools, model_tools, validate_dynamic_arguments,
     safe_preview, schema_digest, action_description,
 )
 
@@ -84,6 +85,26 @@ class DynamicToolPolicyTests(unittest.TestCase):
         } for index in range(MAX_ADVERTISED + 1)]
         with self.assertRaisesRegex(ToolPolicyError, "tool_catalog_limit_exceeded"):
             discovered_tools(rows)
+
+    def test_large_catalog_routes_exact_tool_without_exceeding_provider_budget(self):
+        rows = [
+            {"name": f"dynamic_tool_{i:03d}", "description": "Fixture",
+             "inputSchema": {"type": "object", "properties": {}}}
+            for i in range(159)
+        ] + [NEW]
+        self.assertEqual(len(discovered_tools(rows, limit=MAX_DISCOVERED)), 160)
+        mcp = FakeMCP(rows)
+        model = FakeQwen([tool_call(), {"content": "DNS проверен"}])
+        with patch("console.agent.diagnostic_event") as log:
+            result = Agent(model, lambda: mcp).run([], "Вызови dns_research для example.test")
+        offered = model.inputs[0]["tools"]
+        self.assertLessEqual(len(offered), MAX_ADVERTISED)
+        self.assertIn("dns_research", [item["function"]["name"] for item in offered])
+        self.assertEqual(mcp.calls, [("dns_research", {"domain": "example.test"})])
+        self.assertEqual(result["tool_calls"], 1)
+        ready = [call.kwargs for call in log.call_args_list if call.args == ("tool_catalog_ready",)]
+        self.assertEqual(ready[0]["discovered_count"], 160)
+        self.assertEqual(ready[0]["omitted_count"], 160 - len(offered))
 
     def test_dynamic_args_enforce_required_and_type(self):
         schema = NEW["inputSchema"]

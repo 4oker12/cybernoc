@@ -12,6 +12,7 @@ import re
 from urllib import parse
 
 MAX_ADVERTISED = 128
+MAX_DISCOVERED = 512  # Internal registry bound, separate from the provider schema budget.
 MAX_ARGUMENT_BYTES = 8192
 MAX_VALUE_LENGTH = 4096
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,79}$")
@@ -71,8 +72,10 @@ class ToolPolicyError(ValueError):
     pass
 
 
-def discovered_tools(rows: object) -> list[dict]:
+def discovered_tools(rows: object, *, limit: int = MAX_ADVERTISED) -> list[dict]:
     """Normalize the full catalog or fail explicitly instead of silently truncating it."""
+    if type(limit) is not int or not 1 <= limit <= MAX_DISCOVERED:
+        raise ToolPolicyError("tool_catalog_invalid_limit")
     if not isinstance(rows, list):
         raise ToolPolicyError("tools/list must be a list")
     found: list[dict] = []
@@ -88,7 +91,7 @@ def discovered_tools(rows: object) -> list[dict]:
         # even *approved* dispatch. It can still be shown with a fallback.
         if not isinstance(schema, dict) or schema.get("type") != "object":
             schema = {"type": "object", "properties": {}, "additionalProperties": False}
-        if len(found) >= MAX_ADVERTISED:
+        if len(found) >= limit:
             raise ToolPolicyError("tool_catalog_limit_exceeded")
         found.append({
             "name": name,

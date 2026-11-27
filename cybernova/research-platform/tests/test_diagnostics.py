@@ -50,6 +50,37 @@ class DiagnosticsTests(unittest.TestCase):
                 diagnostics._CONFIGURED.clear()
                 diagnostics._CONFIGURED.update(old_configured)
 
+    def test_tool_outcomes_record_dispatch_and_no_payload(self):
+        with self.journal():
+            for result, failed, expected in [
+                ({"ok": True}, False, "ok"),
+                ({"ok": False}, False, "failed"),
+                ({"ok": True, "verified": False}, False, "unverified"),
+                ({"ok": False, "status": "owner_input_required"}, True, "waiting"),
+                ({"status": "not_executed"}, True, "not_executed"),
+                ({"message": "private-fixture-payload"}, False, "unverified"),
+                ({"exit_code": 1}, False, "failed"),
+            ]:
+                self.assertEqual(diagnostics.tool_outcome(result, failed), expected)
+                diagnostics.observe_tool_call("fixture_tool", lambda: (result, failed),
+                                              backend="local")
+            with self.assertRaises(RuntimeError):
+                def raise_failure():
+                    raise RuntimeError("private-fixture-payload")
+                diagnostics.observe_tool_call("fixture_tool", raise_failure, backend="mcp")
+            report = diagnostics.export_jsonl().decode("utf-8")
+            self.assertNotIn("private-fixture-payload", report)
+            entries = [json.loads(line).get("timeline", {}) for line in report.splitlines()]
+            starts = [entry for entry in entries if entry.get("event") == "agent_tool_dispatch_start"]
+            finishes = [entry for entry in entries if entry.get("event") == "agent_tool_dispatch_finish"]
+            self.assertEqual(len(starts), 8)
+            self.assertEqual(len(finishes), 8)
+            self.assertEqual({entry["call_ref"] for entry in starts},
+                             {entry["call_ref"] for entry in finishes})
+            self.assertEqual([entry["status"] for entry in finishes],
+                             ["ok", "failed", "unverified", "waiting", "not_executed",
+                              "unverified", "failed", "failed"])
+
     def test_scrub_tokens_urls_user_paths_and_credentials(self):
         line = (
             "Authorization: Bearer abcdefghijklmnop "

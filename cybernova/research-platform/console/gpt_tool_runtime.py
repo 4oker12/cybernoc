@@ -54,9 +54,9 @@ except ImportError:
 
 
 try:
-    from .diagnostics import event as diagnostic_event, failure as diagnostic_failure
+    from .diagnostics import event as diagnostic_event, failure as diagnostic_failure, tool_outcome
 except ImportError:
-    from diagnostics import event as diagnostic_event, failure as diagnostic_failure
+    from diagnostics import event as diagnostic_event, failure as diagnostic_failure, tool_outcome
 
 MAX_TOOL_OUTPUT_CHARS = 50000
 MAX_TERMINAL_COMMAND_CHARS = 20000
@@ -180,6 +180,52 @@ def filter_tool_rows(rows, groups=None) -> list[dict]:
     if not selected:
         return safe_rows
     return [row for row in safe_rows if tool_group_for_name(row["name"]) in selected]
+
+
+# Rank existing, already-authorized rows only. This is routing, not permission.
+_ROUTE_HINTS = {
+    "browser": r"браузер|хром|страниц|сайт|ссылк|вкладк|форм[ауые]|browser|chrome|https?://|screenshot",
+    "computer": r"компьютер|ноутбук|файл|папк|процесс|служб|диск|окн[оа]|памят|windows|desktop|computer|defender|cpu|ram",
+    "terminal": r"терминал|команд|powershell|\bcmd\b|\bshell\b|\bgit\b|terminal|консол|окружени",
+    "web": r"интернет|поиск|поищи|гугл|источник|search|research|web",
+    "network": r"\bdns\b|\btls\b|\bssl\b|\bip\b|\bhttp\b|сеть|сетев|маршрут|шлюз|network",
+    "security": r"security|аудит|безопасност|проверка защит",
+    "traffic": r"\bhar\b|трафик|traffic|devtools",
+    "developer": r"git|репозитори|ветк|коммит|исходник|тест|разработ|проект|repository|branch|commit|code|test",
+    "github": r"github|pull request|issue|репозитори|ветк|коммит",
+    "mcp": r"\bmcp\b|инструмент|tools|координац",
+}
+
+
+def route_model_tool_rows(rows: list[dict], task: str, *, limit: int) -> list[dict]:
+    """Keep exact requested names and relevant groups first; balance the rest.
+
+    The complete catalog remains discoverable on each turn. Never widen the
+    caller's group selection, register an invented tool, or change dispatch policy.
+    """
+    if len(rows) <= limit:
+        return rows
+    task = task.casefold()
+    exact = []
+    buckets = {}
+    for row in rows:
+        name = row["name"]
+        if re.search(r"(?<![\w.-])" + re.escape(name.casefold()) + r"(?![\w.-])", task):
+            exact.append(row)
+        else:
+            buckets.setdefault(tool_group_for_name(name), []).append(row)
+    selected = exact[:limit]
+    relevant = [key for key in buckets if re.search(_ROUTE_HINTS.get(key, r"(?!)"), task)]
+    other = [key for key in buckets if key not in relevant]
+    for group_keys in (relevant, other):
+        offset = 0
+        while len(selected) < limit:
+            batch = [buckets[key][offset] for key in group_keys if offset < len(buckets[key])]
+            if not batch:
+                break
+            selected.extend(batch[:limit - len(selected)])
+            offset += 1
+    return selected
 
 
 def tool_group_summary(tool_names) -> list[dict]:
@@ -789,13 +835,13 @@ class GPTToolRuntime:
                              duration_ms=round((time.monotonic() - start) * 1000),
                              error_type=type(exc).__name__)
             raise
-        fields = {"tool": name, "status": "failed" if failed else "ok",
+        fields = {"tool": name, "status": tool_outcome(result, failed),
                   "duration_ms": round((time.monotonic() - start) * 1000)}
         if isinstance(result, dict):
             if type(result.get("http_status")) is int:
                 fields["http_status"] = result["http_status"]
-            if failed:
-                fields["error_type"] = str(result.get("error", "tool_failed")).split(":", 1)[0]
+            if fields["status"] == "failed":
+                fields["error_type"] = "ToolResultError"
         diagnostic_event("tool_call_completed", **fields)
         return result, failed
 

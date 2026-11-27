@@ -352,7 +352,7 @@ async def localhost_only(request: Request, call_next):
 class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, min_length=16, max_length=100)
     message: str = Field(min_length=1, max_length=10000)
-    tool_groups: list[str] = Field(default_factory=list, max_length=9)
+    tool_groups: list[str] = Field(default_factory=list, max_length=10)
     tools_enabled: bool = True
     run_id: str = Field(default_factory=lambda: secrets.token_hex(16),
                         min_length=32, max_length=32, pattern="^[0-9a-f]{32}$")
@@ -490,7 +490,7 @@ class ChatGPTMessageRequest(BaseModel):
     thread_id: str | None = Field(default=None, min_length=20, max_length=100)
     model: str = Field(min_length=1, max_length=160)
     message: str = Field(min_length=1, max_length=10000)
-    tool_groups: list[str] = Field(default_factory=list, max_length=9)
+    tool_groups: list[str] = Field(default_factory=list, max_length=10)
     tools_enabled: bool = True
     run_id: str = Field(default_factory=lambda: secrets.token_hex(16),
                         min_length=32, max_length=32, pattern="^[0-9a-f]{32}$")
