@@ -286,7 +286,7 @@ class CollaborationTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertIn("DeepSeek", calls[1][0][-1]["content"])
             self.assertIn("ведущий инженер", calls[0][1]["profile_instructions"])
-            self.assertEqual(calls[0][1]["session_id"], task_id)
+            self.assertEqual(calls[0][1]["conversation_key"], "collab:" + task_id + ":chatgpt")
             self.assertEqual(FakeResearchAgent.session_ids, [task_id, task_id])
             self.assertTrue(any("Уточнение от пользователя" in item["content"]
                                 for item in calls[0][0]))
