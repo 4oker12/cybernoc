@@ -93,7 +93,7 @@ BROWSER_CONTROL_TOOLS = [
            "max_matches": {"type": "integer", "minimum": 1, "maximum": 10,
                            "description": "Maximum matching snippets to return, from 1 to 10"}}, ["query", "max_matches"]),
     _tool("browser_follow_link",
-          "Follow one visible link by its exact accessible name in the current page. This is navigation only; it does not submit forms.",
+          "Follow one visible link by its exact accessible name, or by exact safe URL using the name prefix url:<URL>. This is navigation only; it does not submit forms.",
           {"name": {**STRING, "description": "Exact visible/accessibility name of one link"}}, ["name"]),
     _tool("browser_fill",
           "Fill one visible editable non-sensitive field in the main document or an iframe. Locate it by label, placeholder, id, name, aria-label, autocomplete, data-agent-id, CSS/XPath selector, or bounded viewport coordinates. Optional human-like keyboard events and clear/append behavior are supported. Passwords, OTPs, tokens and payment-card fields are refused; use protected Owner Input for secrets. Filling does not intentionally submit the form.",

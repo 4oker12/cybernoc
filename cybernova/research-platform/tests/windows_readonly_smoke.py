@@ -190,12 +190,22 @@ def run():
                 "events_recorded": len(x.get("events", x.get("network_events", []))),
             })
             links = snapshot.get("links", [])
-            first = next((x for x in links if x.get("name") and x.get("url") and x.get("url") != snapshot.get("url")), None)
-            if first and first.get("name"):
-                call("browser_follow_link", {"name": first["name"]})
+            url_counts = {}
+            for item in links:
+                target_url = item.get("url") if isinstance(item, dict) else None
+                if target_url:
+                    url_counts[target_url] = url_counts.get(target_url, 0) + 1
+            first = next((
+                x for x in links
+                if x.get("name") and x.get("url")
+                and x.get("url") != snapshot.get("url")
+                and url_counts.get(x.get("url")) == 1
+            ), None)
+            if first:
+                call("browser_follow_link", {"name": "url:" + first["url"]})
             else:
-                warnings.append("browser_follow_link_no_matching_link")
-                print('{"test":"browser_follow_link","status":"SKIP","reason":"link_unavailable"}')
+                warnings.append("browser_follow_link_no_unique_destination")
+                print('{"test":"browser_follow_link","status":"SKIP","reason":"unique_link_unavailable"}')
 
             call("browser_new_tab", {"url": "https://example.org/"})
             tabs = call("browser_tabs", detail=lambda x: {

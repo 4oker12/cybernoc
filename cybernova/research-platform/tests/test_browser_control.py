@@ -91,6 +91,8 @@ class BrowserControlTests(unittest.TestCase):
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
         self.assertIn("explicitly requested ordinary POST form", submit["description"])
+        follow = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_follow_link")
+        self.assertIn("url:<URL>", follow["description"])
 
     def test_payment_submit_tool_is_blocked_without_protected_chat_approval(self):
         session = BrowserSession.__new__(BrowserSession)
