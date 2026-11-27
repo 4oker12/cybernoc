@@ -97,7 +97,7 @@ BROWSER_CONTROL_TOOLS = [
           "Follow one visible link by its exact accessible name, or by exact safe URL using the name prefix url:<URL>. This is navigation only; it does not submit forms.",
           {"name": {**STRING, "description": "Exact visible/accessibility name of one link"}}, ["name"]),
     _tool("browser_fill",
-          "Fill one visible editable non-sensitive field in the main document or an iframe. Locate it by label, placeholder, id, name, aria-label, autocomplete, data-agent-id, CSS/XPath selector, or bounded viewport coordinates. Optional human-like keyboard events and clear/append behavior are supported. Passwords, OTPs, tokens and payment-card fields are refused; use protected Owner Input for secrets. Filling does not intentionally submit the form.",
+          "Fill one visible editable non-sensitive field in the main document or an iframe. Locate it by label, placeholder, id, name, aria-label, autocomplete, data-agent-id, CSS/XPath selector, or bounded viewport coordinates. Optional human-like keyboard events and clear/append behavior are supported. Passwords, OTPs, tokens and payment-card fields are refused; use protected Owner Input for secrets. If an autosave or other unsafe HTTP request is triggered, Cybernova pauses it and asks the owner in the chat before sending.",
           {"label": {"type": ["string", "null"], "description": "Legacy exact label or placeholder; kept for compatibility"},
            "target": {"type": ["string", "null"], "description": "Field label, data-agent-id, id/name/aria-label/autocomplete value, or explicit CSS/XPath selector"},
            "value": {**STRING, "description": "Text to enter; never written to diagnostics"},
@@ -110,7 +110,7 @@ BROWSER_CONTROL_TOOLS = [
           {"label": {**STRING, "description": "Exact select label"},
            "value": {**STRING, "description": "Option label or value"}}, ["label", "value"]),
     _tool("browser_click_button",
-          "Click one visible button by exact accessible name. GET navigation is allowed. If the button submits a form and the user explicitly asked to send, save or apply it, use browser_submit; unrelated non-GET requests remain blocked.",
+          "Click one visible button by exact accessible name. Ordinary navigation is allowed. High-impact actions ask for owner confirmation before the click; any unsafe HTTP request triggered by the click is paused for one-request confirmation in the Cybernova chat.",
           {"name": {**STRING, "description": "Exact accessible name of one button, or action_target for a native disclosure or ARIA tab from the latest browser snapshot or control search"}}, ["name"]),
     _tool("browser_back",
           "Navigate back one page in the isolated Chromium session."),
@@ -126,7 +126,7 @@ BROWSER_CONTROL_TOOLS = [
           {"index": {"type": "integer", "description": "Current tab index"}}, ["index"]),
     _tool("browser_close_tab", "Close one tab by its current zero-based index; the final tab cannot be closed.",
           {"index": {"type": "integer", "description": "Current tab index"}}, ["index"]),
-    _tool("browser_press", "Press a non-text keyboard key in the current page. Enter is allowed, but blocked write requests remain blocked.",
+    _tool("browser_press", "Press a non-text keyboard key in the current page. Enter is allowed; any unsafe HTTP request caused by the keypress is paused for one-request confirmation in the Cybernova chat.",
           {"key": {**STRING, "description": "Allowed key: Enter, Tab, Escape, ArrowDown, ArrowUp, PageDown, PageUp, Home, End"}}, ["key"]),
     _tool("browser_scroll", "Scroll the current page up or down by a bounded number of pixels.",
           {"direction": {"type": "string", "enum": ["up", "down"]},
@@ -135,7 +135,7 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers. Patchright disables Console API capture; set CYBERNOVA_BROWSER_BACKEND=playwright before starting a new session when full console messages are required."),
     _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
-          "Submit one explicitly requested ordinary POST form. Use browser_register for account creation and browser_login for sign-in. Payment, purchase, deletion and account-removal actions remain blocked.",
+          "Submit one visible native form after Cybernova asks the owner to approve the exact method and target in the chat. Supports the form's declared HTTP method. Payment-card entry must use the protected payment-card flow; purchase, deletion and account changes are permitted only after the owner confirms the specific request.",
           {"name": {**STRING, "description": "Exact accessible name of the visible form submit button"}}, ["name"]),
     _tool("browser_submit_payment",
           "Request explicit owner confirmation inside Cybernova's protected chat dialog, then submit exactly one visible payment or payment-verification form. The dialog shows the merchant origin, button and purpose. Never use for purchases or subscriptions unless the owner confirms the exact action in that dialog.",
@@ -158,14 +158,20 @@ BROWSER_CONTROL_TOOLS = [
           "Radio buttons can only be checked.",
           {"label": FIELD_LABEL, "checked": {"type": "boolean"}}, ["label", "checked"]),
     _tool("browser_register",
-          "Submit an already filled registration form only when the user directly asks to register an account. Ask the user to enter credentials and complete challenges themselves.",
+          "Submit an already filled registration form after the owner confirms the exact request in the Cybernova chat. Use protected Owner Input for missing credentials; visible human challenges remain manual.",
           {"name": ELEMENT_NAME}, ["name"]),
     _tool("browser_login",
-          "Submit an already filled sign-in form when the user explicitly asks to log in. Pause for protected input before submitting a missing password or one-time code.",
+          "Submit an already filled sign-in form after the owner confirms the exact request in the Cybernova chat. Pause for protected input before submitting a missing password or one-time code.",
           {"name": ELEMENT_NAME}, ["name"]),
 ]
 BROWSER_CONTROL_NAMES = frozenset(item["name"] for item in BROWSER_CONTROL_TOOLS)
 APPROVAL_TOOL_NAMES = frozenset({"browser_submit", "browser_register", "browser_login"})
+WRITE_TRIGGER_TOOLS = frozenset({
+    "browser_fill", "browser_select", "browser_click_button", "browser_press",
+    "browser_set_checked", "browser_submit", "browser_register", "browser_login",
+    "browser_submit_payment",
+})
+BLOCKED_HTTP_METHODS = frozenset({"CONNECT", "TRACE", "TRACK"})
 REGISTRATION_TARGET = re.compile(
     r"(?i)(\bregister\b|\bregistration\b|\bsign[\s_-]*up\b|"
     r"\bcreate[\s_-]+account\b|\bnew[\s_-]+account\b|\bjoin\b|"
@@ -694,6 +700,8 @@ class BrowserSession:
         self._network_events: list[dict] = []
         self._request_started: dict[int, float] = {}
         self._attached_pages: set[int] = set()
+        self._write_approval_handler = None
+        self._active_action = None
 
     def _dispatch_observed(self, name: str, args: dict) -> dict:
         started = time.monotonic()
@@ -709,6 +717,11 @@ class BrowserSession:
             target_host = ""
         diagnostic_event("browser_action_start", kind="action", tool=name,
                          source="browser", target_host=target_host)
+        previous_action = self._active_action
+        if name in WRITE_TRIGGER_TOOLS:
+            raw_label = args.get("name") or args.get("target") or args.get("label") or name
+            action_label = re.sub(r"\\s+", " ", str(raw_label)).strip()[:120]
+            self._active_action = {"tool": name, "label": action_label or name}
         try:
             result = self._dispatch(name, args)
         except Exception as exc:
@@ -725,6 +738,8 @@ class BrowserSession:
                 fields["error_code"] = error_code
             diagnostic_event("browser_action_failed", kind="error", **fields)
             raise
+        finally:
+            self._active_action = previous_action
         succeeded = not (isinstance(result, dict) and result.get("ok") is False)
         fields = {
             "tool": name, "source": "browser", "target_host": target_host,
@@ -745,11 +760,38 @@ class BrowserSession:
         try:
             return self._executor.submit(
                 copy_context().run, self._dispatch_observed, name, args
-            ).result(timeout=45)
+            ).result(timeout=330)
         except FutureTimeout:
             diagnostic_event("browser_action_timeout", kind="error",
                              tool=name, source="browser", status="timeout")
             raise ValueError("browser_action_timeout") from None
+
+    def set_write_approval_handler(self, handler):
+        if handler is not None and not callable(handler):
+            raise ValueError("browser_write_approval_handler_invalid")
+        self._write_approval_handler = handler
+
+    def _request_write_approval(self, method, url, resource_type, action_label):
+        handler = getattr(self, "_write_approval_handler", None)
+        if not callable(handler):
+            return False
+        try:
+            page_url = self._page.url if self._page is not None else ""
+            parsed = urlsplit(url)
+            request_label = (str(method).upper() + " " + _safe_url(url))[:120]
+            details = {
+                "method": str(method).upper()[:16],
+                "url": _safe_url(url),
+                "request_label": request_label,
+                "resource_type": str(resource_type or "other")[:40],
+                "action_label": str(action_label or "browser action")[:120],
+                "page_origin": _origin(page_url),
+                "target_origin": _origin(url),
+                "path": parsed.path or "/",
+            }
+            return bool(handler(details))
+        except Exception:
+            return False
 
     def current_origin(self) -> str:
         if self._closed:
@@ -1101,7 +1143,7 @@ class BrowserSession:
             return self._executor.submit(
                 copy_context().run, self._fill_owner_input,
                 label, value, input_type, expected_origin,
-            ).result(timeout=45)
+            ).result(timeout=330)
         except FutureTimeout:
             raise ValueError("browser_action_timeout") from None
 
@@ -1396,6 +1438,40 @@ class BrowserSession:
         self._dns_cache[host] = (now, addresses)
         return True
 
+    def _fulfill_approved_write(self, route, raw):
+        self._allowed_request_count += 1
+        self._post_outcome = "result_unknown"
+        try:
+            response = route.fetch(max_redirects=0, max_retries=0, timeout=9000)
+        except Exception:
+            route.fulfill(status=502, content_type="text/plain",
+                          body="Action result unknown; verify the page before retrying.")
+            return
+        try:
+            status = response.status
+            self._post_http_status = status
+            if 300 <= status < 400:
+                location = response.headers.get("location")
+                try:
+                    if not location or status not in {301, 302, 303}:
+                        raise ValueError("unsafe_write_redirect")
+                    destination = urljoin(raw, location)
+                    validate_public_url(destination, self._authorized_hosts)
+                    if _origin(destination) != _origin(raw):
+                        raise ValueError("unsafe_write_redirect")
+                except (ValueError, OSError):
+                    self._post_outcome = "redirect_requires_manual_review"
+                    self._blocked.append({"url": _safe_url(raw),
+                                          "reason": "unsafe_write_redirect"})
+                    route.fulfill(status=409, content_type="text/plain",
+                                  body="Action redirect requires manual review.")
+                    return
+            route.fulfill(response=response)
+            self._post_outcome = ("http_response_observed" if 200 <= status < 400
+                                  else "http_error")
+        finally:
+            response.dispose()
+
     def _route(self, route):
         req = route.request
         raw = req.url
@@ -1407,57 +1483,37 @@ class BrowserSession:
             validate_public_url(raw, self._authorized_hosts)
             method = req.method.upper()
             if method not in SAFE_METHODS:
+                if method in BLOCKED_HTTP_METHODS:
+                    self._blocked.append({"url": _safe_url(raw), "method": method,
+                                          "reason": "http_protocol_method_not_allowed"})
+                    route.abort("blockedbyclient")
+                    return
                 same_origin = _origin(raw) == self._allow_post_origin
                 exact_url = (self._allow_post_url is None
                              or urlsplit(raw)._replace(fragment="").geturl() == self._allow_post_url)
-                if (method == "POST" and same_origin and exact_url
-                        and self._allow_post_remaining > 0):
+                preapproved = same_origin and exact_url and self._allow_post_remaining > 0
+                if preapproved:
                     self._allow_post_remaining -= 1
-                    self._allowed_request_count += 1
-                    self._post_outcome = "result_unknown"
-                    # Do not let a browser or HTTP client replay the POST on redirects.
-                    try:
-                        response = route.fetch(max_redirects=0, max_retries=0, timeout=9000)
-                    except Exception:
-                        route.fulfill(status=502, content_type="text/plain",
-                                      body="Form result unknown; verify manually before retrying.")
-                        return
-                    try:
-                        status = response.status
-                        self._post_http_status = status
-                        if 300 <= status < 400:
-                            location = response.headers.get("location")
-                            try:
-                                if not location or status not in {301, 302, 303}:
-                                    raise ValueError("unsafe_form_redirect")
-                                destination = urljoin(raw, location)
-                                validate_public_url(destination, self._authorized_hosts)
-                                if _origin(destination) != _origin(raw):
-                                    raise ValueError("unsafe_form_redirect")
-                            except (ValueError, OSError):
-                                self._post_outcome = "redirect_requires_manual_review"
-                                self._blocked.append({"url": _safe_url(raw),
-                                                      "reason": "unsafe_form_redirect"})
-                                route.fulfill(status=409, content_type="text/plain",
-                                              body="Form response requires manual review.")
-                                return
-                        route.fulfill(response=response)
-                        self._post_outcome = ("http_response_observed" if 200 <= status < 400
-                                              else "http_error")
-                    finally:
-                        response.dispose()
+                    self._fulfill_approved_write(route, raw)
                     return
-                else:
-                    self._blocked.append({
-                        "url": _safe_url(raw), "method": method,
-                        "reason": "write_request_requires_approved_submit",
-                        "suggested_tool": "browser_submit" if method == "POST" else None,
-                    })
-                    route.abort("blockedbyclient")
+                action = getattr(self, "_active_action", None)
+                if action and self._request_write_approval(
+                    method, raw, getattr(req, "resource_type", "other"),
+                    action.get("label", action.get("tool", "browser action")),
+                ):
+                    self._fulfill_approved_write(route, raw)
                     return
+                self._blocked.append({
+                    "url": _safe_url(raw), "method": method,
+                    "reason": ("owner_declined_or_expired" if action
+                               else "write_request_requires_owner_confirmation"),
+                })
+                route.abort("blockedbyclient")
+                return
             route.continue_()
         except (ValueError, OSError):
-            self._blocked.append({"url": _safe_url(raw), "reason": "blocked_private_or_unresolved_host"})
+            self._blocked.append({"url": _safe_url(raw),
+                                  "reason": "blocked_private_or_unresolved_host"})
             route.abort("blockedbyclient")
 
     def _frame_contexts(self, *, bounded=True):
@@ -2493,21 +2549,38 @@ class BrowserSession:
             login = not registration and bool(LOGIN_TARGET.search(
                 target_context + " " + form_path + " " + page_path
             ))
-            if name == "browser_click_button" and (
-                    HIGH_IMPACT.search(target_context) or HIGH_IMPACT.search(form_action)
-                    or (form and (registration or login))):
-                return {
-                    "ok": False, "status": "approval_required",
-                    "reason": "high_impact_button_or_form",
-                    "button": target[:180],
-                    "form_action": _safe_url(form_action) if form_action else "",
-                    "suggested_action": "user_must_complete_manually",
-                    "message": "Кнопка или форма похожа на оформление, покупку, оплату или бронирование. Для неё нужен отдельный запрос разрешения.",
-                }
+            high_impact_click = name == "browser_click_button" and (
+                HIGH_IMPACT.search(target_context) or HIGH_IMPACT.search(form_action)
+                or (form and (registration or login))
+            )
+            if high_impact_click:
+                submit_target = form_action or self._page.url
+                submit_method = str(form.get("method") or "GET").upper() if form else "ACTION"
+                validate_public_url(submit_target, self._authorized_hosts)
+                if not self._request_write_approval(
+                    submit_method, submit_target, "button", target,
+                ):
+                    return {
+                        "ok": False, "status": "owner_declined_action",
+                        "button": target[:180],
+                        "action_target": _safe_url(submit_target),
+                    }
+                if submit_method not in SAFE_METHODS:
+                    self._allow_post_origin = _origin(submit_target)
+                    self._allow_post_url = (
+                        urlsplit(submit_target)._replace(fragment="").geturl()
+                        if form else None
+                    )
+                    self._allow_post_remaining = 1
+                    self._allowed_request_count = 0
+                    self._post_http_status = None
+                    self._post_outcome = "not_observed"
+            submit_method = None
             if name in APPROVAL_TOOL_NAMES:
-                if not form or str(form.get("method") or "").lower() != "post":
-                    raise ValueError("browser_submit_requires_native_post_form")
+                if not form:
+                    raise ValueError("browser_submit_requires_native_form")
                 submit_target = form_action
+                submit_method = str(form.get("method") or "GET").upper()
                 validate_public_url(submit_target, self._authorized_hosts)
                 expected_tool = ("browser_register" if registration else
                                  "browser_login" if login else "browser_submit")
@@ -2524,19 +2597,18 @@ class BrowserSession:
                             "message": "A visible browser challenge requires human action."}
                 if not button.evaluate("el => el.form.checkValidity()"):
                     return {"ok": False, "status": "browser_form_validation_failed"}
-                if IRREVERSIBLE_SUBMIT_TARGET.search(target + " " + submit_target):
+                if not self._request_write_approval(
+                    submit_method, submit_target, "form", target,
+                ):
                     return {
-                        "ok": False, "status": "manual_action_required",
-                        "reason": "financial_or_destructive_submit_target",
+                        "ok": False, "status": "owner_declined_action",
                         "button": target[:180],
-                        "form_action": _safe_url(submit_target),
-                        "message": "Для финансового действия требуется отдельное подтверждение в защищённом диалоге Cybernova.",
+                        "action_target": _safe_url(submit_target),
                     }
-                self._allow_post_origin = _origin(submit_target)
-                # Native form action is known; keep the existing origin-limited
-                # path for script-driven buttons without a declared form action.
-                self._allow_post_url = urlsplit(submit_target)._replace(fragment="").geturl()
-                self._allow_post_remaining = 1
+                if submit_method not in SAFE_METHODS:
+                    self._allow_post_origin = _origin(submit_target)
+                    self._allow_post_url = urlsplit(submit_target)._replace(fragment="").geturl()
+                    self._allow_post_remaining = 1
                 self._allowed_request_count = 0
                 self._post_http_status = None
                 self._post_outcome = "not_observed"
@@ -2548,8 +2620,7 @@ class BrowserSession:
                 if expected_action_origin != _origin(submit_target):
                     raise ValueError("payment_action_origin_changed")
                 self._allow_post_origin = _origin(submit_target)
-                # Native form action is known; keep the existing origin-limited
-                # path for script-driven buttons without a declared form action.
+                # Payment confirmation authorizes exactly one request to this target.
                 self._allow_post_url = (urlsplit(form_action)._replace(fragment="").geturl()
                                         if form_action else None)
                 self._allow_post_remaining = 1
@@ -2567,12 +2638,15 @@ class BrowserSession:
                 except Exception:
                     pass
             finally:
-                if name in APPROVAL_TOOL_NAMES | {"browser_submit_payment"}:
+                if name in APPROVAL_TOOL_NAMES | {"browser_submit_payment", "browser_click_button"}:
                     self._allow_post_origin = None
                     self._allow_post_url = None
                     self._allow_post_remaining = 0
-            post_verified = (self._allowed_request_count == 1
-                             and self._post_outcome == "http_response_observed")
+            post_verified = (
+                submit_method in SAFE_METHODS if submit_method else
+                self._allowed_request_count == 1
+                and self._post_outcome == "http_response_observed"
+            )
             if name == "browser_submit_payment":
                 return {
                     "ok": post_verified, "payment_action_submitted": post_verified,
