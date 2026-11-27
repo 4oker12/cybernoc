@@ -828,6 +828,7 @@ class BrowserControlTests(unittest.TestCase):
                         <iframe srcdoc="<details><summary>Details</summary><p>Frame result</p></details>"></iframe>
                     """)
                     page.frame_locator("iframe").locator("summary").wait_for()
+                    self.assertNotIn("Frame result", session._dispatch("browser_read_page", {"offset": 0})["text"])
                     found = session._dispatch("browser_find_controls", {"query": "Details"})
                     target = next(item for item in found["buttons"] if item["frame_index"] == 1)
                     self.assertFalse(target["expanded"])

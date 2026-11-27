@@ -1485,6 +1485,8 @@ class BrowserSession:
                         const parent = node.parentElement;
                         if (!parent || parent.closest('script,style,noscript,template,svg,nav,header,footer,aside,' +
                             'input,textarea,select,[contenteditable],[role="textbox"],[hidden],[aria-hidden="true"]')) continue;
+                        const closed = parent.closest('details:not([open])');
+                        if (closed && !closed.querySelector(':scope > summary')?.contains(parent)) continue;
                         const style = getComputedStyle(parent);
                         if (style.display === 'none' || style.visibility === 'hidden') continue;
                         const value = (node.textContent || '').replace(/\\s+/g, ' ').trim();
@@ -1795,6 +1797,8 @@ class BrowserSession:
                 const visible = el => {
                     if (!el || !el.isConnected ||
                         el.closest('script,style,noscript,template,svg,[hidden],[aria-hidden="true"]')) return false;
+                    const closed = el.closest('details:not([open])');
+                    if (closed && !closed.querySelector(':scope > summary')?.contains(el)) return false;
                     const rect = el.getBoundingClientRect();
                     const style = getComputedStyle(el);
                     return rect.width > 0 && rect.height > 0 &&
