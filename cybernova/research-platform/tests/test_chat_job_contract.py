@@ -1,5 +1,9 @@
 """Contract between the web client, Console, and a running research turn."""
 import unittest
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from uuid import uuid4
 from unittest.mock import patch
 
@@ -27,6 +31,10 @@ class ChatJobContractTests(unittest.TestCase):
             self.assertTrue(tunnel_access.allowed_path("/api/chat/result", "POST"))
             self.assertEqual(server.start_chat_job(run, background), {"status": "running"})
             self.assertEqual(server.start_chat_job(run, background), {"status": "running"})
+            self.assertEqual(len(background.tasks), 1)
+            with self.assertRaises(HTTPException) as conflict:
+                server.start_chat_job(server.ChatJobRequest(message="other", receipt=run.receipt), background)
+            self.assertEqual(conflict.exception.status_code, 409)
             self.assertEqual(len(background.tasks), 1)
             self.assertEqual(server.chat_job_result(key)["status"], "running")
             with self.assertRaises(HTTPException) as rejected:

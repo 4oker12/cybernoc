@@ -310,6 +310,7 @@ def chat(model: str, messages: list[dict], *, user_context: str = "",
         )
     instructions += (
         "\n\n" + OPERATIONAL_CONTRACT
+        + "\n\n" + OPERATIONAL_CONTRACT
         + (("\n\n" + user_context[:8500]) if user_context else "")
         + (("\n\n" + profile_instructions[:12500]) if profile_instructions else "")
     )

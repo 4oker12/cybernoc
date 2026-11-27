@@ -234,3 +234,17 @@ This section supersedes earlier **GitHub** branch/PR snapshots above. It does no
 - `feature/account-gpt-local-tools` is an ancestor of current `main`; it is not the base for new work. Do not revive it as a new integration target.
 - No GitHub change proves that the user's Windows laptop has pulled or run these revisions. The last recorded local observation remains branch `feature/full-shell-computer-discovery`, local HEAD `28e4a35` on 2026-11-21. Recheck local root, branch, status, origin, HEAD and port/PID ownership before any local update or restart.
 - PR #21 and PR #22 remain open drafts. Neither has been merged by this update.
+
+## 14. Unified diagnostic journal
+
+The local journal records operational metadata for model turns, tool calls, isolated Chromium actions, approval decisions, owner-input lifecycle, Account GPT OAuth state transitions, Communication MCP calls and background Qwen tasks.
+
+- Each event is categorized as \`action\`, \`approval\`, \`error\`, \`model\` or \`session\`.
+- Correlation fields are \`run_id\` plus one-way SHA-256-derived \`session_ref\` and \`task_ref\`; raw session/task IDs are not written to diagnostic records.
+- Browser events retain the tool/action name, hostname, HTTP status, method, resource type and duration only. Page URLs, form values, prompts, tool arguments and result bodies are excluded.
+- Owner-input events identify only the input type and decision state. OTPs, passwords, contact values, card data, cookies and tokens are never written.
+- The authenticated export supports a filtered current task, session or run. The default UI download follows the active task/session/run; full history is a separate explicit download.
+- The full export reads the active log plus all three rotations. A task-filtered export excludes unrelated events from previous tasks and days.
+- This operational journal is separate from the EvidenceJournal and controller-generated tool receipts.
+- CI validates filtering, correlation, redaction and rotation. A local Windows runtime smoke test is still required after updating the laptop.
+

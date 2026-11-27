@@ -10,11 +10,12 @@ from __future__ import annotations
 import json
 import threading
 import time
+import uuid
 
 try:
-    from .diagnostics import event as diagnostic_event
+    from .diagnostics import event as diagnostic_event, diagnostic_context
 except ImportError:
-    from diagnostics import event as diagnostic_event
+    from diagnostics import event as diagnostic_event, diagnostic_context
 
 try:
     from .agent import Agent, MCPClient
@@ -74,8 +75,16 @@ class CommunicationWorker:
         task = self.store.claim_queued()
         if task is None:
             return None
+        with diagnostic_context(
+            run_id=uuid.uuid4().hex, task_id=task["task_id"],
+            agent="qwen", mode="researcher",
+        ):
+            return self._run_claimed(task)
+
+    def _run_claimed(self, task: dict) -> dict:
         task_id = task["task_id"]
-        diagnostic_event("background_task_start", mode="researcher")
+        diagnostic_event("background_task_start", kind="session", mode="researcher",
+                         task_id=task_id, status="running")
         started = time.monotonic()
         try:
             dialog = self.store.read_dialog(task_id, limit=100)

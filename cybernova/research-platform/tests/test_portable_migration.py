@@ -48,12 +48,18 @@ class PortableMigrationTests(unittest.TestCase):
         self.assertNotIn("131313", " ".join(args[0]))
         self.assertIn("import-backup-key", args[0])
 
-    def test_import_refuses_bad_length_or_symlink(self):
+    def test_import_refuses_bad_length(self):
         self.key.write_bytes(b"short")
         with self.assertRaises(manager.InstallError):
             manager.import_backup_key(self.key)
+    def test_import_refuses_symlink(self):
         self.key.unlink()
-        self.key.symlink_to(self.archive)
+        try:
+            self.key.symlink_to(self.archive)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Symlink privilege unavailable on this Windows runner")
+            raise
         with self.assertRaises(manager.InstallError):
             manager.import_backup_key(self.key)
 

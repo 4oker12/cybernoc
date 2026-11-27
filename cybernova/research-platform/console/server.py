@@ -12,9 +12,11 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 from threading import Lock, RLock
+from typing import Any
 import time
 from urllib import request, error, parse
 
@@ -22,6 +24,13 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
+
+try:
+    from .owner_input import owner_input_broker, OwnerInputError
+    from .account_missions import account_mission_store
+except ImportError:
+    from owner_input import owner_input_broker, OwnerInputError
+    from account_missions import account_mission_store
 
 try:
     from .agent import (
@@ -52,7 +61,11 @@ try:
     from .developer_tools import DEV_TOOLS
     from .communication_worker import CommunicationWorker
     from .evidence import EvidenceJournal
-    from .diagnostics import CHAT_PROGRESS_SINK, configure as configure_diagnostics, failure as log_failure, observe_chat, adapter_error_code
+    from .diagnostics import (
+        configure as configure_diagnostics, failure as log_failure, observe_chat,
+        adapter_error_code, diagnostic_context, diagnostic_ref,
+        event as diagnostic_event, set_context, CHAT_PROGRESS_SINK,
+    )
     from .upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from .siwc import connection as chatgpt_connection, SIWCError
     from .siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
@@ -89,7 +102,11 @@ except ImportError:
     from developer_tools import DEV_TOOLS
     from communication_worker import CommunicationWorker
     from evidence import EvidenceJournal
-    from diagnostics import CHAT_PROGRESS_SINK, configure as configure_diagnostics, failure as log_failure, observe_chat, adapter_error_code
+    from diagnostics import (
+        configure as configure_diagnostics, failure as log_failure, observe_chat,
+        adapter_error_code, diagnostic_context, diagnostic_ref,
+        event as diagnostic_event, set_context, CHAT_PROGRESS_SINK,
+    )
     from upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_PCAP_BASE64_CHARS
     from siwc import connection as chatgpt_connection, SIWCError
     from siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
@@ -276,6 +293,9 @@ async def lifespan(app):
     # Uncertain in-flight phases are blocked after restart, never replayed.
     work_item_store().recover_interrupted()
     worker = None
+    # Recover durable account missions before accepting work. Interrupted
+    # external actions are marked for reconciliation, never replayed.
+    account_mission_store().recover_interrupted()
     if os.environ.get("CYBERNOVA_COMM_WORKER", "1") == "1":
         worker = CommunicationWorker(communication_store())
         worker.start()
@@ -365,6 +385,23 @@ class ApprovalRequest(BaseModel):
     decision: str = Field(pattern="^(approve|deny)$")
 
 
+class OwnerInputSubmitRequest(BaseModel):
+    session_id: str = Field(min_length=16, max_length=120)
+    request_id: str = Field(min_length=16, max_length=80)
+    # Any is intentional: Pydantic validation errors must not echo PAN/CVV
+    # values back in a 422 response. The in-memory broker validates by request type.
+    value: Any = None
+    payment_card: Any = None
+    approved_frame_hosts: Any = None
+    decision: Any = None
+    save_to_vault: bool = False
+
+
+class OwnerInputCancelRequest(BaseModel):
+    session_id: str = Field(min_length=16, max_length=120)
+    request_id: str = Field(min_length=16, max_length=80)
+
+
 
 def _session(session_id: str | None) -> tuple[str, dict]:
     now = time.monotonic()
@@ -377,7 +414,9 @@ def _session(session_id: str | None) -> tuple[str, dict]:
             session["last"] = now
             sessions.move_to_end(session_id)
             return session_id, session
-        key = secrets.token_urlsafe(24)
+        key = (session_id if isinstance(session_id, str)
+               and re.fullmatch(r"[a-f0-9]{32}", session_id)
+               else secrets.token_urlsafe(24))
         session = {"last": now, "history": [], "lock": RLock(), "turns": 0,
                    "followups_turn": None, "followups": [], "followups_answer": None,
                    "followups_source": None, "pending_approvals": {},
@@ -935,7 +974,9 @@ def siwc_chats():
 @app.get("/api/siwc/chat")
 def siwc_chat_thread(thread_id: str):
     try:
-        return gpt_chat_store().get_thread(thread_id)
+        result = gpt_chat_store().get_thread(thread_id)
+        result["diagnostics"] = {"session_ref": diagnostic_ref("session", thread_id)}
+        return result
     except GPTChatError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
 
@@ -955,6 +996,8 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
     with gpt_turn_lock:
         store = gpt_chat_store()
         thread_id = payload.thread_id
+        set_context(session_id=thread_id or payload.run_id,
+                    agent="chatgpt", mode="account_gpt")
         user_message_seq = None
         persisted_tool_events = []
 
@@ -964,6 +1007,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 thread_id, user_message_seq = store.begin_exchange(
                     payload.thread_id, payload.model, payload.message
                 )
+                set_context(session_id=thread_id, agent="chatgpt", mode="account_gpt")
             store.save_tool_events(
                 thread_id, [event], message_seq=user_message_seq,
             )
@@ -994,6 +1038,7 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
                 thread_id = store.save_exchange(
                     payload.thread_id, payload.model, payload.message, outcome["answer"]
                 )
+                set_context(session_id=thread_id, agent="chatgpt", mode="account_gpt")
                 # Compatibility for mocked/legacy inference adapters that return
                 # events but do not invoke the incremental receipt callback.
                 store.save_tool_events(thread_id, outcome.get("tool_events", []))
@@ -1022,6 +1067,10 @@ def siwc_chat_message(payload: ChatGPTMessageRequest):
             _finish_usage_progress(payload.run_id, run_status,
                                    outcome.get("usage") if isinstance(outcome, dict) else None)
     return {"thread_id": thread_id, "model": payload.model, "run_id": payload.run_id,
+            "diagnostics": {
+                "session_ref": diagnostic_ref("session", thread_id or payload.run_id),
+                "run_id": payload.run_id,
+            },
             "answer": outcome["answer"], "source": outcome["source"],
             "tool_events": outcome.get("tool_events", []),
             "usage": outcome.get("usage"),
@@ -1050,9 +1099,13 @@ def siwc_status():
 @app.post("/api/siwc/start")
 def siwc_start():
     """A public OAuth client. Access to this endpoint is already Basic-auth gated."""
+    diagnostic_event("account_gpt_oauth_start", kind="action", component="account_gpt", status="started")
     try:
-        return chatgpt_connection.start()
+        result = chatgpt_connection.start()
+        diagnostic_event("account_gpt_oauth_start_completed", kind="action", component="account_gpt", status="ok")
+        return result
     except SIWCError as exc:
+        diagnostic_event("account_gpt_oauth_start_failed", kind="error", component="account_gpt", status="failed", error_type=type(exc).__name__)
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
@@ -1063,8 +1116,10 @@ def siwc_callback(code: str | None = None, state: str | None = None,
     try:
         chatgpt_connection.finish({"code": code, "state": state,
                                    "client_id": client_id, "error": error})
-    except SIWCError:
+    except SIWCError as exc:
+        diagnostic_event("account_gpt_oauth_callback_failed", kind="error", component="account_gpt", status="failed", error_type=type(exc).__name__)
         return RedirectResponse(url="/?chatgpt=error", status_code=303)
+    diagnostic_event("account_gpt_oauth_callback_completed", kind="approval", component="account_gpt", status="connected")
     return RedirectResponse(url="/?chatgpt=connected", status_code=303)
 
 
@@ -1091,10 +1146,14 @@ def siwc_review(payload: ChatGPTReviewRequest):
             raise HTTPException(status_code=409, detail="task_not_selected")
     try:
         profile = profile_settings_store().load()
-        outcome = chatgpt_review(
-            payload.model, payload.prompt,
-            user_context=user_context_for(profile, "chatgpt"),
-        )
+        with diagnostic_context(session_id=payload.session_id, task_id=task_id,
+                                agent="chatgpt", mode="account_gpt"):
+            diagnostic_event("account_gpt_review_start", kind="model", status="running")
+            outcome = chatgpt_review(
+                payload.model, payload.prompt,
+                user_context=user_context_for(profile, "chatgpt"),
+            )
+            diagnostic_event("account_gpt_review_completed", kind="model", status="ok")
     except ProfileSettingsError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from None
     except SIWCError as exc:
@@ -1110,8 +1169,11 @@ def siwc_review(payload: ChatGPTReviewRequest):
 @app.post("/api/siwc/disconnect")
 def siwc_disconnect():
     try:
-        return chatgpt_connection.disconnect()
+        result = chatgpt_connection.disconnect()
+        diagnostic_event("account_gpt_disconnected", kind="session", component="account_gpt", status="disconnected")
+        return result
     except SIWCError as exc:
+        diagnostic_event("account_gpt_disconnect_failed", kind="error", component="account_gpt", status="failed", error_type=type(exc).__name__)
         raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
@@ -1228,7 +1290,14 @@ def import_artifact(payload: ImportRequest):
             state["task_id"], "controller", "system",
             "Артефакт импортирован офлайн: " + json.dumps(summary, ensure_ascii=False),
         )
-    return {"session_id": sid, "task_id": state["task_id"], **summary}
+    with diagnostic_context(session_id=sid, task_id=state["task_id"],
+                            agent="owner", mode="import"):
+        diagnostic_event("artifact_imported", kind="action", operation=payload.kind, status="ok")
+    return {"session_id": sid, "task_id": state["task_id"],
+            "diagnostics": {
+                "session_ref": diagnostic_ref("session", sid),
+                "task_ref": diagnostic_ref("task", state["task_id"]),
+            }, **summary}
 
 
 @app.post("/api/research/scope")
@@ -1241,8 +1310,12 @@ def configure_research_scope(payload: ResearchScopeRequest):
     sid, state = _session(payload.session_id)
     with state["lock"]:
         state["scope"] = profile
-        if state.get("task_id"):
-            research_scope_store().save(state["task_id"], profile)
+        task_id = state.get("task_id")
+        if task_id:
+            research_scope_store().save(task_id, profile)
+    with diagnostic_context(session_id=sid, task_id=task_id,
+                            agent="owner", mode="research_scope"):
+        diagnostic_event("research_scope_updated", kind="action", status="ok")
     return {"session_id": sid, "scope": profile, "applies_to": "qwen_research_only"}
 
 
@@ -1251,6 +1324,73 @@ def get_research_scope(session_id: str | None = None):
     sid, state = _session(session_id)
     with state["lock"]:
         return {"session_id": sid, "scope": state["scope"]}
+
+
+@app.get("/api/owner-input/pending")
+def owner_input_pending(session_id: str):
+    with sessions_lock:
+        if session_id not in sessions:
+            raise HTTPException(status_code=404, detail="session_not_found")
+    try:
+        pending = owner_input_broker.pending("deepseek:" + session_id)
+    except OwnerInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return {"pending": pending}
+
+
+@app.post("/api/owner-input/submit")
+def owner_input_submit(payload: OwnerInputSubmitRequest):
+    with sessions_lock:
+        state = sessions.get(payload.session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    raw_card = payload.payment_card
+    try:
+        with diagnostic_context(session_id=payload.session_id, task_id=state.get("task_id"),
+                                agent="owner", mode="owner_input"):
+            pending = {}
+            try:
+                pending = owner_input_broker.pending("deepseek:" + payload.session_id) or {}
+                result = owner_input_broker.submit(
+                    "deepseek:" + payload.session_id, payload.request_id, payload.value,
+                    save_to_vault=payload.save_to_vault,
+                    payment_card=raw_card,
+                    approved_frame_hosts=payload.approved_frame_hosts,
+                    decision=payload.decision,
+                )
+                diagnostic_event("owner_input_submit_completed", kind="approval",
+                                 input_type=pending.get("input_type", "unknown"), status="ok")
+                return result
+            except OwnerInputError as exc:
+                diagnostic_event("owner_input_submit_failed", kind="error",
+                                 input_type=pending.get("input_type", "unknown"),
+                                 status="failed", error_type=type(exc).__name__)
+                raise HTTPException(status_code=422, detail=str(exc)) from None
+    finally:
+        # Drop the request-model reference as soon as the broker has copied and
+        # validated the one-time fields. No card payload is logged or persisted.
+        if isinstance(raw_card, dict):
+            for key in list(raw_card):
+                raw_card[key] = ""
+            raw_card.clear()
+
+
+@app.post("/api/owner-input/cancel")
+def owner_input_cancel(payload: OwnerInputCancelRequest):
+    with sessions_lock:
+        state = sessions.get(payload.session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    with diagnostic_context(session_id=payload.session_id, task_id=state.get("task_id"),
+                            agent="owner", mode="owner_input"):
+        try:
+            return owner_input_broker.cancel(
+                "deepseek:" + payload.session_id, payload.request_id
+            )
+        except OwnerInputError as exc:
+            diagnostic_event("owner_input_cancel_failed", kind="error",
+                             status="failed", error_type=type(exc).__name__)
+            raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 @app.post("/api/chat")
@@ -1267,6 +1407,9 @@ def chat(payload: ChatRequest):
             )["task_id"]
             research_scope_store().save(state["task_id"], state["scope"])
         task_id = state["task_id"]
+        set_context(session_id=sid, task_id=task_id,
+                    agent="deepseek", mode="researcher")
+        diagnostic_event("task_turn_started", kind="session", status="running")
         # Include ChatGPT feedback and background Qwen results which arrived
         # while the browser was open, instead of using stale in-memory history.
         previous = store.read_dialog(task_id, limit=100)["messages"]
@@ -1332,6 +1475,9 @@ def chat(payload: ChatRequest):
         history_reasoning_content = outcome.pop("_history_reasoning_content", None)
         # Raw arguments are never exposed in the chat response.
         requests = outcome.pop("approval_requests", [])
+        for request_item in requests[:6]:
+            diagnostic_event("approval_requested", kind="approval",
+                             tool=request_item.get("tool", "unknown"), status="pending")
         EvidenceJournal(store).record_tool_events(
             task_id, outcome.get("events") or [],
         )
@@ -1356,12 +1502,17 @@ def chat(payload: ChatRequest):
             status=final_status,
             provider_state=_provider_state_payload(agent.ollama, history_reasoning_content),
         )
-        return {"session_id": sid, "task_id": task_id, "event_seq": event["seq"],
-                "turn": state["turns"], "run_id": payload.run_id, **outcome}
+    return {"session_id": sid, "task_id": task_id, "event_seq": event["seq"],
+            "turn": state["turns"], "run_id": payload.run_id,
+            "diagnostics": {
+                "session_ref": diagnostic_ref("session", sid),
+                "task_ref": diagnostic_ref("task", task_id),
+                "run_id": payload.run_id,
+            }, **outcome}
 
 
 chat_jobs: OrderedDict[str, dict] = OrderedDict()
-chat_jobs_lock = Lock()
+chat_jobs_lock = RLock()
 
 
 class ChatJobReceipt(BaseModel):
@@ -1374,7 +1525,7 @@ class ChatJobRequest(ChatRequest, ChatJobReceipt):
 
 def _complete_chat_job(payload: ChatJobRequest):
     def publish(event):
-        if event["event"] not in {"model_request_start", "tool_call_start", "tool_call_completed"}:
+        if event["event"] not in {"model_request_start", "tool_call_start", "tool_call_completed", "tool_call_failed"}:
             return
         progress = {key: event[key] for key in ("event", "tool", "status") if key in event}
         with chat_jobs_lock:
@@ -1384,7 +1535,7 @@ def _complete_chat_job(payload: ChatJobRequest):
     try:
         result = {"status": "completed", "result": chat(payload)}
     except HTTPException as exc:
-        result = {"status": "failed", "detail": exc.detail}
+        result = {"status": "failed", "detail": "chat_job_failed", "http_status": exc.status_code}
     except Exception:
         result = {"status": "failed", "detail": "chat_job_failed"}
     finally:
@@ -1421,33 +1572,6 @@ def chat_job_result(payload: ChatJobReceipt):
         return dict(job)
 
 
-@app.post("/api/chat/protected-input")
-async def chat_protected_input(request: Request):
-    try:
-        payload = await request.json()
-    except ValueError:
-        raise HTTPException(status_code=422, detail="invalid_protected_input") from None
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=422, detail="invalid_protected_input")
-    session_id, ticket, value = (payload.get(key) for key in ("session_id", "ticket", "value"))
-    if (not all(isinstance(item, str) for item in (session_id, ticket, value))
-            or not 1 <= len(value) <= 512 or len(ticket) != 48):
-        raise HTTPException(status_code=422, detail="invalid_protected_input")
-    with sessions_lock:
-        state = sessions.get(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="session_not_found")
-
-    def fill():
-        with state["lock"]:
-            return deepseek_tool_runtime.provide_protected_input("deepseek:" + session_id, ticket, value)
-
-    try:
-        return await run_in_threadpool(fill)
-    except Exception:
-        raise HTTPException(status_code=409, detail="protected_input_not_applied") from None
-
-
 @app.post("/api/approve")
 def approve(payload: ApprovalRequest):
     """One-shot human authorization, bound to session, call, exact args and turn."""
@@ -1460,10 +1584,22 @@ def approve(payload: ApprovalRequest):
         if item is None:
             raise HTTPException(status_code=404, detail="approval_not_found_or_used")
         if item["turn"] != state["turns"]:
+            with diagnostic_context(session_id=payload.session_id, task_id=state.get("task_id"),
+                                    agent="owner", mode="approval"):
+                diagnostic_event("approval_rejected", kind="approval", tool=item["tool"],
+                                 status="stale", decision="rejected")
             raise HTTPException(status_code=409, detail="approval_from_previous_turn")
         if time.time() - item["created_at"] > APPROVAL_TTL_SECONDS:
+            with diagnostic_context(session_id=payload.session_id, task_id=state.get("task_id"),
+                                    agent="owner", mode="approval"):
+                diagnostic_event("approval_rejected", kind="approval", tool=item["tool"],
+                                 status="expired", decision="rejected")
             raise HTTPException(status_code=410, detail="approval_expired")
         if payload.decision == "deny":
+            with diagnostic_context(run_id=secrets.token_hex(16), session_id=payload.session_id,
+                                    task_id=state.get("task_id"), agent="owner", mode="approval"):
+                diagnostic_event("approval_decided", kind="approval", tool=item["tool"],
+                                 status="denied", decision="denied")
             communication_store().append(
                 state["task_id"], "human", "decision",
                 "Отклонён вызов " + item["tool"],
@@ -1481,8 +1617,18 @@ def approve(payload: ApprovalRequest):
                     communication_store(), state["task_id"]),
                 local_tool_runtime=deepseek_tool_runtime,
             )
-            result = current_agent.execute_approved(item, state["history"])
+            with diagnostic_context(run_id=secrets.token_hex(16), session_id=payload.session_id,
+                                    task_id=state.get("task_id"), agent="deepseek", mode="approval"):
+                diagnostic_event("approval_decided", kind="approval", tool=item["tool"],
+                                 status="approved", decision="approved")
+                result = current_agent.execute_approved(item, state["history"])
+                diagnostic_event("approved_tool_completed", kind="action", tool=item["tool"],
+                                 status="ok")
         except Exception as exc:
+            with diagnostic_context(session_id=payload.session_id, task_id=state.get("task_id"),
+                                    agent="deepseek", mode="approval"):
+                diagnostic_event("approved_tool_failed", kind="error", tool=item["tool"],
+                                 status="failed", error_type=type(exc).__name__)
             raise HTTPException(
                 status_code=502, detail="approved_action_failed: " + type(exc).__name__
             ) from exc
@@ -1633,8 +1779,15 @@ def communication_resume(payload: ResumeTaskRequest):
             ))
         state["history"] = restored_history[-MAX_HISTORY:]
         state["turns"] = len([x for x in state["history"] if x["role"] == "assistant"])
+    with diagnostic_context(session_id=sid, task_id=payload.task_id,
+                            agent="owner", mode="session"):
+        diagnostic_event("task_resumed", kind="session", status="active")
     return {"session_id": sid, "task": task, "scope": state["scope"],
-            "messages": dialog["messages"], "turn": state["turns"]}
+            "messages": dialog["messages"], "turn": state["turns"],
+            "diagnostics": {
+                "session_ref": diagnostic_ref("session", sid),
+                "task_ref": diagnostic_ref("task", payload.task_id),
+            }}
 
 
 @app.post("/api/followups")
@@ -1707,8 +1860,11 @@ def followups(payload: FollowupsRequest):
 @app.post("/api/reset")
 def reset(payload: ResetRequest):
     with sessions_lock:
-        if payload.session_id in sessions:
-            sessions.pop(payload.session_id)
+        state = sessions.pop(payload.session_id, None)
+    if state is not None:
+        with diagnostic_context(session_id=payload.session_id, task_id=state.get("task_id"),
+                                agent="owner", mode="session"):
+            diagnostic_event("session_ended", kind="session", status="closed")
     return {"ok": True, "message": "Session cleared"}
 
 

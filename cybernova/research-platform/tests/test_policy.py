@@ -9,8 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.policy import evaluate_action, validate_catalog, validate_plan, validate_engagement
 
 ROOT = Path(__file__).resolve().parents[1]
-CATALOG = json.loads((ROOT / "tools" / "catalog.json").read_text())
-EXAMPLE = json.loads((ROOT / "profiles" / "simnet.example.json").read_text())
+CATALOG = json.loads((ROOT / "tools" / "catalog.json").read_text(encoding="utf-8"))
+EXAMPLE = json.loads((ROOT / "profiles" / "simnet.example.json").read_text(encoding="utf-8"))
 
 
 def approved():

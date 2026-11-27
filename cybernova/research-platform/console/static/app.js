@@ -3,6 +3,7 @@
 const $=id=>document.getElementById(id);
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const state={sessionId:null,taskId:null,lastSeq:0,running:false,qwenRunning:false,gptRunning:false,collabRunning:false,turns:0,
+  diagnostics:{qwen:{session_ref:null,task_ref:null,run_id:null},gpt:{session_ref:null,task_ref:null,run_id:null}},
   uploadLimit:MAX_UPLOAD_BYTES,mode:"qwen",qwenModel:"Активная модель",
   gptThreadId:null,gptConnected:false,gptPlanUsage:false,
   researchScope:{hosts:[],capture_detail:"evidence"},profileSettings:null,
@@ -12,10 +13,12 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,qwenRunning:fals
     gpt:{input:0,output:0,total:0,measuredTurns:0}
   },
   lastUsage:{qwen:null,gpt:null},
-  collabRun:null,collabRunning:false,collabLoopTasks:new Set(),collabStopRequests:new Set(),collabActivity:new Map(),
+  collabRun:null,collabLooping:false,collabStopRequested:false,
+  collabRunning:false,collabLoopTasks:new Set(),collabStopRequests:new Set(),collabActivity:new Map(),
   collabWorkByTask:new Map(),collabWorkLoops:new Set(),
   collabWorkRenderedTask:null,collabWorkRenderedSignature:null,
-  collabWorkExpanded:new Set(),collabActivityExpanded:new Set()};
+  collabWorkExpanded:new Set(),collabActivityExpanded:new Set(),
+  ownerInputTimer:null,ownerInputRequestId:null,ownerInputType:null};
 const descriptions={
   gateway_status:"Шлюз MCP",
   local_webui_health:"Проверка Console API / MCP",
@@ -370,6 +373,7 @@ async function importArtifact(file){
     });
     state.sessionId=result.session_id;
     state.taskId=result.task_id||state.taskId;
+    setDiagnosticsContext(result.diagnostics||{},"qwen");
     void refreshChatGPT();
     void refreshTaskList();
     $("welcome")?.remove();
@@ -560,9 +564,74 @@ function renderToolPicker(groups){
 }
 function newRunId(){
   if(window.crypto?.randomUUID)return window.crypto.randomUUID().replace(/-/g,"");
-  return Array.from(window.crypto.getRandomValues(new Uint8Array(16)),
-    value=>value.toString(16).padStart(2,"0")).join("");
+  if(window.crypto?.getRandomValues){
+    const bytes=new Uint8Array(16);window.crypto.getRandomValues(bytes);
+    return Array.from(bytes,x=>x.toString(16).padStart(2,"0")).join("");
+  }
+  throw Error("Secure random generator unavailable");
 }
+
+function activeDiagnosticsContext(){
+  return state.mode==="gpt"?state.diagnostics.gpt:state.diagnostics.qwen;
+}
+function diagnosticsHref(scope,context=activeDiagnosticsContext()){
+  const params=new URLSearchParams();
+  if(scope==="task"&&context.task_ref)params.set("task_ref",context.task_ref);
+  else if(scope==="session"&&context.session_ref)params.set("session_ref",context.session_ref);
+  else if(scope==="run"&&context.run_id)params.set("run_id",context.run_id);
+  const query=params.toString();
+  return "/api/diagnostics/export"+(query?"?"+query:"");
+}
+function setDiagnosticsContext(value,mode=state.mode){
+  const key=mode==="gpt"?"gpt":"qwen";
+  const source=value&&typeof value==="object"?value:{};
+  state.diagnostics[key]={
+    session_ref:typeof source.session_ref==="string"?source.session_ref:null,
+    task_ref:typeof source.task_ref==="string"?source.task_ref:null,
+    run_id:typeof source.run_id==="string"?source.run_id:null
+  };
+  updateDiagnosticsLinks();
+}
+function updateDiagnosticsLinks(){
+  const context=activeDiagnosticsContext();
+  const scope=context.task_ref?"task":context.session_ref?"session":context.run_id?"run":null;
+  const href=scope?diagnosticsHref(scope,context):null;
+  for(const id of ["chatDiagnosticsDownload","diagnosticsDownload"]){
+    const link=$(id);
+    if(!link)continue;
+    if(href){
+      link.href=href;
+      link.setAttribute("aria-disabled","false");
+      link.download=scope==="task"?"cybernova-diagnostics-task.jsonl":
+        scope==="session"?"cybernova-diagnostics-session.jsonl":"cybernova-diagnostics-run.jsonl";
+    }else{
+      if(typeof link.removeAttribute==="function")link.removeAttribute("href");else link.href="#";
+      link.setAttribute("aria-disabled","true");
+    }
+    if(id==="diagnosticsDownload"){
+      link.textContent=scope==="task"?"Скачать журнал текущей задачи (.jsonl)":
+        scope==="session"?"Скачать журнал текущей сессии (.jsonl)":
+        scope==="run"?"Скачать журнал текущего запуска (.jsonl)":
+        "Сначала запусти задачу для выгрузки журнала";
+    }
+  }
+  const runLink=$("diagnosticsRunDownload");
+  if(runLink){
+    if(context.run_id){
+      runLink.href=diagnosticsHref("run",context);
+      runLink.setAttribute("aria-disabled","false");
+    }else{
+      if(typeof runLink.removeAttribute==="function")runLink.removeAttribute("href");else runLink.href="#";
+      runLink.setAttribute("aria-disabled","true");
+    }
+  }
+  const fullLink=$("diagnosticsDownloadAll");
+  if(fullLink){
+    fullLink.href="/api/diagnostics/export";
+    fullLink.setAttribute("aria-disabled","false");
+  }
+}
+
 async function watchUsageProgress(runId,mode="qwen"){
   const isRunning=()=>mode==="gpt"?state.gptRunning:state.qwenRunning;
   const started=Date.now();
@@ -628,7 +697,7 @@ async function requestChatTurn(data,pending){
       pending.body.textContent="Ожидаем ответ модели…";
     }else if(progress?.event==="tool_call_start"&&progress.tool){
       pending.body.textContent="Выполняется инструмент "+progress.tool+"…";
-    }else if(progress?.event==="tool_call_completed"&&progress.tool){
+    }else if(["tool_call_completed","tool_call_failed"].includes(progress?.event)&&progress.tool){
       pending.body.textContent=progress.tool+(progress.status==="ok"?" завершил работу.":" завершился с ошибкой.");
     }else if(!accepted||failures){
       pending.body.textContent="Задача принята. Ожидаем результат…";
@@ -637,6 +706,216 @@ async function requestChatTurn(data,pending){
     failures=0;
   }
   throw Error("Истекло время ожидания результата. Задача может продолжаться на сервере.");
+}
+function resetOwnerInputValues(){
+  $("ownerInputValue").value="";
+  $("ownerInputSaveToVault").checked=false;
+  $("ownerInputPaymentFields").replaceChildren();
+  $("ownerInputPaymentFrameList").replaceChildren();
+  $("ownerInputPaymentFrames").hidden=true;
+  $("ownerInputPaymentFields").hidden=true;
+  $("ownerInputPaymentMerchant").hidden=true;
+  $("ownerInputConfirmationPanel").hidden=true;
+  $("ownerInputSingleField").hidden=false;
+  $("ownerInputVaultOption").hidden=true;
+}
+function renderOwnerPaymentFields(item){
+  const container=$("ownerInputPaymentFields");
+  container.replaceChildren();
+  const available=new Set(item.payment_fields||[]);
+  const configs=[
+    ["cardholder_name","Имя владельца карты","text","text",80],
+    ["card_number","Номер банковской карты","password","numeric",23],
+    ["expiry_month","Месяц окончания (MM)","text","numeric",2],
+    ["expiry_year","Год окончания (YY или YYYY)","text","numeric",4],
+    ["cvv","CVV / CVC","password","numeric",4],
+    ["billing_address_line1","Платёжный адрес, строка 1","text","text",120],
+    ["billing_city","Город платёжного адреса","text","text",80],
+    ["billing_region","Область / штат","text","text",80],
+    ["billing_country","Страна платёжного адреса","text","text",80],
+    ["billing_postal_code","Почтовый индекс для оплаты","text","text",20]
+  ];
+  for(const [key,label,type,inputMode,maxLength] of configs){
+    const needed=available.has(key)||
+      ((key==="expiry_month"||key==="expiry_year")&&
+       (available.has("expiry")||available.has("expiry_month")||available.has("expiry_year")));
+    if(!needed)continue;
+    const wrap=document.createElement("div");
+    wrap.className="owner-payment-field";
+    const caption=document.createElement("label");
+    const id="ownerPayment_"+key;
+    caption.htmlFor=id;
+    caption.textContent=label;
+    const input=document.createElement("input");
+    input.id=id;
+    input.type=type;
+    input.inputMode=inputMode;
+    input.maxLength=maxLength;
+    input.autocomplete="off";
+    input.spellcheck=false;
+    input.required=true;
+    input.dataset.paymentField=key;
+    if(key==="expiry_month")input.placeholder="MM";
+    if(key==="expiry_year")input.placeholder="YY";
+    wrap.append(caption,input);
+    container.append(wrap);
+  }
+  container.hidden=false;
+  const first=container.querySelector("[data-payment-field='card_number']")||
+    container.querySelector("input");
+  first?.focus();
+}
+function renderOwnerPaymentFrames(item){
+  const container=$("ownerInputPaymentFrames"),list=$("ownerInputPaymentFrameList");
+  list.replaceChildren();
+  const hosts=Array.isArray(item.payment_frame_hosts)?item.payment_frame_hosts:[];
+  container.hidden=hosts.length===0;
+  for(const host of hosts){
+    const label=document.createElement("label");
+    label.className="owner-payment-frame-option";
+    const checkbox=document.createElement("input");
+    checkbox.type="checkbox";
+    checkbox.dataset.paymentFrameHost=host;
+    const text=document.createElement("span");
+    text.textContent="Разрешить платёжной форме на "+host+" получить данные карты";
+    label.append(checkbox,text);
+    list.append(label);
+  }
+}
+async function pollOwnerInput(){
+  if(!state.sessionId)return;
+  try{
+    const response=await fetch("/api/owner-input/pending?session_id="+encodeURIComponent(state.sessionId),{cache:"no-store"});
+    if(!response.ok)return;
+    const data=await response.json(),item=data.pending;
+    if(!item||item.request_id===state.ownerInputRequestId)return;
+    state.ownerInputRequestId=item.request_id;
+    state.ownerInputType=item.input_type;
+    resetOwnerInputValues();
+    $("ownerInputPurpose").textContent=item.purpose||"Нужны данные владельца";
+    $("ownerInputFieldLabel").textContent=item.field_label||"Значение";
+    $("ownerInputError").textContent="";
+    const type=item.input_type;
+    $("ownerInputCancel").textContent=
+      type==="payment_confirmation"?"Отклонить действие":
+      type==="payment_card"?"Отмена":"Отмена задачи";
+    if(type==="payment_card"){
+      $("ownerInputSingleField").hidden=true;
+      $("ownerInputVaultOption").hidden=true;
+      $("ownerInputPaymentMerchant").textContent="Сайт: "+(item.expected_origin||"Не определён");
+      $("ownerInputPaymentMerchant").hidden=false;
+      $("ownerInputNote").textContent=
+        "Данные карты передаются только в указанную платёжную форму и отмеченные платёжные домены. Cybernova не сохраняет номер карты и CVV, не добавляет их в историю и не передаёт модели.";
+      $("ownerInputSubmit").textContent="Передать и заполнить форму";
+      renderOwnerPaymentFields(item);
+      renderOwnerPaymentFrames(item);
+    }else if(type==="payment_confirmation"){
+      $("ownerInputSingleField").hidden=true;
+      $("ownerInputConfirmationPanel").hidden=false;
+      $("ownerInputMerchantOrigin").textContent=item.expected_origin||"Не определён";
+      $("ownerInputActionButton").textContent=item.action_button||item.field_label||"Неизвестная кнопка";
+      $("ownerInputActionOrigin").textContent=item.action_origin||"Не определён";
+      $("ownerInputActionSummary").textContent=item.purpose||"Описание не предоставлено";
+      $("ownerInputNote").textContent=
+        "Подтверждение разрешает ровно одну отправку указанной формы. Если сумма, периодичность или назначение не совпадают с ожиданиями — откажи.";
+      $("ownerInputSubmit").textContent="Подтвердить действие";
+    }else{
+      const input=$("ownerInputValue");
+      input.value="";
+      input.type=type==="password"?"password":"text";
+      input.inputMode=type==="otp"?"numeric":(type==="contact"?"email":"text");
+      input.maxLength=type==="otp"?8:512;
+      input.autocomplete="off";
+      $("ownerInputVaultOption").hidden=!(type==="password"&&item.vault_save_available===true);
+      $("ownerInputSaveToVault").checked=false;
+      $("ownerInputVaultLabel").textContent=item.account_label?
+        "Сохранить пароль для "+item.account_label+" в зашифрованном хранилище Cybernova":
+        "Сохранить пароль в зашифрованном хранилище Cybernova";
+      $("ownerInputNote").textContent=
+        "Введённое значение передаётся локальному исполнителю и не добавляется в переписку. Сохранение пароля возможно только при отдельном выборе выше.";
+      $("ownerInputSubmit").textContent="Передать и продолжить";
+      input.focus();
+    }
+    $("ownerInputDialog").showModal();
+  }catch(_){}
+}
+function startOwnerInputPolling(){
+  if(state.ownerInputTimer)clearInterval(state.ownerInputTimer);
+  state.ownerInputTimer=setInterval(pollOwnerInput,900);
+}
+function stopOwnerInputPolling(){
+  if(state.ownerInputTimer){clearInterval(state.ownerInputTimer);state.ownerInputTimer=null;}
+}
+async function submitOwnerInput(){
+  if(!state.sessionId||!state.ownerInputRequestId)return;
+  const type=state.ownerInputType;
+  let paymentCardPayload=null;
+  let payload={session_id:state.sessionId,request_id:state.ownerInputRequestId};
+  if(type==="payment_card"){
+    const card={};
+    for(const input of $("ownerInputPaymentFields").querySelectorAll("[data-payment-field]")){
+      card[input.dataset.paymentField]=input.value;
+      if(!input.value.trim()){
+        $("ownerInputError").textContent="Заполни все поля, показанные для этой платёжной формы.";
+        input.focus();
+        return;
+      }
+    }
+    const frameChecks=[...$("ownerInputPaymentFrameList").querySelectorAll("[data-payment-frame-host]")];
+    const notApproved=frameChecks.find(item=>!item.checked);
+    if(notApproved){
+      $("ownerInputError").textContent="Подтверди платёжный домен "+notApproved.dataset.paymentFrameHost+" или отмени передачу данных.";
+      return;
+    }
+    paymentCardPayload=card;
+    payload.payment_card=paymentCardPayload;
+    payload.approved_frame_hosts=frameChecks.map(item=>item.dataset.paymentFrameHost);
+  }else if(type==="payment_confirmation"){
+    payload.decision=true;
+  }else{
+    const value=$("ownerInputValue").value;
+    if(!value)return;
+    payload.value=value;
+    payload.save_to_vault=$("ownerInputSaveToVault").checked;
+  }
+  $("ownerInputSubmit").disabled=true;
+  try{
+    const response=await fetch("/api/owner-input/submit",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      cache:"no-store",credentials:"same-origin",referrerPolicy:"no-referrer",
+      body:JSON.stringify(payload)
+    });
+    const data=await response.json();
+    if(!response.ok)throw Error(data.detail||"Не удалось передать данные");
+    $("ownerInputDialog").close();
+    resetOwnerInputValues();
+    state.ownerInputRequestId=null;
+    state.ownerInputType=null;
+    payload=null;
+  }catch(error){
+    $("ownerInputError").textContent=String(error.message||error);
+  }finally{
+    if(paymentCardPayload){
+      for(const key of Object.keys(paymentCardPayload))paymentCardPayload[key]="";
+      Object.keys(paymentCardPayload).forEach(key=>delete paymentCardPayload[key]);
+      paymentCardPayload=null;
+    }
+    $("ownerInputSubmit").disabled=false;
+  }
+}
+async function cancelOwnerInput(){
+  if(!state.sessionId||!state.ownerInputRequestId)return;
+  try{
+    await fetch("/api/owner-input/cancel",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({session_id:state.sessionId,request_id:state.ownerInputRequestId}),
+      cache:"no-store",credentials:"same-origin",referrerPolicy:"no-referrer"
+    });
+  }catch(_){}
+  $("ownerInputDialog").close();
+  resetOwnerInputValues();
+  state.ownerInputRequestId=null;
+  state.ownerInputType=null;
 }
 async function send(){
   if(state.mode==="collab")return sendCollabMessage();
@@ -649,6 +928,9 @@ async function send(){
   resizeComposer();
   const pending=renderMessage("assistant",(state.qwenModel||"Модель")+" формирует ответ…",true);
   const runId=newRunId();
+  setDiagnosticsContext({...state.diagnostics.qwen,run_id:runId},"qwen");
+  state.sessionId=state.sessionId||newRunId();
+  startOwnerInputPolling();
   busy(true,"qwen");
   const usageWatch=watchUsageProgress(runId,"qwen");
   try{
@@ -658,6 +940,7 @@ async function send(){
     },pending);
     state.sessionId=result.session_id;
     state.taskId=result.task_id||state.taskId;
+    setDiagnosticsContext(result.diagnostics||{run_id:runId},"qwen");
     state.lastSeq=Math.max(state.lastSeq,result.event_seq||0);
     state.turns=result.turn||state.turns+1;
     pending.wrap.classList.remove("working");
@@ -691,6 +974,10 @@ async function send(){
     pending.body.textContent="Ошибка: "+String(exc.message||exc)+" | ID: "+runId;
     $("sendStatus").textContent="Ошибка подключения";
   }finally{
+    stopOwnerInputPolling();
+    if($("ownerInputDialog").open)$("ownerInputDialog").close();
+    $("ownerInputValue").value="";
+    state.ownerInputRequestId=null;
     busy(false,"qwen");await usageWatch;$("messageInput").focus();toBottom();
   }
 }
@@ -775,6 +1062,7 @@ function gptWelcome(){
 function setMode(mode){
   if(!["qwen","gpt","collab"].includes(mode))return;
   state.mode=mode;
+  updateDiagnosticsLinks();
   const qwen=mode==="qwen",gpt=mode==="gpt",collab=mode==="collab";
   const collabWritable=!!state.collabRun&&["active","paused"].includes(state.collabRun.state);
   $("messageInput").disabled=collab?!collabWritable:false;
@@ -851,6 +1139,7 @@ async function openGPTThread(threadId){
     const data=await response.json();
     if(!response.ok)throw Error(data.detail||"Не удалось загрузить диалог");
     state.gptThreadId=threadId;
+    setDiagnosticsContext(data.diagnostics||{session_ref:null},"gpt");
     resetUsage("gpt");
     $("gptMessages").replaceChildren();
     const savedToolEvents=data.tool_events||[];
@@ -890,6 +1179,7 @@ async function sendGPT(){
   resizeComposer();
   const pending=renderMessage("chatgpt","ChatGPT формирует ответ…",true,"gptMessages");
   const runId=newRunId();
+  setDiagnosticsContext({...state.diagnostics.gpt,run_id:runId},"gpt");
   busy(true,"gpt");
   const usageWatch=watchUsageProgress(runId,"gpt");
   try{
@@ -898,6 +1188,7 @@ async function sendGPT(){
       tools_enabled:state.toolsEnabled,run_id:runId
     });
     state.gptThreadId=result.thread_id;
+    setDiagnosticsContext(result.diagnostics||{run_id:runId},"gpt");
     pending.wrap.classList.remove("working");
     setFormatted(pending.body,result.answer||"Ответ модели пуст.");
     recordUsage(result.usage,"gpt",pending);
@@ -1026,6 +1317,7 @@ async function resumeTask(taskId){
     const result=await requestJson("/api/comm/resume",{task_id:taskId});
     state.sessionId=result.session_id;
     state.taskId=result.task.task_id;
+    setDiagnosticsContext(result.diagnostics||{},"qwen");
     showResearchScope(result.scope);
     lastGptReview=null;
     $("chatgptToQwen").disabled=true;
@@ -1272,6 +1564,7 @@ async function disconnectChatGPT(){
     lastGptReview=null;
     $("chatgptToQwen").disabled=true;
     state.gptThreadId=null;
+    setDiagnosticsContext({},"gpt");
     gptWelcome();
     await refreshChatGPT();
     if(result.remote_revocation_warning)
@@ -1376,6 +1669,7 @@ async function reset(){
   }
   if(state.mode==="gpt"){
     state.gptThreadId=null;
+    setDiagnosticsContext({},"gpt");
     resetUsage("gpt");
     gptWelcome();
     $("messageInput").value="";
@@ -1391,6 +1685,7 @@ async function reset(){
   }
   state.sessionId=null;
   state.taskId=null;
+  setDiagnosticsContext({},"qwen");
   resetUsage("qwen");
   showResearchScope({hosts:[],capture_detail:"evidence"});
   lastGptReview=null;
@@ -2045,6 +2340,7 @@ function init(){
   }catch(_){state.toolGroups=[];savedEnabled="true";}
   state.toolsEnabled=savedEnabled===null?true:savedEnabled==="true";
   renderToolPicker([]);
+  updateDiagnosticsLinks();
   $("toolPickerToggle").addEventListener("click",()=>{
     toolPickerOpen($("toolPicker").hidden);
   });
@@ -2110,6 +2406,12 @@ function init(){
   $("collabNew").addEventListener("click",newCollab);
   $("navProfile").addEventListener("click",()=>openProfileSettings());
   $("modelQuickSettings").addEventListener("click",()=>openProfileSettings("model"));
+  $("ownerInputSubmit").addEventListener("click",submitOwnerInput);
+  $("ownerInputCancel").addEventListener("click",cancelOwnerInput);
+  $("ownerInputDialog").addEventListener("cancel",event=>{event.preventDefault();void cancelOwnerInput();});
+  $("ownerInputValue").addEventListener("keydown",event=>{
+    if(event.key==="Enter"){event.preventDefault();void submitOwnerInput();}
+  });
   $("profileClose").addEventListener("click",()=>$("profileDialog").close());
   $("profileCancel").addEventListener("click",()=>$("profileDialog").close());
   $("profileSave").addEventListener("click",saveProfileSettings);

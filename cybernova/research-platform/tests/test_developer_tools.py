@@ -83,6 +83,12 @@ class DeveloperToolsTests(unittest.TestCase):
             self.call("dev_edit",{"path":"README.md","content":"overwrite without old"})
 
     def test_tests_and_custom_execution_are_non_root(self):
+        if os.name == "nt":
+            with self.assertRaisesRegex(dev.DeveloperError, "unprivileged_execution_unavailable_on_windows"):
+                self.call("dev_test")
+            with self.assertRaisesRegex(dev.DeveloperError, "unprivileged_execution_unavailable_on_windows"):
+                self.call("dev_command", {"argv": [sys.executable, "-c", "print(1)"], "timeout": 15})
+            return
         result=self.call("dev_test")
         self.assertTrue(result["ok"],result)
         self.assertIn("unittest_non_root",result["runner"])
