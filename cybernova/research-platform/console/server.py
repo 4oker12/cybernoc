@@ -699,6 +699,8 @@ def collaboration_item_step(payload: WorkItemRequest):
                 raise WorkItemError("work_review_schema_invalid")
             outcome = work.complete_review(
                 payload.task_id, payload.item_id, artifact["decision"], artifact["feedback"])
+        if outcome.get("state") in {"accepted", "cancelled"}:
+            deepseek_tool_runtime.close_conversation("deepseek:" + payload.item_id)
         return {"task_id": payload.task_id, "phase": phase, "item": outcome,
                 "items": work.list_items(payload.task_id)}
     except (SIWCError, WorkItemError, CollaborationError, CommunicationError,
