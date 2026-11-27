@@ -766,7 +766,7 @@ class BrowserControlTests(unittest.TestCase):
         finally:
             session._executor.shutdown(wait=False, cancel_futures=True)
 
-    def test_snapshot_keeps_scrolled_viewport_controls_on_long_pages(self):
+    def test_chromium_browser_capabilities(self):
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -855,6 +855,61 @@ class BrowserControlTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "browser_target_context_not_unique"):
                         session._dispatch("browser_set_checked",
                                           {"label": "context:Free", "checked": True})
+
+                    page.set_content('<section id="main-tabs"></section><demo-tabs></demo-tabs>')
+                    page.evaluate("""() => {
+                        const make = (root, label) => {
+                            root.innerHTML = '<div role=tablist aria-label="' + label + '">' +
+                                '<button role=tab aria-selected=false aria-controls=result>Summary</button>' +
+                                '<button role=tab aria-disabled=true aria-selected=false aria-controls=result>Locked</button>' +
+                                '<button role=tab aria-selected=false aria-controls=missing>Broken</button>' +
+                                '</div><div id=result role=tabpanel hidden>' + label +
+                                ' evidence<span hidden>not visible</span>' +
+                                '<div contenteditable>editable value</div></div>' +
+                                '<div id=missing role=tabpanel hidden>Still hidden</div>';
+                            root.querySelector('[aria-controls=result]').onclick = (event) => {
+                                event.target.setAttribute('aria-selected', 'true');
+                                setTimeout(() => {root.querySelector('#result').hidden = false;}, 80);
+                            };
+                            root.querySelector('[aria-controls=missing]').onclick = (event) => {
+                                event.target.setAttribute('aria-selected', 'true');
+                            };
+                        };
+                        make(document.querySelector('#main-tabs'), 'Main');
+                        make(document.querySelector('demo-tabs').attachShadow({mode:'open'}), 'Archive');
+                    }""")
+                    found = session._dispatch("browser_find_controls", {"query": "Summary"})
+                    self.assertEqual({row["group"] for row in found["buttons"]}, {"Main", "Archive"})
+                    archive = next(row for row in found["buttons"] if row["group"] == "Archive")
+                    self.assertEqual(archive["shadow_host"], "demo-tabs")
+                    activated = session._dispatch("browser_click_button", {"name": archive["action_target"]})
+                    self.assertTrue(activated["tab_verified"])
+                    self.assertTrue(activated["tab_clicked"])
+                    self.assertEqual(activated["widget_state_after"]["panel_text"], "Archive evidence")
+                    self.assertEqual(page.locator("#main-tabs [role=tab]").first.get_attribute("aria-selected"), "false")
+                    locked = session._dispatch("browser_find_controls", {"query": "Locked"})
+                    self.assertTrue(all("action_target" not in row for row in locked["buttons"]))
+                    broken = session._dispatch("browser_find_controls", {"query": "Broken"})
+                    bad_target = next(row["action_target"] for row in broken["buttons"]
+                                      if row["group"] == "Archive")
+                    rejected = session._dispatch("browser_click_button", {"name": bad_target})
+                    self.assertFalse(rejected["tab_verified"])
+                    self.assertTrue(rejected["widget_state_after"]["selected"])
+                    self.assertFalse(rejected["widget_state_after"]["panel_visible"])
+                    fresh = session._dispatch("browser_find_controls", {"query": "Summary"})
+                    stale = next(row["action_target"] for row in fresh["buttons"] if row["group"] == "Main")
+                    page.locator("#main-tabs [role=tab]").first.evaluate(
+                        "el => el.setAttribute('aria-controls', 'missing')")
+                    with self.assertRaisesRegex(ValueError, "browser_target_tab_stale"):
+                        session._dispatch("browser_click_button", {"name": stale})
+                    page.locator("#main-tabs").evaluate("""root => {
+                        root.insertAdjacentHTML('beforeend', '<div id=missing role=tabpanel>Duplicate</div>');
+                    }""")
+                    duplicate = session._dispatch("browser_find_controls", {"query": "Summary"})
+                    main_target = next(row["action_target"] for row in duplicate["buttons"]
+                                       if row["group"] == "Main")
+                    with self.assertRaisesRegex(ValueError, "browser_target_tab_stale"):
+                        session._dispatch("browser_click_button", {"name": main_target})
                 finally:
                     session._executor.shutdown(wait=False, cancel_futures=True)
                     context.close()

@@ -111,7 +111,7 @@ BROWSER_CONTROL_TOOLS = [
            "value": {**STRING, "description": "Option label or value"}}, ["label", "value"]),
     _tool("browser_click_button",
           "Click one visible button by exact accessible name. GET navigation is allowed. If the button submits a form and the user explicitly asked to send, save or apply it, use browser_submit; unrelated non-GET requests remain blocked.",
-          {"name": {**STRING, "description": "Exact accessible name of one button, or the action_target of a native disclosure from the latest browser snapshot or control search"}}, ["name"]),
+          {"name": {**STRING, "description": "Exact accessible name of one button, or action_target for a native disclosure or ARIA tab from the latest browser snapshot or control search"}}, ["name"]),
     _tool("browser_back",
           "Navigate back one page in the isolated Chromium session."),
     _tool("browser_wait",
@@ -679,7 +679,7 @@ class BrowserSession:
         self._browser = None
         self._context = None
         self._page = None
-        self._disclosure_targets = {}
+        self._widget_targets = {}
         self._dns_cache: dict[str, tuple[float, list[str]]] = {}
         self._blocked: list[dict] = []
         self._allow_post_origin: str | None = None
@@ -1320,7 +1320,7 @@ class BrowserSession:
         page.on("download", lambda download: download.cancel())
         page.on("popup", lambda popup: popup.close())
         page.on("framenavigated", lambda _frame: (
-            self._disclosure_targets.clear() if page is self._page else None))
+            self._widget_targets.clear() if page is self._page else None))
         page.on("console", lambda msg: self._console_events.append({
             "type": msg.type, "text": _redact_text(msg.text),
         }) if len(self._console_events) < 200 else None)
@@ -1571,7 +1571,7 @@ class BrowserSession:
         if self._page is None or self._page.is_closed():
             raise ValueError("browser_no_open_page")
         page = self._page
-        self._disclosure_targets.clear()
+        self._widget_targets.clear()
         frames = self._frame_contexts()
         text, scopes, text_clipped = self._page_text(frames) if control_query is None else ("", [], False)
         links, buttons, fields, headings, landmarks, tables, focused = [], [], [], [], [], [], []
@@ -1589,7 +1589,7 @@ class BrowserSession:
                     const clean = v => String(v || '').replace(/\\s+/g, ' ').trim();
                     const byIds = (el, attr) => (el.getAttribute(attr) || '').split(/\\s+/)
                         .filter(Boolean).map(id => {
-                            const node = el.ownerDocument.getElementById(id);
+                            const node = el.getRootNode().getElementById?.(id);
                             return node ? clean(node.innerText || node.textContent) : '';
                         }).filter(Boolean).join(' ');
                     const editable = el => el.isContentEditable ||
@@ -1623,6 +1623,7 @@ class BrowserSession:
                     const ordered = all.filter(inViewport).concat(all.filter(el => !inViewport(el)));
                     return {total: all.length, rows: ordered.slice(0,120).map(el => {
                         const r = el.getBoundingClientRect();
+                        const tablist = el.getAttribute('role') === 'tab' ? el.closest('[role=tablist]') : null;
                         return {
                             tag: el.tagName.toLowerCase(), role: el.getAttribute('role') || '',
                             text: labelOf(el).slice(0,180),
@@ -1640,6 +1641,10 @@ class BrowserSession:
                             choice_context: radioContext(el), expanded: el.matches('details > summary:first-of-type')
                                 ? String(el.parentElement.open) : el.getAttribute('aria-expanded'),
                             selected: el.getAttribute('aria-selected'), editable: editable(el),
+                            tab_group: tablist ? clean(tablist.getAttribute('aria-label') ||
+                                byIds(tablist, 'aria-labelledby')).slice(0,120) : '',
+                            tab_panel: tablist ? (el.getAttribute('aria-controls') || '').trim() : '',
+                            shadow_host: el.getRootNode().host?.localName || '',
                             option_labels: el.tagName === 'SELECT' ? Array.from(el.options)
                                 .slice(0,20).map(option => option.label.slice(0,100)) : []
                         };
@@ -1667,11 +1672,8 @@ class BrowserSession:
                 if item["tag"] == "summary":
                     row = {"name": label or "unlabelled", "type": "disclosure",
                            "expanded": item["expanded"] == "true", **identity}
-                    if label and not item["disabled"] and len(self._disclosure_targets) < 32:
-                        target = "disclosure:" + secrets.token_hex(8)
-                        self._disclosure_targets[target] = (page, frame, page.url, frame.url,
-                                                             label, element_id)
-                        row["action_target"] = target
+                    if label and not item["disabled"]:
+                        self._register_widget(row, "disclosure", frame, element_id)
                     buttons.append(row)
                 elif (item["tag"] == "a" and role != "button") or role == "link":
                     href = item["href"]
@@ -1684,6 +1686,16 @@ class BrowserSession:
                     for state in ("expanded", "selected"):
                         if item[state] in {"true", "false"}:
                             row[state] = item[state] == "true"
+                    if role == "tab":
+                        group = _redact_text(item["tab_group"])
+                        if group:
+                            row["group"] = group
+                        if item["shadow_host"]:
+                            row["shadow_host"] = item["shadow_host"][:80]
+                        panel = item["tab_panel"]
+                        if (label and not item["disabled"] and "selected" in row
+                                and re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.:-]{0,79}", panel)):
+                            self._register_widget(row, "tab", frame, element_id, group, panel)
                     buttons.append(row)
                 elif item["tag"] in {"input", "textarea", "select"} or item["editable"] or role in {"checkbox", "radio", "switch", "slider"}:
                     field = {"label": (label or _redact_text(item["name"]) or "unlabelled")[:100],
@@ -1847,14 +1859,27 @@ class BrowserSession:
             raise ValueError("browser_target_id_invalid")
         return (frame if frame is not None else self._page).locator(f'[id="{element_id}"]')
 
-    def _toggle_disclosure(self, target):
-        entry = self._disclosure_targets.pop(target, None)
+    def _register_widget(self, row, kind, frame, element_id, group="", panel=""):
+        if len(self._widget_targets) >= 32:
+            return
+        target = kind + ":" + secrets.token_hex(8)
+        page = self._page
+        self._widget_targets[target] = (page, frame, page.url, frame.url,
+                                        row["name"], element_id, group, panel)
+        row["action_target"] = target
+
+    def _resolve_widget(self, target, stale_error):
+        entry = self._widget_targets.pop(target, None)
         if entry is None:
-            raise ValueError("browser_target_disclosure_stale")
-        page, frame, page_url, frame_url, label, element_id = entry
+            raise ValueError(stale_error)
+        page, frame, page_url, frame_url, label, element_id, group, panel = entry
         if (page is not self._page or page.url != page_url
                 or frame not in self._frame_contexts() or frame.url != frame_url):
-            raise ValueError("browser_target_disclosure_stale")
+            raise ValueError(stale_error)
+        return frame, label, element_id, group, panel
+
+    def _toggle_disclosure(self, target):
+        frame, label, element_id, _, _ = self._resolve_widget(target, "browser_target_disclosure_stale")
         summaries = frame.locator("details > summary:first-of-type")
         if re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.:-]{0,79}", element_id):
             locator = self._unique(summaries.and_(self._by_id(element_id, frame)))
@@ -1885,6 +1910,89 @@ class BrowserSession:
                       expanded_before=before, expanded_after=after)
         if not verified:
             result.update(ok=False, error="browser_disclosure_state_unverified")
+        return result
+
+    def _activate_widget_tab(self, target):
+        stale = "browser_target_tab_stale"
+        frame, label, element_id, group, panel = self._resolve_widget(target, stale)
+        scope = frame.get_by_role("tablist", name=group, exact=True) if group else frame
+        tabs = scope.get_by_role("tab", name=label, exact=True)
+        if re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.:-]{0,79}", element_id):
+            tabs = tabs.and_(self._by_id(element_id, frame))
+        tab = self._unique(tabs)
+        if tab is None:
+            raise ValueError(stale)
+        if HIGH_IMPACT.search(" ".join((label, tab.inner_text(timeout=3000), group))):
+            return {"ok": False, "status": "manual_action_required", "reason": "high_impact_tab"}
+        inspect = """(el, id) => {
+            if (!el.isConnected || el.getAttribute('aria-controls')?.trim() !== id ||
+                !el.closest('[role=tablist]')) return null;
+            const panels = el.getRootNode().querySelectorAll('#' + CSS.escape(id));
+            if (panels.length !== 1 || panels[0].getAttribute('role') !== 'tabpanel') return null;
+            const panel = panels[0];
+            const selected = el.getAttribute('aria-selected');
+            if (selected !== 'true' && selected !== 'false') return null;
+            const box = panel.getBoundingClientRect();
+            let visible = box.width > 0 && box.height > 0 &&
+                getComputedStyle(panel).visibility === 'visible';
+            for (let node = panel; visible && node; node = node.parentElement || node.getRootNode().host) {
+                visible = !node.matches('[hidden],[aria-hidden="true"]') &&
+                    Number(getComputedStyle(node).opacity) > 0;
+            }
+            return {selected: selected === 'true', panel_visible: visible};
+        }"""
+        element = tab.element_handle(timeout=3000)
+        try:
+            before = element.evaluate(inspect, panel)
+            if before is None:
+                raise ValueError(stale)
+            clicked = not (before["selected"] and before["panel_visible"])
+            after = before
+            if clicked:
+                element.click(timeout=7000)
+                try:
+                    ready = frame.wait_for_function(
+                        "([el, id]) => {const state = (" + inspect + ")(el, id); "
+                        "return state?.selected && state?.panel_visible;}",
+                        arg=[element, panel], timeout=2000)
+                    ready.dispose()
+                except Exception as exc:
+                    if type(exc).__name__ != "TimeoutError":
+                        raise
+                after = element.evaluate(inspect, panel)
+            if after and after["selected"] and after["panel_visible"]:
+                panel_text = element.evaluate("""(el, id) => {
+                    const panel = el.getRootNode().getElementById(id);
+                    if (!panel) return '';
+                    const doc = el.ownerDocument;
+                    const walker = doc.createTreeWalker(panel, NodeFilter.SHOW_TEXT);
+                    const range = doc.createRange();
+                    const parts = [];
+                    let seen = 0, length = 0, node;
+                    while (seen++ < 500 && length < 900 && (node = walker.nextNode())) {
+                        const parent = node.parentElement;
+                        if (!parent || parent.closest('script,style,textarea,select,[contenteditable],' +
+                            '[role=textbox],[role=searchbox],[hidden],[aria-hidden=true]') ||
+                            getComputedStyle(parent).visibility !== 'visible') continue;
+                        range.selectNodeContents(node);
+                        if (!range.getClientRects().length) continue;
+                        const text = node.textContent.trim().slice(0, 900 - length);
+                        if (text) {
+                            parts.push(text);
+                            length += text.length + 1;
+                        }
+                    }
+                    return parts.join(' ');
+                }""", panel)
+                after = {**after, "panel_text": _redact_text(panel_text)}
+        finally:
+            element.dispose()
+        verified = bool(after and after["selected"] and after["panel_visible"])
+        result = self._snapshot()
+        result.update(tab_verified=verified, tab_name=label, tab_group=group,
+                      tab_clicked=clicked, widget_state_before=before, widget_state_after=after)
+        if not verified:
+            result.update(ok=False, error="browser_tab_state_unverified")
         return result
 
     def _navigation_snapshot(self, response):
@@ -2354,6 +2462,8 @@ class BrowserSession:
                 raise ValueError("browser_button_name_invalid")
             if name == "browser_click_button" and target.startswith("disclosure:"):
                 return self._toggle_disclosure(target)
+            if name == "browser_click_button" and target.startswith("tab:"):
+                return self._activate_widget_tab(target)
             role, target_name = "button", target
             if name == "browser_click_button" and target_name.startswith(("combobox:", "option:")):
                 role, target_name = target_name.split(":", 1)
@@ -2500,7 +2610,7 @@ class BrowserSession:
         self._page = self._context = self._browser = self._pw = None
         self._backend = None
         self._attached_pages.clear()
-        self._disclosure_targets.clear()
+        self._widget_targets.clear()
         diagnostic_event("browser_shutdown", status="ok")
 
 

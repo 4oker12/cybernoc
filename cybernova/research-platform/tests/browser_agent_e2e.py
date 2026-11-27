@@ -59,7 +59,18 @@ class Fixture(BaseHTTPRequestHandler):
                 <iframe title="Archive widget" src="/archive/widget"></iframe></main>"""
         elif self.path == "/archive/widget":
             html = """<!doctype html><title>Archive widget</title>
-                <details><summary>Widget details</summary><p>prism-willow-88</p></details>"""
+                <details><summary>Widget details</summary><p>prism-willow-88</p></details>
+                <archive-tabs></archive-tabs>
+                <script>
+                  const root = document.querySelector('archive-tabs').attachShadow({mode: 'open'});
+                  root.innerHTML = '<div role="tablist" aria-label="Archive views">' +
+                    '<button role="tab" aria-selected="false" aria-controls="checks">Checks</button>' +
+                    '</div><div role="tabpanel" id="checks" hidden>indigo-sparrow-43</div>';
+                  root.querySelector('button').addEventListener('click', event => {
+                    event.target.setAttribute('aria-selected', 'true');
+                    root.getElementById('checks').hidden = false;
+                  });
+                </script>"""
         else:
             self.send_error(404)
             return
@@ -97,8 +108,9 @@ def main() -> None:
         "Найди маркер FINAL_ARCHIVE_MARKER и код Atlas в таблице. "
         "На странице архива введи status в поле Record search, нажми Search records "
         "и проверь появившийся результат. Раскрой Widget details во вложенном "
-        "Archive widget и проверь, что появилось внутри. В ответе укажи маркер, "
-        "код, результат поиска, текст из раскрытого блока и конечный URL. "
+        "Archive widget и проверь, что появилось внутри. Там же открой вкладку "
+        "Checks в группе Archive views и проверь текст связанной панели. "
+        "В ответе укажи маркер, код, результат поиска, оба текста и конечный URL. "
         "Используй браузерные инструменты; не угадывай."
     )
     body = json.dumps({
@@ -141,8 +153,10 @@ def main() -> None:
             "navigated_2026": "/archive/2026" in Fixture.requests,
             "required_browser_tools": required.issubset(set(tool_names)),
             "required_browser_tools_succeeded": (
-                len(required_events) >= len(required)
-                and all(event.get("is_error") is False for event in required_events)
+                required.issubset({
+                    event.get("name") or event.get("tool")
+                    for event in required_events if event.get("is_error") is False
+                })
             ),
             "long_page_marker": "orbital-cedar-71" in answer,
             "table_code": "AC-42" in answer,
@@ -154,6 +168,14 @@ def main() -> None:
                 for event in tool_events
             ),
             "disclosure_text": "prism-willow-88" in answer,
+            "shadow_tab_verified": any(
+                isinstance(event.get("result"), dict)
+                and event["result"].get("tab_verified") is True
+                and event["result"].get("tab_clicked") is True
+                and event["result"].get("tab_group") == "Archive views"
+                for event in tool_events
+            ),
+            "shadow_tab_text": "indigo-sparrow-43" in answer,
             "final_url": origin + "/archive/2026" in answer,
         }
         report = {
@@ -166,7 +188,7 @@ def main() -> None:
             "usage": outcome.get("usage"),
             "answer_excerpt": answer[:1200],
         }
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        print(json.dumps(report, indent=2))
         if not all(checks.values()):
             raise SystemExit(1)
     except HTTPError as exc:
