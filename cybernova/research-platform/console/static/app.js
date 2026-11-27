@@ -876,8 +876,11 @@ async function pollOwnerInput(){
     $("ownerInputFieldLabel").textContent=item.field_label||"Значение";
     $("ownerInputError").textContent="";
     const type=item.input_type;
+    $("ownerInputTitle").textContent=
+      type==="browser_action_confirmation"?"Подтвердить действие?":
+      type==="payment_confirmation"?"Подтвердить платёж?":"Требуется ввод владельца";
     $("ownerInputCancel").textContent=
-      type==="payment_confirmation"?"Отклонить действие":
+      (type==="payment_confirmation"||type==="browser_action_confirmation")?"Отказать":
       type==="payment_card"?"Отмена":"Отмена задачи";
     if(type==="payment_card"){
       $("ownerInputSingleField").hidden=true;
@@ -889,16 +892,19 @@ async function pollOwnerInput(){
       $("ownerInputSubmit").textContent="Передать и заполнить форму";
       renderOwnerPaymentFields(item);
       renderOwnerPaymentFrames(item);
-    }else if(type==="payment_confirmation"){
+    }else if(type==="payment_confirmation"||type==="browser_action_confirmation"){
+      const browserAction=type==="browser_action_confirmation";
       $("ownerInputSingleField").hidden=true;
       $("ownerInputConfirmationPanel").hidden=false;
       $("ownerInputMerchantOrigin").textContent=item.expected_origin||"Не определён";
-      $("ownerInputActionButton").textContent=item.action_button||item.field_label||"Неизвестная кнопка";
+      $("ownerInputActionLabel").textContent=browserAction?"HTTP-запрос":"Кнопка";
+      $("ownerInputActionButton").textContent=item.action_button||item.field_label||"Неизвестное действие";
       $("ownerInputActionOrigin").textContent=item.action_origin||"Не определён";
       $("ownerInputActionSummary").textContent=item.purpose||"Описание не предоставлено";
-      $("ownerInputNote").textContent=
+      $("ownerInputNote").textContent=browserAction?
+        "Разрешение действует только на один указанный HTTP-запрос. Другой адрес, повтор или перенаправление потребуют нового подтверждения.":
         "Подтверждение разрешает ровно одну отправку указанной формы. Если сумма, периодичность или назначение не совпадают с ожиданиями — откажи.";
-      $("ownerInputSubmit").textContent="Подтвердить действие";
+      $("ownerInputSubmit").textContent=browserAction?"Разрешить один запрос":"Подтвердить действие";
     }else{
       const input=$("ownerInputValue");
       input.value="";
@@ -950,7 +956,7 @@ async function submitOwnerInput(){
     paymentCardPayload=card;
     payload.payment_card=paymentCardPayload;
     payload.approved_frame_hosts=frameChecks.map(item=>item.dataset.paymentFrameHost);
-  }else if(type==="payment_confirmation"){
+  }else if(type==="payment_confirmation"||type==="browser_action_confirmation"){
     payload.decision=true;
   }else{
     const value=$("ownerInputValue").value;
