@@ -149,28 +149,31 @@ class OwnerInputBroker:
         session_id = self._session(session_id)
         purpose = self._clean(purpose, "purpose", 240)
         field_label = self._clean(field_label, "field_label", 120)
-        if input_type not in {"otp", "password", "contact", "payment_card", "payment_confirmation"}:
+        if input_type not in {"otp", "password", "contact", "payment_card", "payment_confirmation", "browser_action_confirmation"}:
             raise OwnerInputError("owner_input_type_invalid")
         if not isinstance(offer_vault_save, bool):
             raise OwnerInputError("owner_input_vault_option_invalid")
         if expected_origin:
             try:
                 parsed = urlsplit(expected_origin)
-                if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+                allowed_schemes = {"http", "https"} if input_type == "browser_action_confirmation" else {"https"}
+                if (parsed.scheme not in allowed_schemes or not parsed.hostname or parsed.username
                         or parsed.password or parsed.path not in {"", "/"}
                         or parsed.query or parsed.fragment):
                     raise ValueError
-                expected_origin = "https://" + parsed.hostname.lower()
-                if parsed.port not in (None, 443):
+                if parsed.port not in (None, 443) and input_type != "browser_action_confirmation":
                     raise ValueError
+                expected_origin = parsed.scheme + "://" + parsed.hostname.lower()
+                if parsed.port:
+                    expected_origin += ":" + str(parsed.port)
             except (ValueError, TypeError):
                 raise OwnerInputError("owner_input_origin_invalid") from None
-        if input_type in {"payment_card", "payment_confirmation"} and not expected_origin:
+        if input_type in {"payment_card", "payment_confirmation", "browser_action_confirmation"} and not expected_origin:
             raise OwnerInputError("owner_input_origin_required")
         if input_type != "payment_card":
             payment_fields = []
             payment_field_hosts = {}
-        if input_type != "payment_confirmation":
+        if input_type not in {"payment_confirmation", "browser_action_confirmation"}:
             action_origin = ""
             action_button = ""
         if input_type == "payment_card":
@@ -192,21 +195,24 @@ class OwnerInputBroker:
                     raise OwnerInputError("payment_form_hosts_invalid")
                 clean_hosts[field] = host.lower().rstrip(".")
             payment_field_hosts = clean_hosts
-        elif input_type == "payment_confirmation":
+        elif input_type in {"payment_confirmation", "browser_action_confirmation"}:
             if offer_vault_save:
                 raise OwnerInputError("payment_confirmation_invalid")
             action_button = self._clean(action_button, "action_button", 180)
             try:
                 parsed_action = urlsplit(action_origin)
-                if (parsed_action.scheme != "https" or not parsed_action.hostname
+                allowed_schemes = {"https"} if input_type == "payment_confirmation" else {"http", "https"}
+                if (parsed_action.scheme not in allowed_schemes or not parsed_action.hostname
                         or parsed_action.username or parsed_action.password
-                        or parsed_action.port not in (None, 443)
+                        or (input_type == "payment_confirmation" and parsed_action.port not in (None, 443))
                         or parsed_action.path not in {"", "/"}
                         or parsed_action.query or parsed_action.fragment):
                     raise ValueError
-                action_origin = "https://" + parsed_action.hostname.lower()
+                action_origin = parsed_action.scheme + "://" + parsed_action.hostname.lower()
+                if parsed_action.port:
+                    action_origin += ":" + str(parsed_action.port)
             except (ValueError, TypeError):
-                raise OwnerInputError("payment_action_origin_invalid") from None
+                raise OwnerInputError("owner_action_origin_invalid") from None
         if offer_vault_save:
             if input_type != "password" or not expected_origin:
                 raise OwnerInputError("owner_input_vault_save_not_available")
@@ -320,7 +326,7 @@ class OwnerInputBroker:
                     raise OwnerInputError("payment_frame_host_approval_required")
                 item["approved_frame_hosts"] = approved
                 item["value"] = normalized
-            elif kind == "payment_confirmation":
+            elif kind in {"payment_confirmation", "browser_action_confirmation"}:
                 if (type(decision) is not bool or value is not None
                         or payment_card is not None or save_to_vault
                         or approved_frame_hosts not in (None, [])):
@@ -351,7 +357,7 @@ class OwnerInputBroker:
                 item["value"] = value
             item["status"] = "submitted"
             item["event"].set()
-        decision_label = ("confirmed" if decision else "declined") if kind == "payment_confirmation" else "submitted"
+        decision_label = ("confirmed" if decision else "declined") if kind in {"payment_confirmation", "browser_action_confirmation"} else "submitted"
         diagnostic_event("owner_input_submitted", kind="approval", session_id=session_id,
                          input_type=kind, status="submitted", decision=decision_label)
         return {"ok": True, "accepted": True}
@@ -406,6 +412,24 @@ class OwnerInputBroker:
             self._drop_locked(request_id)
         if type(decision) is not bool:
             raise OwnerInputError("payment_confirmation_value_missing")
+        return decision, expected_origin, action_origin, action_button
+
+    def consume_browser_action_confirmation(self, session_id, request_id):
+        session_id = self._session(session_id)
+        with self._lock:
+            self._expire_locked()
+            item = self._requests.get(request_id)
+            if (item is None or item["session_id"] != session_id
+                    or item["status"] != "submitted"
+                    or item["input_type"] != "browser_action_confirmation"):
+                raise OwnerInputError("browser_action_confirmation_not_ready_or_already_used")
+            decision = item["value"]
+            expected_origin = item["expected_origin"]
+            action_origin = item["action_origin"]
+            action_button = item["action_button"]
+            self._drop_locked(request_id)
+        if type(decision) is not bool:
+            raise OwnerInputError("browser_action_confirmation_value_missing")
         return decision, expected_origin, action_origin, action_button
 
     def cancel(self, session_id, request_id):
