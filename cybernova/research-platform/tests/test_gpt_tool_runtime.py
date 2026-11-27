@@ -19,6 +19,46 @@ from console.computer_control import (
 
 
 class GPTToolRuntimeTests(unittest.TestCase):
+    def test_browser_sessions_are_isolated_and_retired_per_conversation(self):
+        class FakeBrowser:
+            def __init__(self, *, profile_dir):
+                self.profile_dir = profile_dir
+                self.closed = False
+            def close(self):
+                self.closed = True
+
+        runtime = GPTToolRuntime(browser_session_factory=FakeBrowser)
+        first_key, first = runtime._browser_pool.acquire("deepseek:item-alpha")
+        runtime._browser_pool.release(first_key, first)
+        reused_key, reused = runtime._browser_pool.acquire("deepseek:item-alpha")
+        self.assertIs(first, reused)
+        second_key, second = runtime._browser_pool.acquire("deepseek:item-beta")
+        self.assertIsNot(first, second)
+        self.assertNotEqual(first["profile_dir"], second["profile_dir"])
+        runtime._browser_pool.release(reused_key, reused)
+        runtime._browser_pool.release(second_key, second)
+        runtime.close_conversation("deepseek:item-alpha")
+        self.assertTrue(first["session"].closed)
+        self.assertFalse(second["session"].closed)
+        self.assertEqual(runtime._browser_pool.session_count, 1)
+        runtime.close()
+        self.assertTrue(second["session"].closed)
+
+    def test_browser_conversation_close_waits_for_active_call(self):
+        class FakeBrowser:
+            def __init__(self, *, profile_dir):
+                self.closed = False
+            def close(self):
+                self.closed = True
+
+        runtime = GPTToolRuntime(browser_session_factory=FakeBrowser)
+        key, entry = runtime._browser_pool.acquire("deepseek:item-active")
+        runtime.close_conversation("deepseek:item-active")
+        self.assertFalse(entry["session"].closed)
+        runtime._browser_pool.release(key, entry)
+        self.assertTrue(entry["session"].closed)
+        self.assertEqual(runtime._browser_pool.session_count, 0)
+
     def test_tool_catalog_is_separate_and_includes_intent_gated_submit(self):
         tools = build_tool_catalog()
         names = {item["name"] for item in tools}
