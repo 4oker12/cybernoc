@@ -750,11 +750,11 @@ class GPTToolRuntimeTests(unittest.TestCase):
         self.assertTrue(failed)
         self.assertEqual(result["error"], "tool_group_not_enabled")
 
-    def test_unknown_or_unapproved_tools_are_rejected(self):
+    def test_browser_write_without_conversation_cannot_bypass_confirmation(self):
         runtime = GPTToolRuntime()
         result, is_error = runtime.call("browser_submit", {"name": "Submit"})
         self.assertTrue(is_error)
-        self.assertEqual(result["error"], "browser_submit_requires_explicit_user_intent")
+        self.assertEqual(result["error"], "browser_conversation_required_for_write_approval")
 
 
 if __name__ == "__main__":
