@@ -392,33 +392,37 @@ async function importArtifact(file){
 }
 function updateBusyUI(){
   const anyModelRunning=state.qwenRunning||state.gptRunning;
+  const collabActive=state.collabLoopTasks.size>0||state.collabWorkLoops.size>0;
+  state.collabRunning=collabActive;
   const activeRunning=state.mode==="gpt"?state.gptRunning:
-    state.mode==="collab"?state.collabRunning:state.qwenRunning;
+    state.mode==="collab"?false:state.qwenRunning;
   state.running=!!activeRunning;
-  $("sendButton").disabled=!!activeRunning;
-  $("messageInput").disabled=false;
-  $("newSession").disabled=!!activeRunning;
-  $("artifactFile").disabled=state.mode!=="qwen"||state.qwenRunning||state.collabRunning;
-  $("toolPickerToggle").disabled=anyModelRunning||state.collabRunning;
+  const collabWritable=!!state.collabRun&&["active","paused"].includes(state.collabRun.state);
+  $("sendButton").disabled=state.mode==="collab"?!collabWritable:!!activeRunning;
+  $("messageInput").disabled=state.mode==="collab"?!collabWritable:false;
+  $("newSession").disabled=!!activeRunning&&state.mode!=="collab";
+  $("artifactFile").disabled=state.mode!=="qwen"||state.qwenRunning;
+  $("toolPickerToggle").disabled=anyModelRunning||collabActive;
   const toolPickerGroups=$("toolPickerGroups");
   if(toolPickerGroups&&typeof toolPickerGroups.querySelectorAll==="function"){
     toolPickerGroups.querySelectorAll("input").forEach(input=>{
-      input.disabled=anyModelRunning||state.collabRunning||input.dataset.available==="false";
+      input.disabled=anyModelRunning||collabActive||input.dataset.available==="false";
     });
   }
   const active=[];
   if(state.qwenRunning)active.push("DeepSeek работает");
   if(state.gptRunning)active.push("ChatGPT работает");
-  if(state.collabRunning)active.push("Совместная задача выполняется");
-  $("sendStatus").textContent=active.length?active.join(" · "):
+  if(collabActive)active.push("Совместные подзадачи выполняются");
+  $("sendStatus").textContent=state.mode==="collab"?
+    (collabWritable?"Сообщение будет добавлено в общий журнал":"Выбери или создай совместную задачу"):
+    active.length?active.join(" · "):
     state.mode==="gpt"&&!state.gptConnected?"Подключи ChatGPT через «Аккаунт GPT»":"Готов";
-  $("modeQwen").disabled=state.collabRunning;
-  $("modeChatGPT").disabled=state.collabRunning;
-  $("modeCollab").disabled=anyModelRunning||state.collabRunning;
+  $("modeQwen").disabled=false;
+  $("modeChatGPT").disabled=false;
+  $("modeCollab").disabled=false;
   const gptModelSelect=$("gptTopModel");
-  const hasGptModelOptions=!!gptModelSelect.options&&gptModelSelect.options.length>0;
-  gptModelSelect.disabled=!state.gptConnected||!state.gptPlanUsage||
-    !hasGptModelOptions||state.gptRunning;
+  $("gptTopModel").disabled=!state.gptConnected||!state.gptPlanUsage||
+    !gptModelSelect.options.length||state.gptRunning;
 }
 function busy(on,mode=state.mode){
   const key=mode==="gpt"?"gptRunning":mode==="collab"?"collabRunning":"qwenRunning";
@@ -769,9 +773,13 @@ function gptWelcome(){
   $("gptMessages").replaceChildren(window.cybernovaGptWelcome.cloneNode(true));
 }
 function setMode(mode){
-  if((mode==="collab"&&(state.qwenRunning||state.gptRunning||state.collabRunning)) || (state.collabRunning&&mode!=="collab") || !["qwen","gpt","collab"].includes(mode))return;
+  if(!["qwen","gpt","collab"].includes(mode))return;
   state.mode=mode;
-  const qwen=mode==="qwen", gpt=mode==="gpt", collab=mode==="collab";
+  const qwen=mode==="qwen",gpt=mode==="gpt",collab=mode==="collab";
+  const collabWritable=!!state.collabRun&&["active","paused"].includes(state.collabRun.state);
+  $("messageInput").disabled=collab?!collabWritable:false;
+  $("sendButton").disabled=collab?!collabWritable:state.running;
+  $("newSession").disabled=state.running&&!collab;
   for(const [id,isActive] of [
     ["modeQwen",qwen],["modeChatGPT",gpt],["modeCollab",collab]
   ]){
@@ -786,20 +794,29 @@ function setMode(mode){
   $("collabSidebar").hidden=!collab;
   $("gptTopModel").hidden=!gpt;
   $("modelName").hidden=gpt;
-  $("modelQuickSettings").hidden=!qwen || $("modelQuickSettings").dataset.deepseek!=="true";
+  $("modelQuickSettings").hidden=!qwen||$("modelQuickSettings").dataset.deepseek!=="true";
   $("modelName").textContent=collab?"ChatGPT ↔ DeepSeek":state.qwenModel;
-  document.querySelector(".connection-label").hidden=!qwen;
-  document.querySelector(".upload-button").hidden=!qwen;
-  document.querySelector(".auto-tools-label").hidden=!qwen;
+  const connectionLabel=document.querySelector(".connection-label");
+  const uploadButton=document.querySelector(".upload-button");
+  const autoToolsLabel=document.querySelector(".auto-tools-label");
+  if(connectionLabel)connectionLabel.hidden=!qwen;
+  if(uploadButton)uploadButton.hidden=!qwen;
+  if(autoToolsLabel)autoToolsLabel.hidden=!qwen;
   const composerArea=document.querySelector(".composer-area");
-  if(composerArea)composerArea.hidden=collab;
+  if(composerArea)composerArea.hidden=false;
   $("artifactFile").disabled=!qwen;
-  $("messageInput").placeholder=qwen?"Сообщение исследовательской модели или задача…":"Сообщение ChatGPT…";
+  $("toolPickerToggle").hidden=!qwen;
+  $("qwenAutoTools").hidden=!qwen;
+  const pasteOutputButton=$("pasteOutputButton");
+  if(pasteOutputButton)pasteOutputButton.hidden=gpt||collab;
+  $("messageInput").placeholder=qwen?"Сообщение исследовательской модели или задача…":
+    collab?"Напиши ChatGPT и DeepSeek — сообщение попадёт в общий диалог…":"Сообщение ChatGPT…";
   $("uploadStatus").textContent=qwen?
     "Файлы до "+Math.floor(state.uploadLimit/(1024*1024))+" МиБ · Ctrl+V — вставить вывод":
+    collab?"Общее сообщение увидят оба участника совместной задачи":
     "GPT-диалог локальный · Ctrl+V — вставить вывод";
-  $("sendStatus").textContent=!qwen&&!state.gptConnected?
-    "Подключи ChatGPT через «Аккаунт GPT»":"Готов";
+  $("sendStatus").textContent=collab?"Сообщение будет добавлено в общий журнал":
+    !qwen&&!state.gptConnected?"Подключи ChatGPT через «Аккаунт GPT»":"Готов";
   $("sidebar").classList.remove("open");
   if(gpt)void refreshGPTThreads();
   if(collab)void refreshCollabRuns();
