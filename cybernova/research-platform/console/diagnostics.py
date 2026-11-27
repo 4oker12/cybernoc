@@ -3,7 +3,8 @@
 Each service writes its own JSONL file (plus three rotations) because Windows
 RotatingFileHandler must not be shared by multiple processes. The authenticated
 access gateway exports a single merged report. No prompts, cookies, passwords,
-tool arguments or response bodies are intentionally recorded.
+raw tool arguments or response bodies are intentionally recorded. Tool dispatches
+may include bounded, redacted argument and result summaries.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from datetime import datetime, timezone
 from contextvars import ContextVar
 from functools import wraps
 from contextlib import contextmanager
+import inspect
 from inspect import signature
 import time
 import json
@@ -302,7 +304,7 @@ def configure(component: str) -> None:
 
 
 def _clean_timeline(value):
-    """Export-allowlisted metadata. Never record prompts, URLs or raw tool arguments."""
+    """Export-allowlisted metadata and bounded redacted previews; never raw prompts or payloads."""
     if not isinstance(value, dict):
         return None
     result = {}
