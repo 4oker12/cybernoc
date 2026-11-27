@@ -186,14 +186,14 @@ def filter_tool_rows(rows, groups=None) -> list[dict]:
 _ROUTE_HINTS = {
     "browser": r"браузер|хром|страниц|сайт|ссылк|вкладк|форм[ауые]|browser|chrome|https?://|screenshot|открой страницу|открой сайт",
     "computer": r"компьютер|ноутбук|локальн.{0,12}файл|папк|процесс|служб|диск|окн[оа]|памят|windows|desktop|computer|defender|cpu|ram",
-    "terminal": r"терминал|команд[уы]? в (?:powershell|cmd|терминал)|powershell|\\bcmd\\b|\\bshell\\b|terminal|консол|выполни команду|запусти команду",
+    "terminal": r"терминал|команд[уы]? в (?:powershell|cmd|терминал)|powershell|\bcmd\b|\bshell\b|terminal|консол|выполни команду|запусти команду",
     "web": r"интернет|поиск|поищи|найди в сети|найди в интернете|гугл|источник|search|research|web|погод|weather|forecast|прогноз|курс валют|новост",
-    "network": r"\\bdns\\b|\\btls\\b|\\bssl\\b|\\bip\\b|\\bhttp\\b|сеть|сетев|маршрут|шлюз|network|ping|traceroute",
+    "network": r"\bdns\b|\btls\b|\bssl\b|\bip\b|\bhttp\b|сеть|сетев|маршрут|шлюз|network|ping|traceroute",
     "security": r"security|аудит|безопасност|уязвимост|сканирован",
-    "traffic": r"\\bhar\\b|трафик|traffic|devtools",
+    "traffic": r"\bhar\b|трафик|traffic|devtools",
     "developer": r"git|репозитори|ветк|коммит|исходник|тест|разработ|проект|repository|branch|commit|code|test",
     "github": r"github|pull request|issue|репозитори|ветк|коммит",
-    "mcp": r"\\bmcp\\b|tools/list|mcp-сервис",
+    "mcp": r"\bmcp\b|tools/list|mcp-сервис",
 }
 
 
@@ -215,7 +215,7 @@ def route_model_tool_rows(
             continue
         name = row["name"]
         group = tool_group_for_name(name)
-        if re.search(r"(?<![\\w.-])" + re.escape(name.casefold()) + r"(?![\\w.-])", task):
+        if re.search(r"(?<![\w.-])" + re.escape(name.casefold()) + r"(?![\w.-])", task):
             exact.append(row)
         else:
             buckets.setdefault(group, []).append(row)
