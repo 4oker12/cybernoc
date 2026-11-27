@@ -185,37 +185,57 @@ class BrowserControlTests(unittest.TestCase):
             with self.subTest(target=target):
                 self.assertIsNotNone(IRREVERSIBLE_SUBMIT_TARGET.search(target))
 
-    def test_browser_submit_requires_explicit_current_user_intent_and_dispatches_when_requested(self):
+    def test_browser_submit_uses_in_chat_confirmation_without_requiring_repeated_intent(self):
         from console.gpt_tool_runtime import GPTToolRuntime
-        runtime = GPTToolRuntime()
+        from console.owner_input import OwnerInputBroker
 
-        denied, failed = runtime._call_impl(
-            "browser_submit", {"name": "Send"},
-            user_messages=[{"role": "user", "content": "Изучи страницу и проверь поля."}],
-            conversation_key="browser-submit-test",
-        )
-        self.assertTrue(failed)
-        self.assertEqual(denied["error"], "browser_submit_requires_explicit_user_intent")
+        runtime = GPTToolRuntime()
+        broker = OwnerInputBroker()
+        session_id = "deepseek:" + "p" * 32
 
         class FakeSession:
             def set_authorized_hosts(self, hosts):
                 self.authorized_hosts = set(hosts or [])
+            def set_write_approval_handler(self, handler):
+                self.write_approval_handler = handler
 
         entry = {"session": FakeSession(), "call_lock": RLock()}
+        outcome = {}
+        def dispatch(name, args, session):
+            details = {
+                "method": "POST", "url": "https://example.test/save",
+                "request_label": "POST https://example.test/save",
+                "resource_type": "form", "action_label": args["name"],
+                "page_origin": "https://example.test",
+                "target_origin": "https://example.test",
+            }
+            return {"ok": session.write_approval_handler(details)}, False
+
         with (
             patch.object(runtime._browser_pool, "acquire", return_value=("test", entry)),
             patch.object(runtime._browser_pool, "release"),
-            patch("console.gpt_tool_runtime.browser_control_call",
-                  return_value=({"ok": True, "approved_post_requests_allowed": 1}, False)) as dispatch,
+            patch("console.gpt_tool_runtime.owner_input_broker", broker),
+            patch("console.gpt_tool_runtime.browser_control_call", side_effect=dispatch),
         ):
-            result, failed = runtime._call_impl(
+            worker = threading.Thread(target=lambda: outcome.update(runtime._call_impl(
                 "browser_submit", {"name": "Send"},
-                user_messages=[{"role": "user", "content": "Сохрани заполненную форму."}],
-                conversation_key="browser-submit-test",
-            )
+                user_messages=[{"role": "user", "content": "Изучи страницу и проверь поля."}],
+                conversation_key=session_id,
+            )))
+            worker.start()
+            deadline = time.monotonic() + 2
+            pending = None
+            while time.monotonic() < deadline and pending is None:
+                pending = broker.pending(session_id)
+                time.sleep(0.01)
+            self.assertIsNotNone(pending)
+            self.assertEqual(pending["input_type"], "browser_action_confirmation")
+            broker.submit(session_id, pending["request_id"], decision=True)
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+        result, failed = outcome["value"]
         self.assertFalse(failed)
         self.assertTrue(result["ok"])
-        dispatch.assert_called_once_with("browser_submit", {"name": "Send"}, entry["session"])
 
     def test_persistent_profile_disables_tab_restore_without_deleting_login_data(self):
         with TemporaryDirectory() as temp:
@@ -396,7 +416,7 @@ class BrowserControlTests(unittest.TestCase):
                 denied = FakeRoute("https://example.org/order", "POST")
                 browser._route(denied)
                 self.assertTrue(denied.aborted)
-                self.assertEqual(browser._blocked[-1]["suggested_tool"], "browser_submit")
+                self.assertEqual(browser._blocked[-1]["reason"], "write_request_requires_owner_confirmation")
 
                 # One user-approved POST may go to the exact visible form action origin.
                 browser._allow_post_origin = "https://forms.example.net"
@@ -420,6 +440,41 @@ class BrowserControlTests(unittest.TestCase):
                 browser._allow_post_remaining = 1
                 browser._route(cross_origin)
                 self.assertTrue(cross_origin.aborted)
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+
+    def test_browser_route_requires_chat_confirmation_for_each_unsafe_method(self):
+        browser = BrowserSession()
+        approved = []
+        browser._active_action = {"tool": "browser_click_button", "label": "Save settings"}
+        browser.set_write_approval_handler(lambda details: approved.append(details) or True)
+        try:
+            with patch("console.browser_control.validate_public_url",
+                       return_value=("example.test", ["8.8.8.8"])):
+                for method in ("POST", "PUT", "PATCH", "DELETE"):
+                    route = FakeRoute("https://example.test/api/settings", method)
+                    browser._route(route)
+                    self.assertFalse(route.aborted)
+                    self.assertIs(route.fulfilled["response"], route.response)
+                self.assertEqual([item["method"] for item in approved],
+                                 ["POST", "PUT", "PATCH", "DELETE"])
+                self.assertTrue(all(item["action_label"] == "Save settings" for item in approved))
+                self.assertEqual(browser._allowed_request_count, 4)
+
+                browser.set_write_approval_handler(lambda _details: False)
+                denied = FakeRoute("https://example.test/api/settings", "DELETE")
+                browser._route(denied)
+                self.assertTrue(denied.aborted)
+                self.assertEqual(browser._blocked[-1]["reason"], "owner_declined_or_expired")
+
+                browser._active_action = None
+                no_action = FakeRoute("https://example.test/api/settings", "POST")
+                browser._route(no_action)
+                self.assertTrue(no_action.aborted)
+
+                safe = FakeRoute("https://example.test/api/settings", "GET")
+                browser._route(safe)
+                self.assertTrue(safe.continued)
         finally:
             browser._executor.shutdown(wait=False, cancel_futures=True)
 
