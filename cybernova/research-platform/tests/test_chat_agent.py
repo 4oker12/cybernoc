@@ -701,6 +701,40 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(out["tool_calls"],1)
         self.assertEqual(out["answer"],"CIDR confirmed")
 
+    def test_json_fallback_selection_index_includes_late_catalog_entries(self):
+        class ManyToolMCP(FakeMCP):
+            def initialize(self):
+                schema = {"type": "object", "properties": {}, "required": [],
+                          "additionalProperties": False}
+                return [{
+                    "name": f"late_tool_{index:02d}",
+                    "description": "Read-only diagnostic tool with enough detail to exercise the selection index. " * 3,
+                    "inputSchema": schema,
+                } for index in range(70)]
+
+            def call(self, name, args):
+                self.calls.append((name, args))
+                return {"ok": True, "tool": name}, False
+
+        mcp = ManyToolMCP()
+        lm = FakeOllama([
+            {"role": "assistant", "content": "Draft plan: use late_tool_69 to inspect the requested state."},
+            {"role": "assistant", "content": '{"calls":[{"name":"late_tool_69","arguments":{}}]}'},
+            {"role": "assistant", "content": "Late tool executed."},
+        ])
+        out = Agent(lm, lambda: mcp).run(
+            [], "Use the last available tool", force_tools=True,
+        )
+        selection_messages = lm.prompts[1][0]
+        selection_prompt = selection_messages[0]["content"]
+        self.assertIn("ОБЩИЙ ИНСТРУМЕНТАЛЬНЫЙ СТАНДАРТ CYBERNOVA", selection_prompt)
+        self.assertIn("late_tool_69", selection_prompt)
+        self.assertIn("Draft plan: use late_tool_69", selection_messages[-1]["content"])
+        self.assertIn("не разрешение пользователя", selection_messages[-1]["content"])
+        self.assertEqual(mcp.calls, [("late_tool_69", {})])
+        self.assertEqual(out["selected_by"], "model_json_fallback")
+        self.assertEqual(out["tool_calls"], 1)
+
     def test_invalid_json_fallback_does_not_execute(self):
         mcp=FakeMCP()
         lm=FakeOllama([
