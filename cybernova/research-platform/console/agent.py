@@ -65,7 +65,7 @@ _ROUTINE_READ_TOOLS = frozenset({
     "browser_back", "browser_forward", "browser_reload", "terminal_status",
 })
 _TOOL_FALLBACK_INTENT = re.compile(
-    r"(?i)https?://|\b(?:check|inspect|open|run|execute|browse|search|find|read|"
+    r"(?i)https?://|\b(?:check|inspect|open|run|execute|use|select|choose|call|invoke|browse|search|find|read|"
     r"verify|continue|register|sign\s+in|log\s+in|submit|fetch|test)\b|"
     r"\b(?:провер|откро|открыв|запус|выполн|найд|поиск|прочита|изуч|"
     r"продолж|регистр|зарегистр|авториз|отправ|тестир)\w*"
