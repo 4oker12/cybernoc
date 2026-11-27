@@ -152,7 +152,7 @@ class ModelProviderTests(unittest.TestCase):
         self.assertEqual([p["model"] for p in sent],
                          ["deepseek-v4-pro", "deepseek-v4-pro"])
         self.assertEqual([p["reasoning_effort"] for p in sent], ["high", "max"])
-        self.assertEqual([p["max_tokens"] for p in sent], [4096, 32768])
+        self.assertEqual([p["max_tokens"] for p in sent], [16384, 32768])
         self.assertTrue(all(p["thinking"] == {"type": "enabled"} for p in sent))
 
     def test_explicit_token_budget_is_not_overridden_by_max_effort(self):
