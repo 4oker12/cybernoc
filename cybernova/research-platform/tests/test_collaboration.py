@@ -1,6 +1,8 @@
 """No-network tests for bounded, persisted two-agent collaboration."""
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from pathlib import Path
 from unittest.mock import patch
 import sys
@@ -15,6 +17,7 @@ from console.collaboration import (
     mentor_messages, researcher_messages,
 )
 from console.communication import CommunicationStore
+from console.evidence import EvidenceJournal
 from console.profile_settings import ProfileSettingsStore
 from console.tunnel_access import allowed_path
 
@@ -61,6 +64,83 @@ class CollaborationTests(unittest.TestCase):
                             for m in reopened.read(task_id)["messages"]))
         with self.assertRaisesRegex(CollaborationError, "not_active"):
             reopened.advance(task_id, "qwen", "Ещё одна попытка")
+
+    def test_human_intervention_is_visible_to_both_agents(self):
+        run = self.collab.create("Исследовать тестовую лабораторию", "gpt-test", 2)
+        task_id = run["task_id"]
+        self.collab.advance(task_id, "chatgpt", "DeepSeek, проверь журнал.")
+        run = self.collab.user_message(task_id, "Учитывай также мой дополнительный вывод.")
+        self.assertTrue(any(m["actor"] == "human" and
+                            m["body"] == "Учитывай также мой дополнительный вывод."
+                            for m in run["messages"]))
+        history, prompt = researcher_messages(run)
+        self.assertIn("дополнительный вывод", prompt)
+        self.collab.advance(task_id, "qwen", "Проверка выполнена.")
+        mentor_history = mentor_messages(self.collab.read(task_id))
+        self.assertTrue(any("дополнительный вывод" in item["content"]
+                            for item in mentor_history))
+
+    def test_live_user_message_does_not_trigger_interrupted_run_recovery(self):
+        run = self.collab.create("Проверить гонку записи", "gpt-test", 2)
+        task_id = run["task_id"]
+        # Simulate the small interval after a model message is committed but
+        # before CollaborationStore.advance updates the step cursor.
+        self.comm.append(task_id, "chatgpt", "feedback",
+                         "Ответ модели уже записан", status="running")
+        updated = self.collab.user_message(task_id, "Добавь ещё один критерий.")
+        self.assertEqual(updated["state"], "active")
+        with self.comm._connection() as db:
+            row = db.execute(
+                "SELECT state,step FROM collaboration_runs WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        self.assertEqual(row["state"], "active")
+        self.assertEqual(row["step"], 0)
+
+    def test_two_independent_collaboration_steps_overlap(self):
+        first = self.collab.create("Независимая задача A", "gpt-test", 2)
+        second = self.collab.create("Независимая задача B", "gpt-test", 2)
+        rendezvous = Barrier(2)
+
+        def fake_gpt(model, messages, **kwargs):
+            rendezvous.wait(timeout=5)
+            return {"answer": "Проверка завершена.", "model": model,
+                    "source": "offline", "tool_calls": 0, "tool_events": []}
+
+        with patch.object(server, "communication_store", return_value=self.comm), \
+             patch.object(server, "collaboration_store", return_value=self.collab), \
+             patch.object(server, "profile_settings_store", return_value=self.profile), \
+             patch.object(server, "chatgpt_models", return_value=[{"slug": "gpt-test"}]), \
+             patch.object(server, "chatgpt_chat", side_effect=fake_gpt):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [
+                    pool.submit(server.collaboration_step,
+                                server.CollaborationActionRequest(task_id=first["task_id"])),
+                    pool.submit(server.collaboration_step,
+                                server.CollaborationActionRequest(task_id=second["task_id"])),
+                ]
+                results = [future.result(timeout=8) for future in futures]
+        self.assertEqual({item["actor"] for item in results}, {"chatgpt"})
+        self.assertEqual({item["run"]["step"] for item in results}, {1})
+
+    def test_collaboration_locks_are_per_task(self):
+        first = server._collaboration_step_lock("cn_task_one_123456")
+        self.assertIs(first, server._collaboration_step_lock("cn_task_one_123456"))
+        second = server._collaboration_step_lock("cn_task_two_123456")
+        self.assertIsNot(first, second)
+
+    def test_tool_activity_receipt_is_persisted_incrementally(self):
+        run = self.collab.create("Проверить локальную активность", "gpt-test", 1)
+        with patch.object(server, "communication_store", return_value=self.comm):
+            server._record_collaboration_tool_event(run["task_id"], {
+                "type": "tool_result", "name": "http_get",
+                "arguments": {"url": "https://example.org/"},
+                "result": {"status": 200}, "is_error": False,
+            })
+        receipts = EvidenceJournal(self.comm).list_tool_receipts(run["task_id"])
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0]["tool_name"], "http_get")
+        self.assertFalse(receipts[0]["is_error"])
 
     def test_stop_does_not_advance(self):
         run = self.collab.create("Проверь тестовый проект", "gpt-test", 3)
@@ -139,10 +219,12 @@ class CollaborationTests(unittest.TestCase):
 
     def test_http_real_two_model_turns_with_mocked_inference(self):
         class FakeResearchAgent:
+            session_ids = []
             def __init__(self, *args, **kwargs):
                 pass
             def run(self, history, prompt, **kwargs):
                 self.prompt = prompt
+                self.session_ids.append(kwargs.get("session_id"))
                 return {
                     "answer": "DeepSeek: проверил локальные данные, активных сканов не было.",
                     "events": [], "tool_calls": 0, "approval_requests": [],
@@ -151,6 +233,11 @@ class CollaborationTests(unittest.TestCase):
         calls = []
         def fake_gpt(model, messages, **kwargs):
             calls.append((messages, kwargs))
+            callback = kwargs.get("on_tool_event")
+            if callback:
+                callback({"name": "http_get", "ok": True,
+                          "arguments": {"url": "https://example.org/"},
+                          "result": {"status": 200}})
             return {"answer": "Наставник: поставь гипотезу и проверь источник.",
                     "model": model, "source": "offline"}
         with patch.object(server, "communication_store", return_value=self.comm), \
@@ -166,12 +253,23 @@ class CollaborationTests(unittest.TestCase):
             })
             self.assertEqual(created.status_code, 200, created.text)
             task_id = created.json()["task_id"]
+            injected = client.post("/api/collab/message", json={
+                "task_id": task_id, "message": "Уточнение от пользователя во время работы"
+            })
+            self.assertEqual(injected.status_code, 200, injected.text)
+            self.assertTrue(any(m["actor"] == "human" and
+                                "Уточнение от пользователя" in m["body"]
+                                for m in injected.json()["messages"]))
             speakers = []
             for _ in range(2):
                 response = client.post("/api/collab/step", json={"task_id": task_id})
                 self.assertEqual(response.status_code, 200, response.text)
                 speakers.append(response.json()["actor"])
             self.assertEqual(speakers, ["chatgpt", "qwen"])
+            activity = client.get("/api/collab/activity", params={"task_id": task_id})
+            self.assertEqual(activity.status_code, 200, activity.text)
+            self.assertTrue(any(item["tool_name"] == "http_get"
+                                for item in activity.json()["tool_receipts"]))
             self.assertEqual(response.json()["run"]["state"], "paused")
             self.assertEqual(client.post("/api/collab/step",
                                          json={"task_id":task_id}).status_code,409)
@@ -188,6 +286,10 @@ class CollaborationTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertIn("DeepSeek", calls[1][0][-1]["content"])
             self.assertIn("ведущий инженер", calls[0][1]["profile_instructions"])
+            self.assertEqual(calls[0][1]["session_id"], task_id)
+            self.assertEqual(FakeResearchAgent.session_ids, [task_id, task_id])
+            self.assertTrue(any("Уточнение от пользователя" in item["content"]
+                                for item in calls[0][0]))
             self.assertGreaterEqual(len(client.get("/api/collab/run",
                 params={"task_id":task_id}).json()["messages"]),7)
             self.assertEqual(client.post("/api/collab/step",json={"task_id":task_id}).status_code,409)
@@ -198,7 +300,9 @@ class CollaborationTests(unittest.TestCase):
             ("/api/collab/start", "POST"), ("/api/collab/step", "POST"),
             ("/api/collab/stop", "POST"), ("/api/collab/resume", "POST"),
             ("/api/collab/finish", "POST"), ("/api/collab/runs", "GET"),
-            ("/api/collab/run?task_id=x", "GET"), ("/api/tools/run", "POST"),
+            ("/api/collab/run?task_id=x", "GET"),
+            ("/api/collab/activity?task_id=x", "GET"),
+            ("/api/collab/message", "POST"), ("/api/tools/run", "POST"),
         ]:
             self.assertTrue(allowed_path(path,method),path)
         self.assertFalse(allowed_path("/api/tools/execute", "POST"))
