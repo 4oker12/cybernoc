@@ -53,7 +53,7 @@
     const preset = el("select");
     preset.id = "modelPreset";
     [
-      ["deepseek-flash", "DeepSeek Flash — быстрее"],
+      ["deepseek-flash", "DeepSeek Flash — со зрением для браузера"],
       ["deepseek-v4-pro", "DeepSeek V4 Pro — сложные задачи"],
       ["custom", "Другой идентификатор…"],
     ].forEach(([value, label]) => {
@@ -78,7 +78,7 @@
     effort.value = "high";
     addField(grid, "Глубина рассуждений", effort);
     panel.append(el("p", "model-reasoning-note",
-      "Pro и Max могут увеличить время ответа и расходы на API. Flash поддерживает изображения; Pro — только текст."));
+      "Для анализа скриншотов выберите Flash. Pro читает структуру и текст страницы. Режим Max увеличивает глубину рассуждений и может замедлить ответ."));
 
     const model = el("input");
     model.id = "modelId";

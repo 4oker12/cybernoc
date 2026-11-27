@@ -82,6 +82,23 @@ class BrowserControlTests(unittest.TestCase):
                     self.assertEqual([item["id"] for item in capture["buttons"]], ["last-action"])
                     self.assertTrue(capture["links"])
                     self.assertTrue(all(item["in_viewport"] for item in capture["links"]))
+
+                    page.set_content("""
+                        <div><h2>Plus</h2><input type=radio name=plan aria-label=Plan checked></div>
+                        <div><h2>Free</h2><input type=radio name=plan aria-label=Plan></div>
+                    """)
+                    choices = session._snapshot()["form_fields"]
+                    self.assertEqual([(item["choice_context"], item["checked"]) for item in choices],
+                                     [("Plus", True), ("Free", False)])
+                    result = session._dispatch("browser_set_checked",
+                                               {"label": "context:Free", "checked": True})
+                    self.assertTrue(result["field_verified"])
+                    self.assertEqual([item["checked"] for item in result["form_fields"]],
+                                     [False, True])
+                    page.locator("h2").first.evaluate("(heading) => heading.textContent = 'Free'")
+                    with self.assertRaisesRegex(ValueError, "browser_target_context_not_unique"):
+                        session._dispatch("browser_set_checked",
+                                          {"label": "context:Free", "checked": True})
                 finally:
                     session._executor.shutdown(wait=False, cancel_futures=True)
                     context.close()

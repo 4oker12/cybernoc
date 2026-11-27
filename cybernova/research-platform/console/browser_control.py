@@ -93,7 +93,9 @@ BROWSER_CONTROL_TOOLS = [
           {"label": FIELD_LABEL,
            "value": {**STRING, "description": "Option label or value"}}, ["label", "value"]),
     _tool("browser_set_checked",
-          "Set a visible native checkbox or radio by label or snapshot id. Radio buttons can only be checked.",
+          "Set a visible native checkbox or radio by label or snapshot id. For a radio with a "
+          "choice_context in the snapshot, use context:<exact choice_context> as the label. "
+          "Radio buttons can only be checked.",
           {"label": FIELD_LABEL, "checked": {"type": "boolean"}}, ["label", "checked"]),
     _tool("browser_click_button",
           "Click one visible button by exact accessible name. GET navigation is allowed. If the button submits a form and the user explicitly asked to send, save or apply it, use browser_submit.",
@@ -321,6 +323,19 @@ def _disable_profile_session_restore(profile_dir: Path) -> bool:
         except OSError:
             pass
         raise ValueError("browser_profile_restore_preference_failed") from exc
+
+
+_RADIO_CONTEXT_JS = r"""el => {
+    if (!el.matches('input[type=radio]')) return '';
+    let parent = el.parentElement;
+    for (let level = 0; parent && level < 3; level++, parent = parent.parentElement) {
+        if (parent.matches('body,html') ||
+            parent.querySelectorAll('input[type=radio]').length !== 1) break;
+        const firstLine = (parent.innerText || '').trim().split(/\r?\n/, 1)[0].trim();
+        if (firstLine && firstLine.length <= 80) return firstLine;
+    }
+    return '';
+}"""
 
 
 class BrowserSession:
@@ -656,6 +671,7 @@ class BrowserSession:
         try:
             rows = page.locator("a,button,input,textarea,select,[role=\"button\"],[role=\"combobox\"],[role=\"option\"],[role=\"checkbox\"],[role=\"radio\"]").evaluate_all(
                 """els => {
+                const radioContext = """ + _RADIO_CONTEXT_JS + """;
                 const inViewport = el => {
                     const r = el.getBoundingClientRect();
                     return r.bottom > 0 && r.top < innerHeight &&
@@ -682,6 +698,7 @@ class BrowserSession:
                     id: el.id,
                     in_viewport: inViewport(el),
                     checked: ['checkbox', 'radio'].includes(el.type) ? el.checked : null,
+                    choice_context: radioContext(el),
                     expanded: el.getAttribute('aria-expanded'),
                     option_labels: el.tagName === 'SELECT' ? Array.from(el.options)
                         .slice(0, 20).map(option => option.label.slice(0, 100)) : []
@@ -717,6 +734,8 @@ class BrowserSession:
                 }
                 if item["checked"] is not None:
                     field["checked"] = item["checked"]
+                if item.get("choice_context"):
+                    field["choice_context"] = _redact_text(item["choice_context"])
                 if item["option_labels"]:
                     field["options"] = [_redact_text(option) for option in item["option_labels"]]
                 fields.append(field)
@@ -812,6 +831,26 @@ class BrowserSession:
                     break
         if field is None:
             raise ValueError("browser_target_not_unique:0")
+        return field
+
+    def _radio_by_context(self, name):
+        # Resolve the exact context again so a stale snapshot cannot select by position.
+        match = self._page.evaluate_handle(
+            """name => {
+                const radioContext = """ + _RADIO_CONTEXT_JS + """;
+                const matches = Array.from(document.querySelectorAll('input[type=radio]'))
+                    .filter(el => {
+                        const rect = el.getBoundingClientRect();
+                        const style = getComputedStyle(el);
+                        return rect.width && rect.height && style.visibility === 'visible' &&
+                            radioContext(el) === name;
+                    });
+                return matches.length === 1 ? matches[0] : null;
+            }""", name)
+        field = match.as_element()
+        if field is None or not field.is_enabled():
+            match.dispose()
+            raise ValueError("browser_target_context_not_unique_or_interactable")
         return field
 
     def _dispatch(self, name: str, args: dict) -> dict:
@@ -1005,11 +1044,21 @@ class BrowserSession:
             if name == "browser_set_checked":
                 if type(value) is not bool:
                     raise ValueError("browser_arguments_invalid")
-                field = self._field(label, 'input[type="checkbox"],input[type="radio"]')
-                if not value and field.get_attribute("type") == "radio":
-                    raise ValueError("browser_radio_requires_another_option")
-                field.set_checked(value, timeout=7000)
-                verified = field.is_checked() == value
+                contextual = isinstance(label, str) and label.startswith("context:")
+                if contextual:
+                    if not 1 <= len(label[8:]) <= 80:
+                        raise ValueError("browser_field_label_invalid")
+                    field = self._radio_by_context(label[8:])
+                else:
+                    field = self._field(label, 'input[type="checkbox"],input[type="radio"]')
+                try:
+                    if not value and field.get_attribute("type") == "radio":
+                        raise ValueError("browser_radio_requires_another_option")
+                    field.set_checked(value, timeout=7000)
+                    verified = field.is_checked() == value
+                finally:
+                    if contextual:
+                        field.dispose()
             elif not isinstance(value, str) or len(value) > 1200:
                 raise ValueError("browser_value_invalid")
             elif name == "browser_select":
