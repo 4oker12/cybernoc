@@ -12,7 +12,7 @@ const state={sessionId:null,taskId:null,lastSeq:0,running:false,qwenRunning:fals
     gpt:{input:0,output:0,total:0,measuredTurns:0}
   },
   lastUsage:{qwen:null,gpt:null},
-  collabRun:null,collabLoopTasks:new Set(),collabStopRequests:new Set(),collabActivity:new Map(),
+  collabRun:null,collabRunning:false,collabLoopTasks:new Set(),collabStopRequests:new Set(),collabActivity:new Map(),
   collabWorkByTask:new Map(),collabWorkLoops:new Set(),
   collabWorkRenderedTask:null,collabWorkRenderedSignature:null,
   collabWorkExpanded:new Set(),collabActivityExpanded:new Set()};
@@ -711,7 +711,7 @@ async function sendCollabMessage(){
   }catch(err){
     $("sendStatus").textContent="Не удалось отправить: "+String(err.message||err);
   }finally{
-    $("sendButton").disabled=false;
+    updateBusyUI();
     $("messageInput").focus();
   }
 }
@@ -1782,6 +1782,7 @@ async function planCollabWork(){
 async function runCollabWork(taskId=state.collabRun?.task_id){
   if(!taskId||state.collabWorkLoops.has(taskId))return;
   state.collabWorkLoops.add(taskId);
+  updateBusyUI();
   // Poll only while the user-triggered bounded batch is running.
   const activityTimer=setInterval(()=>{
     void refreshCollabWork(taskId);
@@ -1817,6 +1818,7 @@ async function runCollabWork(taskId=state.collabRun?.task_id){
   }finally{
     clearInterval(activityTimer);
     state.collabWorkLoops.delete(taskId);
+    updateBusyUI();
     const updated=await refreshCollabWork(taskId);
     if(state.collabRun?.task_id===taskId&&updated){
       const items=updated.items||[];
@@ -1935,6 +1937,7 @@ async function startCollab(){
 async function continueCollab(taskId=state.collabRun?.task_id){
   if(!taskId||state.collabLoopTasks.has(taskId))return;
   state.collabLoopTasks.add(taskId);
+  updateBusyUI();
   state.collabStopRequests.delete(taskId);
   let run=null;
   const activityTimer=setInterval(()=>{void refreshCollabActivity(taskId);},1200);
@@ -1971,6 +1974,7 @@ async function continueCollab(taskId=state.collabRun?.task_id){
   }finally{
     clearInterval(activityTimer);
     state.collabLoopTasks.delete(taskId);
+    updateBusyUI();
     if(state.collabRun?.task_id===taskId&&run)renderCollabRun(run);
     void refreshCollabActivity(taskId);
     void refreshCollabRuns();
