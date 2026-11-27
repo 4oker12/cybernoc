@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from console.agent import Agent, BackendError, APPROVAL_TTL_SECONDS
+from console.agent import Agent, BackendError, APPROVAL_TTL_SECONDS, _diagnostic_tool_args
 from console.gpt_tool_runtime import route_model_tool_rows
 from console.tool_policy import (
     MAX_ADVERTISED, MAX_DISCOVERED, ToolPolicyError, discovered_tools, model_tools, validate_dynamic_arguments,
@@ -255,6 +255,34 @@ class DynamicToolPolicyTests(unittest.TestCase):
         self.assertEqual(desc["approval"], "required")
         self.assertEqual(desc["execution"], "not_started")
         self.assertIn("Агент запрашивает", desc["purpose"])
+
+
+    def test_diagnostic_argument_previews_redact_free_text_and_commands(self):
+        browser_args = _diagnostic_tool_args(
+            "browser_fill", {"field_label": "Password", "value": "private-secret"}
+        )
+        self.assertNotIn("private-secret", str(browser_args))
+        self.assertEqual(browser_args["value"], {"type": "str", "chars": 14})
+
+        command = "Write-Output private-secret"
+        terminal_args = _diagnostic_tool_args(
+            "terminal_run",
+            {
+                "command": command, "shell": "powershell",
+                "cwd": r"C:\Users\PrivateUser", "timeout_seconds": 30,
+                "max_output_chars": 1000,
+            },
+        )
+        self.assertNotIn("private-secret", str(terminal_args))
+        self.assertNotIn("PrivateUser", str(terminal_args))
+        self.assertEqual(terminal_args["command_chars"], len(command))
+        self.assertEqual(terminal_args["shell"], "powershell")
+
+        url_args = _diagnostic_tool_args(
+            "browser_navigate", {"url": "https://example.org/path?token=secret"}
+        )
+        self.assertEqual(url_args["url"], "https://example.org/path")
+        self.assertNotIn("secret", str(url_args))
 
 
 if __name__=="__main__":
