@@ -413,9 +413,12 @@ def _tool_handler_source(name: str, backend: str) -> dict:
     if name.startswith("computer_"):
         return {"handler_file": "console/computer_control.py",
                 "handler_function": "computer_control_call"}
-    if name.startswith("terminal_") or name == "safe_terminal":
+    if name == "terminal_run" or name == "safe_terminal":
         return {"handler_file": "console/gpt_tool_runtime.py",
                 "handler_function": "_run_terminal"}
+    if name.startswith("terminal_"):
+        return {"handler_file": "console/gpt_tool_runtime.py",
+                "handler_function": "GPTToolRuntime.call"}
     if name in {"google_search", "research_source_open"}:
         return {"handler_file": "console/research_web.py",
                 "handler_function": "research_web_call"}
