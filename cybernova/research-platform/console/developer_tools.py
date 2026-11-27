@@ -22,6 +22,11 @@ import sys
 import tempfile
 import threading
 
+try:
+    from .github_tools import _gh_executable, _redact_text
+except ImportError:
+    from github_tools import _gh_executable, _redact_text
+
 SOURCE = Path(os.environ.get(
     "CYBERNOVA_DEV_SOURCE",
     str(Path(__file__).resolve().parents[3]) if os.name == "nt"
@@ -135,6 +140,28 @@ def _run(argv, *, cwd=SOURCE, timeout=25, env=None, uid=None):
     # Never forward unlimited compiler logs, native stack traces or secrets.
     return {"ok": p.returncode == 0, "exit_code": p.returncode,
             "stdout": p.stdout[-MAX_RESULT:], "stderr": p.stderr[-3000:]}
+
+
+def _windows_git_auth_env():
+    """Only for native Git push: use the operator's configured Windows helper."""
+    if os.name != "nt":
+        return None
+    keys = ("APPDATA", "LOCALAPPDATA", "SYSTEMROOT", "WINDIR", "PROGRAMFILES",
+            "PROGRAMFILES(X86)", "PROGRAMDATA", "HOMEDRIVE", "HOMEPATH",
+            "USERNAME", "USERDOMAIN", "COMSPEC", "PATHEXT")
+    env = {key: os.environ[key] for key in keys if key in os.environ}
+    env.update(GIT_CONFIG_NOSYSTEM="0", GIT_TERMINAL_PROMPT="0",
+               GCM_INTERACTIVE="Never", GH_PROMPT_DISABLED="1")
+    return env
+
+
+def _safe_push_result(result):
+    # A remote URL may contain userinfo. Do not expose it in tool output.
+    result = dict(result)
+    for key in ("stdout", "stderr"):
+        if isinstance(result.get(key), str):
+            result[key] = _redact_text(re.sub(r"(?i)(https?://)[^/\s@]+@", r"\1[REDACTED]@", result[key]))
+    return result
 
 
 def _task_branch(task_id):
@@ -342,23 +369,32 @@ def dev_call(name, args, task_id):
         return {"branch": branch, "commit": sha, **result}
     if name == "dev_push":
         key = os.environ.get("CYBERNOVA_DEV_WRITE_KEY", "")
+        windows_env = _windows_git_auth_env()
+        gh = _gh_executable()
         if key and Path(key).is_file():
             ssh = "ssh -i " + key + " -o BatchMode=yes -o IdentitiesOnly=yes"
             pushed = _run(["git", "push", "-u", "origin", branch],
                           cwd=root, timeout=90, env={"GIT_SSH_COMMAND": ssh})
-        elif shutil.which("gh"):
-            auth = _run(["gh", "auth", "status", "--hostname", "github.com"],
+            auth_method = "configured_ssh"
+        elif windows_env is not None:
+            pushed = _run(["git", "push", "-u", "origin", branch],
+                          cwd=root, timeout=90, env=windows_env)
+            auth_method = "windows_git_credential_helper"
+        elif gh:
+            auth = _run([gh, "auth", "status", "--hostname", "github.com"],
                         cwd=root, timeout=12)
             if not auth.get("ok"):
                 raise DeveloperError("github_cli_auth_required_run_gh_auth_login")
             pushed = _run(["git", "-c", "credential.helper=", "-c",
                            "credential.helper=!gh auth git-credential",
                            "push", "-u", "origin", branch], cwd=root, timeout=90)
+            auth_method = "gh_cli"
         else:
             raise DeveloperError("github_write_credentials_not_configured")
-        return {"branch": branch, **pushed}
+        return {"branch": branch, "auth_method": auth_method, **_safe_push_result(pushed)}
     if name == "dev_open_pr":
-        if not shutil.which("gh"):
+        gh = _gh_executable()
+        if not gh:
             raise DeveloperError("github_cli_not_installed")
         title, body = args.get("title"), args.get("body")
         base = args.get("base") or "main"
@@ -369,12 +405,12 @@ def dev_call(name, args, task_id):
         token = (os.environ.get("CYBERNOVA_DEV_GITHUB_TOKEN")
                  or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
         if not token:
-            auth = _run(["gh", "auth", "token", "--hostname", "github.com"],
+            auth = _run([gh, "auth", "token", "--hostname", "github.com"],
                         cwd=root, timeout=12)
             token = auth.get("stdout", "").strip() if auth.get("ok") else ""
         if not token:
             raise DeveloperError("github_cli_auth_required_run_gh_auth_login")
-        return {"branch": branch, **_run(["gh", "pr", "create", "--head", branch,
+        return {"branch": branch, **_run([gh, "pr", "create", "--head", branch,
                  "--base", base, "--title", title, "--body", body], cwd=root,
                  timeout=40, env={"GH_TOKEN": token})}
     raise DeveloperError("unknown_developer_tool")

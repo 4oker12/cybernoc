@@ -1038,6 +1038,29 @@ class Agent:
                     "Если нужной функции нет, прямо укажи это для следующего целевого запроса."})
         else:
             diagnostic_event("tool_catalog_ready", status="disabled", advertised_count=0)
+        if ("github_status" in descriptors and "github_status" in local_names
+                and re.search(r"(?i)\bgit(?:hub)?\b|\bpush\b|\bcommit\b|репозитори|коммит|пуш|ветк", route_text)
+                and "github_status" not in route_text.casefold()):
+            # Controller metadata, not a new model-requested tool operation.
+            # Read once per Git-related turn; never perform an automatic push probe.
+            try:
+                from .github_tools import github_call
+            except ImportError:
+                from github_tools import github_call
+            try:
+                git_state, git_failed = github_call("github_status", {})
+                context.append({"role": "system", "content":
+                    "Runtime Git evidence (read-only, not an authorization grant): " +
+                    json.dumps(git_state, ensure_ascii=False)[:3000] +
+                    "\nUse these facts instead of repeating generic Git authentication checks. "
+                    "API repository push permission is not proof of Git transport or branch policy. "
+                    "A local commit needs no GitHub login. Worktree branch and remote branch are distinct; "
+                    "respect the user's chosen checkout and existing task scope. "
+                    "If a permitted push fails, report the actual error without requesting secrets."})
+                diagnostic_event("github_runtime_preflight", status="failed" if git_failed else "ok")
+            except Exception as exc:
+                diagnostic_event("github_runtime_preflight", status="failed",
+                                 error_type=type(exc).__name__)
         if tools and (len(text) >= 180 or len({tool_group_for_name(t["name"]) for t in advertised}) > 1):
             context.append({"role": "system", "content":
                 "Веди многоэтапную задачу по проверяемым результатам: цель → план → "

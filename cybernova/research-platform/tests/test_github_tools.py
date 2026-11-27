@@ -1,5 +1,6 @@
 """Offline tests for the read-only GitHub tool group."""
 from pathlib import Path
+import os
 import sys
 import tempfile
 import unittest
@@ -49,6 +50,42 @@ class GitHubToolsTests(unittest.TestCase):
         self.assertEqual(result["account"], "cybernova-user")
         self.assertEqual(result["mode"], "authenticated_repo_scoped")
         self.assertNotIn(secret, str(result))
+
+    def test_cli_discovery_finds_winget_install_with_stale_path(self):
+        from console.github_tools import _gh_executable
+        with tempfile.TemporaryDirectory() as dirname:
+            gh = Path(dirname) / "Microsoft" / "WinGet" / "Packages" / \
+                "GitHub.cli_Microsoft.Winget.Source_test" / "bin" / "gh.exe"
+            gh.parent.mkdir(parents=True)
+            gh.touch()
+            with patch("console.github_tools.platform.system", return_value="Windows"), \
+                 patch("console.github_tools.shutil.which", return_value=None), \
+                 patch.dict(os.environ, {"LOCALAPPDATA": dirname}):
+                self.assertEqual(_gh_executable(), str(gh.resolve()))
+
+    def test_status_reports_real_repository_permissions_without_credentials(self):
+        secret = "ghp_" + "x" * 36
+        local = {"source_repo": "owner/repo", "branch": "fix/example",
+                 "push_transport": "not_tested"}
+        with patch("console.github_tools._local_git_context", return_value=local), \
+             patch("console.github_tools._auth_token", return_value=(secret, "gh_cli")), \
+             patch("console.github_tools._api_get", side_effect=[
+                 {"login": "owner", "type": "User"},
+                 {"permissions": {"pull": True, "push": True, "admin": False}},
+             ]) as api:
+            result, failed = github_call("github_status", {})
+        self.assertFalse(failed)
+        self.assertTrue(result["repository_permissions"]["push"])
+        self.assertFalse(result["repository_permissions"]["admin"])
+        self.assertEqual(result["local_git"]["push_transport"], "not_tested")
+        self.assertEqual(api.call_args_list[1].args, ("repos/owner/repo", secret))
+        self.assertNotIn(secret, str(result))
+
+    def test_origin_repository_never_returns_url_credentials(self):
+        from console.github_tools import _origin_repository
+        self.assertEqual(_origin_repository("https://user:private@github.com/owner/repo.git"), "owner/repo")
+        self.assertEqual(_origin_repository("git@github.com:owner/repo.git"), "owner/repo")
+        self.assertIsNone(_origin_repository("https://github.com.evil.example/owner/repo"))
 
     def test_anonymous_mode_is_public_read_only(self):
         with patch("console.github_tools._auth_token", return_value=("", "anonymous")), \

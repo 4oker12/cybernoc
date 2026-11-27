@@ -121,9 +121,26 @@ class DeveloperToolsTests(unittest.TestCase):
         self.assertIn("dev_push",REVIEWED_TOOLS)
         self.assertIn("dev_open_pr",REVIEWED_TOOLS)
         with patch.dict(os.environ,{"CYBERNOVA_DEV_WRITE_KEY":""}), \
-             patch("console.developer_tools.shutil.which", return_value=None):
+             patch("console.developer_tools._windows_git_auth_env", return_value=None), \
+             patch("console.developer_tools._gh_executable", return_value=None):
             with self.assertRaisesRegex(dev.DeveloperError,"github_write_credentials_not_configured"):
                 self.call("dev_push")
+
+    def test_windows_push_uses_native_git_credentials_without_gh(self):
+        branch = "cybernova/qwen/test"
+        env = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never"}
+        with patch.dict(os.environ, {"CYBERNOVA_DEV_WRITE_KEY": ""}), \
+             patch("console.developer_tools._workspace", return_value=(branch, self.repo)), \
+             patch("console.developer_tools._windows_git_auth_env", return_value=env), \
+             patch("console.developer_tools._gh_executable", return_value=None), \
+             patch("console.developer_tools._run", return_value={
+                 "ok": True, "exit_code": 0, "stdout": "", "stderr": ""
+             }) as run:
+            result = self.call("dev_push")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["auth_method"], "windows_git_credential_helper")
+        run.assert_called_once_with(["git", "push", "-u", "origin", branch],
+                                    cwd=self.repo, timeout=90, env=env)
 
     def test_agent_really_reads_project_when_qwen_does_not_call_tools(self):
         from console.agent import Agent

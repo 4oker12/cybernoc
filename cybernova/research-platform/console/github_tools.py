@@ -10,6 +10,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
@@ -64,7 +66,7 @@ _STATE_ARG = {"type": "string", "enum": ["open", "closed", "all"]}
 
 GITHUB_TOOLS = [
     _tool("github_status",
-          "Check GitHub API connectivity and authentication. Reports only whether access is authenticated and the auth source; never returns credentials."),
+          "Check GitHub API identity, permissions for the configured source repository, and local Git branch/HEAD. API permissions and Git transport are separate; no write probe or credentials returned."),
     _tool("github_search_repositories",
           "Search GitHub repositories by name, topic or query. Read-only; returns a bounded metadata list.",
           {"query": {"type": "string", "minLength": 2, "maxLength": 180},
@@ -106,12 +108,39 @@ GITHUB_NAMES = frozenset(item["name"] for item in GITHUB_TOOLS)
 _ARGUMENTS = {item["name"]: set(item["inputSchema"]["required"]) for item in GITHUB_TOOLS}
 
 
+def _gh_executable() -> str | None:
+    """Resolve an installed CLI even when the Windows process has an old PATH."""
+    executable = shutil.which("gh") or shutil.which("gh.exe")
+    if executable or platform.system() != "Windows":
+        return executable
+    local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    candidates = [
+        local / "Microsoft" / "WinGet" / "Links" / "gh.exe",
+        local / "Programs" / "GitHub CLI" / "gh.exe",
+    ]
+    for key in ("ProgramFiles", "ProgramFiles(x86)"):
+        if os.environ.get(key):
+            candidates.append(Path(os.environ[key]) / "GitHub CLI" / "gh.exe")
+    packages = local / "Microsoft" / "WinGet" / "Packages"
+    try:
+        candidates.extend(
+            folder / "bin" / "gh.exe"
+            for folder in sorted(packages.glob("GitHub.cli_Microsoft.Winget.Source_*"))
+        )
+    except OSError:
+        pass
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate.resolve())
+    return None
+
+
 def _auth_token() -> tuple[str, str]:
     for key in ("GH_TOKEN", "GITHUB_TOKEN"):
         value = os.environ.get(key, "").strip()
         if value:
             return value, "environment"
-    executable = shutil.which("gh") or shutil.which("gh.exe")
+    executable = _gh_executable()
     if executable:
         try:
             result = subprocess.run(
@@ -238,6 +267,111 @@ def _repo_info(item: dict) -> dict:
     }
 
 
+def _origin_repository(raw: str) -> str | None:
+    """Return only owner/repo, never URL userinfo or arbitrary remotes."""
+    match = re.fullmatch(r"git@github\.com:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", raw)
+    if match:
+        value = match.group(1)
+    else:
+        try:
+            url = parse.urlsplit(raw)
+            if url.scheme not in {"https", "ssh"} or url.hostname != "github.com":
+                return None
+            value = url.path.strip("/")
+        except ValueError:
+            return None
+    if value.endswith(".git"):
+        value = value[:-4]
+    try:
+        return _repo(value)
+    except GitHubToolError:
+        return None
+
+
+def _local_git_context() -> dict:
+    """Read only the configured source checkout. Do not invoke credential helpers."""
+    try:
+        from .developer_tools import SOURCE
+    except ImportError:
+        from developer_tools import SOURCE
+    executable = shutil.which("git")
+    state = {"available": bool(executable), "source_repo": None,
+             "branch": None, "head": None, "root": None,
+             "credential_helper_configured": None, "push_transport": "not_tested",
+             "local_commit_requires_github_auth": False}
+    if not executable or not SOURCE.is_dir():
+        return state
+
+    def read(*args):
+        try:
+            result = subprocess.run([executable, "-C", str(SOURCE), *args],
+                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                errors="replace", timeout=5, check=False)
+            return result.stdout.strip() if result.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    root = read("rev-parse", "--show-toplevel")
+    if not root:
+        return state
+    state["root"] = _short(root, 600)
+    branch = read("symbolic-ref", "--quiet", "--short", "HEAD")
+    state["branch"] = _short(branch, 240) if branch else None
+    sha = read("rev-parse", "HEAD")
+    state["head"] = sha if sha and re.fullmatch(r"[0-9a-f]{40,64}", sha) else None
+    remote = read("remote", "get-url", "origin")
+    state["source_repo"] = _origin_repository(remote) if remote else None
+    helper = read("config", "--get-all", "credential.helper")
+    state["credential_helper_configured"] = bool(helper)
+    return state
+
+
+def _github_status(token: str, auth_source: str) -> dict:
+    local = _local_git_context()
+    result = {"ok": True, "api": "github.com",
+              "authenticated": False, "auth_source": auth_source,
+              "gh_cli_available": bool(_gh_executable()),
+              "local_git": local, "repository_permissions": None,
+              "permissions_status": "not_checked",
+              "git_transport": "independent_of_api_authentication"}
+    if token:
+        try:
+            user = _api_get("user", token)
+        except GitHubToolError as exc:
+            result.update(ok=False, authenticated=None, api_error=str(exc),
+                          permissions_status="api_identity_unavailable")
+            return result
+        result.update(authenticated=True, account=user.get("login"),
+                      account_type=user.get("type"), mode="authenticated_repo_scoped",
+                      write_access="check_repository_permissions_and_branch_policy")
+        if local["source_repo"]:
+            try:
+                info = _api_get("repos/" + local["source_repo"], token)
+                permissions = info.get("permissions")
+                if isinstance(permissions, dict):
+                    result["repository_permissions"] = {
+                        key: permissions[key] for key in ("pull", "push", "admin", "maintain", "triage")
+                        if type(permissions.get(key)) is bool
+                    }
+                    result["permissions_status"] = "reported_by_github"
+                else:
+                    result["permissions_status"] = "not_reported_by_github"
+            except GitHubToolError as exc:
+                result.update(permissions_status="repository_api_unavailable",
+                              repository_api_error=str(exc))
+        return result
+    result.update(public_api=True, mode="public_read_only",
+                  auth_hint="API credentials are unavailable. Local Git may still use Windows Git Credential Manager. A local commit does not require GitHub authentication. Do not request or expose tokens.")
+    try:
+        rate = _api_get("rate_limit")
+        core = (rate.get("resources") or {}).get("core", {}) if isinstance(rate, dict) else {}
+        result.update(rate_limit_remaining=core.get("remaining"),
+                      rate_limit_limit=core.get("limit"))
+    except GitHubToolError as exc:
+        result.update(ok=False, api_error=str(exc))
+    return result
+
+
 def _compact_issue(item: dict) -> dict:
     return {
         "number": item.get("number"),
@@ -260,28 +394,8 @@ def github_call(name: str, args: dict) -> tuple[dict, bool]:
     try:
         token, auth_source = _auth_token()
         if name == "github_status":
-            if args:
-                raise GitHubToolError("github_arguments_invalid")
-            if token:
-                user = _api_get("user", token)
-                return {
-                    "ok": True, "api": "github.com", "authenticated": True,
-                    "auth_source": auth_source,
-                    "gh_cli_available": bool(shutil.which("gh") or shutil.which("gh.exe")),
-                    "account": user.get("login"),
-                    "account_type": user.get("type"), "mode": "authenticated_repo_scoped",
-                    "write_access": "token_present_repository_permissions_checked_by_github",
-                }, False
-            rate = _api_get("rate_limit")
-            core = (rate.get("resources") or {}).get("core", {}) if isinstance(rate, dict) else {}
-            return {
-                "ok": True, "api": "github.com", "authenticated": False,
-                "auth_source": "anonymous", "public_api": True,
-                "gh_cli_available": bool(shutil.which("gh") or shutil.which("gh.exe")),
-                "auth_hint": "For private repositories, install GitHub CLI and run gh auth login on the Cybernova host, or configure GH_TOKEN/GITHUB_TOKEN outside chat.",
-                "rate_limit_remaining": core.get("remaining"),
-                "rate_limit_limit": core.get("limit"), "mode": "public_read_only",
-            }, False
+            result = _github_status(token, auth_source)
+            return result, not result["ok"]
 
         if name == "github_search_repositories":
             query = args["query"]
@@ -294,7 +408,8 @@ def github_call(name: str, args: dict) -> tuple[dict, bool]:
 
         repo = _repo(args["repo"]) if "repo" in args else ""
         if name == "github_repo_info":
-            return {"ok": True, "repository": _repo_info(_api_get("repos/" + repo, token))}, False
+            return {"ok": True, "repository": _repo_info(_api_get("repos/" + repo, token)),
+                    "authenticated": bool(token), "auth_source": auth_source}, False
 
         if name == "github_list_branches":
             page = _page(args["per_page"])
