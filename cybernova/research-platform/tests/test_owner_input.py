@@ -251,6 +251,70 @@ class OwnerInputBrokerTests(unittest.TestCase):
         with self.assertRaises(OwnerInputError):
             broker.consume_payment_confirmation(session, result["request_id"])
 
+    def test_browser_action_confirmation_is_one_shot_and_bound_to_origins(self):
+        broker = OwnerInputBroker()
+        result = {}
+        session = "deepseek:" + "m" * 32
+        worker = threading.Thread(target=lambda: result.update(
+            broker.request_and_wait(
+                session, "Save settings on the site", "browser_action_confirmation",
+                "PUT https://example.test/api/settings", timeout=3,
+                expected_origin="https://example.test",
+                action_origin="https://api.example.test:8443",
+                action_button="PUT https://api.example.test/api/settings",
+            )
+        ))
+        worker.start()
+        deadline = time.monotonic() + 2
+        pending = None
+        while time.monotonic() < deadline and pending is None:
+            pending = broker.pending(session)
+            time.sleep(0.01)
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending["input_type"], "browser_action_confirmation")
+        self.assertEqual(pending["expected_origin"], "https://example.test")
+        self.assertEqual(pending["action_origin"], "https://api.example.test:8443")
+        self.assertNotIn("value", pending)
+        broker.submit(session, pending["request_id"], decision=True)
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(result["ok"])
+        decision, origin, action_origin, action = broker.consume_browser_action_confirmation(
+            session, result["request_id"]
+        )
+        self.assertTrue(decision)
+        self.assertEqual(origin, "https://example.test")
+        self.assertEqual(action_origin, "https://api.example.test:8443")
+        self.assertEqual(action, "PUT https://api.example.test/api/settings")
+        with self.assertRaises(OwnerInputError):
+            broker.consume_browser_action_confirmation(session, result["request_id"])
+
+    def test_browser_action_confirmation_accepts_explicit_internal_http_origin(self):
+        broker = OwnerInputBroker()
+        result = {}
+        session = "deepseek:" + "n" * 32
+        worker = threading.Thread(target=lambda: result.update(
+            broker.request_and_wait(
+                session, "Apply a setting on an explicitly scoped internal site",
+                "browser_action_confirmation", "DELETE http://192.0.2.10:8080/item",
+                timeout=3, expected_origin="http://192.0.2.10:8080",
+                action_origin="http://192.0.2.10:8080",
+                action_button="DELETE http://192.0.2.10:8080/item",
+            )
+        ))
+        worker.start()
+        deadline = time.monotonic() + 2
+        pending = None
+        while time.monotonic() < deadline and pending is None:
+            pending = broker.pending(session)
+            time.sleep(0.01)
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending["expected_origin"], "http://192.0.2.10:8080")
+        broker.cancel(session, pending["request_id"])
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(result["ok"])
+
     def test_card_details_are_not_an_allowed_input_type(self):
         broker = OwnerInputBroker()
         with self.assertRaises(OwnerInputError):
