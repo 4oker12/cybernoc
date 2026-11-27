@@ -635,6 +635,7 @@ async function requestChatTurn(data,pending){
   throw Error("Истекло время ожидания результата. Задача может продолжаться на сервере.");
 }
 async function send(){
+  if(state.mode==="collab")return sendCollabMessage();
   if(state.mode==="gpt")return sendGPT();
   const text=$("messageInput").value.trim();
   if(!text||state.qwenRunning)return;
@@ -689,6 +690,81 @@ async function send(){
     busy(false,"qwen");await usageWatch;$("messageInput").focus();toBottom();
   }
 }
+async function sendCollabMessage(){
+  const message=$("messageInput").value.trim();
+  const run=state.collabRun;
+  if(!message||!run||!["active","paused"].includes(run.state))return;
+  $("sendButton").disabled=true;
+  $("sendStatus").textContent="Добавляем сообщение в общий диалог…";
+  try{
+    const updated=await requestJson("/api/collab/message",{
+      task_id:run.task_id,message
+    });
+    if(state.collabRun?.task_id===run.task_id)renderCollabRun(updated);
+    $("messageInput").value="";
+    $("sendStatus").textContent="Сообщение добавлено; участники учтут его в следующем ходе";
+    void refreshCollabRuns();
+  }catch(err){
+    $("sendStatus").textContent="Не удалось отправить: "+String(err.message||err);
+  }finally{
+    $("sendButton").disabled=false;
+    $("messageInput").focus();
+  }
+}
+async function sendGPT(){
+  const message=$("messageInput").value.trim();
+  if(!message||state.running)return;
+  if(!state.gptThreadId)resetUsage("gpt");
+  if(!state.gptConnected||!state.gptPlanUsage){
+    $("sendStatus").textContent="Открой «Аккаунт GPT» и подключи ChatGPT.";
+    return;
+  }
+  const model=$("gptTopModel").value;
+  if(!model){
+    $("sendStatus").textContent="Выбери модель ChatGPT наверху.";
+    return;
+  }
+  $("gptWelcome")?.remove();
+  const userMessage=renderMessage("user",message,false,"gptMessages");
+  $("messageInput").value="";
+  const pending=renderMessage("chatgpt","ChatGPT формирует ответ…",true,"gptMessages");
+  const runId=newRunId();
+  busy(true);
+  const usageWatch=watchUsageProgress(runId);
+  try{
+    const result=await requestJson("/api/siwc/chat",{
+      thread_id:state.gptThreadId,model,message,tool_groups:state.toolGroups,run_id:runId
+    });
+    state.gptThreadId=result.thread_id;
+    pending.wrap.classList.remove("working");
+    setFormatted(pending.body,result.answer||"Ответ модели пуст.");
+    recordUsage(result.usage,"gpt",pending);
+    if(Array.isArray(result.tool_events)&&result.tool_events.length){
+      const details=node("div","inline-tools");
+      for(const event of result.tool_events){
+        details.append(makeToolDetails({
+          name:event.name,
+          arguments:event.arguments||{},
+          result:event.result||event.summary||{},
+          is_error:typeof event.is_error==="boolean"?event.is_error:!event.ok,
+        }));
+      }
+      userMessage.wrap.append(details);
+    }
+    $("sendStatus").textContent=(result.source==="chatgpt_plan_responses_partial"?
+      "ChatGPT прервал цикл · частичные результаты сохранены":
+      "Ответ ChatGPT · диалог сохранён")+
+      (result.tool_events && result.tool_events.length ? " · инструментов: "+result.tool_events.length : "");
+    void refreshGPTThreads();
+  void refreshCollabRuns();
+  }catch(err){
+    pending.wrap.classList.remove("working");
+    pending.body.textContent="Ошибка: "+String(err.message||err);
+    $("sendStatus").textContent="Ошибка GPT";
+  }finally{busy(false);await usageWatch;$("messageInput").focus();toBottom();}
+}
+
+
 function gptWelcome(){
   $("gptMessages").replaceChildren(window.cybernovaGptWelcome.cloneNode(true));
 }
