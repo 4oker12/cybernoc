@@ -746,7 +746,8 @@ def collaboration_start(payload: CollaborationStartRequest):
                 scope = scope_profile(active_session["scope"]["hosts"],
                                       active_session["scope"]["capture_detail"])
         return collaboration_store().create(payload.goal, payload.model,
-                                            payload.cycles, scope=scope)
+                                            payload.cycles, scope=scope,
+                                            mode=payload.mode)
     except (SIWCError, ProfileSettingsError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except (CollaborationError, ValueError, CommunicationError) as exc:
@@ -772,6 +773,7 @@ def collaboration_resume(payload: CollaborationActionRequest):
 @app.post("/api/collab/finish")
 def collaboration_finish(payload: CollaborationActionRequest):
     try:
+        work_item_store().cancel_pending(payload.task_id)
         return collaboration_store().finish(payload.task_id)
     except (CollaborationError, CommunicationError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
@@ -781,16 +783,24 @@ def collaboration_finish(payload: CollaborationActionRequest):
 def collaboration_step(payload: CollaborationActionRequest):
     # Sequential browser-driven turn: no unbounded background loops.
     # A concurrent stop can mark the run stopped during model I/O.
-    with collaboration_step_lock:
+    with _collaboration_step_lock(payload.task_id):
         store = collaboration_store()
         try:
             run = store.read(payload.task_id)
+            if run["mode"] == "parallel":
+                raise HTTPException(status_code=409, detail="parallel_collaboration_requires_work_items")
             if run["state"] != "active":
                 raise HTTPException(status_code=409, detail="collaboration_not_active")
             role = run["next_actor"]
             profile = profile_settings_store().load()
             tool_count = 0
             blocked = False
+            persisted_tool_events = []
+
+            def persist_tool_event(event):
+                _record_collaboration_tool_event(payload.task_id, event)
+                persisted_tool_events.append(event)
+
             if role == "chatgpt":
                 history = mentor_messages(run)
                 outcome = chatgpt_chat(
@@ -803,17 +813,12 @@ def collaboration_step(payload: CollaborationActionRequest):
                     authorized_targets=extract_user_targets([
                         {"role": "user", "content": run["goal"]}
                     ]),
+                    on_tool_event=persist_tool_event,
                 )
                 tool_count = int(outcome.get("tool_calls", 0))
-                EvidenceJournal(communication_store()).record_tool_events(
-                    payload.task_id, [{
-                        "type": "tool_result" if event.get("ok") else "tool_error",
-                        "name": event.get("name", ""),
-                        "is_error": not bool(event.get("ok")),
-                        "arguments": event.get("arguments") or {},
-                        "result": event.get("result") or {},
-                    } for event in outcome.get("tool_events", [])],
-                )
+                if not persisted_tool_events:
+                    for event in outcome.get("tool_events", []):
+                        _record_collaboration_tool_event(payload.task_id, event)
             else:
                 history, prompt = researcher_messages(run)
                 scope = ResearchScopeStore(communication_store().path).load(payload.task_id)
@@ -836,11 +841,13 @@ def collaboration_step(payload: CollaborationActionRequest):
                         mode_instructions_for(profile, "researcher")
                     ),
                     session_id="collab:" + payload.task_id + ":deepseek",
+                    on_tool_event=persist_tool_event,
+                    trusted_user_messages=[{"role": "user", "content": run["goal"]}],
                 )
                 tool_count = outcome.get("tool_calls", 0)
-                EvidenceJournal(communication_store()).record_tool_events(
-                    payload.task_id, outcome.get("events") or [],
-                )
+                if not persisted_tool_events:
+                    for event in outcome.get("events") or []:
+                        _record_collaboration_tool_event(payload.task_id, event)
                 blocked = bool(outcome.get("approval_requests"))
             answer = str(outcome.get("answer", "")).strip()
             if blocked:
