@@ -2074,10 +2074,35 @@ function init(){
   setUtilityPlaceholder();
   try{setSidebarCollapsed(window.localStorage.getItem("cybernova_sidebar_collapsed")==="1");}
   catch(_){setSidebarCollapsed(false);}
+  $("collabStrategy").addEventListener("change",()=>{
+    $("collabCyclesLabel").hidden=$("collabStrategy").value!=="dialog";
+  });
+  $("collabCyclesLabel").hidden=$("collabStrategy").value!=="dialog";
   $("collabStart").addEventListener("click",startCollab);
   $("collabStop").addEventListener("click",stopCollab);
   $("collabFinish").addEventListener("click",finishCollab);
-  $("collabResume").addEventListener("click",continueCollab);
+  $("collabResume").addEventListener("click",async()=>{
+    const taskId=state.collabRun?.task_id;
+    if(!taskId)return;
+    if(state.collabRun.mode==="parallel"){
+      try{
+        const run=await requestJson("/api/collab/resume",{task_id:taskId});
+        if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+        void runCollabWork(taskId);
+      }catch(err){$("collabStatus").textContent="Ошибка продолжения: "+String(err.message||err);}
+    }else void continueCollab(taskId);
+  });
+  $("collabRecover").addEventListener("click",async()=>{
+    const taskId=state.collabRun?.task_id;
+    if(!taskId)return;
+    try{
+      const run=await requestJson("/api/collab/items/recover",{task_id:taskId});
+      if(state.collabRun?.task_id===taskId)renderCollabRun(run);
+      void refreshCollabWork(taskId);
+    }catch(err){$("collabStatus").textContent="Восстановление: "+String(err.message||err);}
+  });
+  $("collabPlan").addEventListener("click",planCollabWork);
+  $("collabWorkRun").addEventListener("click",()=>runCollabWork());
   $("collabNew").addEventListener("click",newCollab);
   $("navProfile").addEventListener("click",()=>openProfileSettings());
   $("modelQuickSettings").addEventListener("click",()=>openProfileSettings("model"));
