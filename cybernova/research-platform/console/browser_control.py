@@ -942,9 +942,14 @@ class BrowserSession:
                                           mask=[masks], mask_color="#808080")
             if len(image) > 1500000:
                 raise ValueError("browser_screenshot_too_large")
+            snapshot = self._snapshot()
             return {
-                "ok": True, "url": _safe_url(self._page.url),
-                "title": _redact_text(self._page.title())[:180],
+                "ok": True, "url": snapshot["url"], "title": snapshot["title"],
+                "tab": snapshot["tab"],
+                **{
+                    field: [item for item in snapshot[field] if item["in_viewport"]]
+                    for field in ("links", "buttons", "form_fields")
+                },
                 "image_data_url": "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii"),
                 "mime_type": "image/jpeg",
                 "viewport": self._page.viewport_size,

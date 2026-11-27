@@ -559,19 +559,29 @@ def _compact_tool_output(output, seen_pages):
     # Build each delta against the previous observation of this page still in
     # the current context window, including after older tool calls are evicted.
     key = (result["url"], result.get("title"), result.get("tab"))
-    previous = seen_pages.get(key)
-    seen_pages[key] = result
-    if previous is not None and result.get("ok") is True:
+    previous = seen_pages.get(key, {})
+    unchanged = []
+    if result.get("ok") is True:
         unchanged = [field for field in _BROWSER_PAGE_FIELDS
-                     if field in result and previous.get(field) == result[field]]
-        if unchanged:
-            result = {key: value for key, value in result.items() if key not in unchanged}
-            result["page_content"] = (
-                "changed_fields_only" if any(field in result for field in _BROWSER_PAGE_FIELDS)
-                else "unchanged_from_earlier_tool_result"
-            )
-            result["unchanged_page_fields"] = unchanged
-    return _browser_json(result, MAX_CONTEXT_TOOL_CHARS)
+                     if field in result and field in previous and previous[field] == result[field]]
+    if unchanged:
+        result = {key: value for key, value in result.items() if key not in unchanged}
+        result["page_content"] = (
+            "changed_fields_only" if any(field in result for field in _BROWSER_PAGE_FIELDS)
+            else "unchanged_from_earlier_tool_result"
+        )
+        result["unchanged_page_fields"] = unchanged
+    content = _browser_json(result, MAX_CONTEXT_TOOL_CHARS)
+    # A later delta can refer only to fields the model actually received.
+    delivered = json.loads(content)
+    seen_pages[key] = {
+        field: delivered[field] if field in delivered else previous[field]
+        for field in _BROWSER_PAGE_FIELDS
+        if field in delivered or (
+            field in unchanged and "unchanged_page_fields" in delivered
+        )
+    }
+    return content
 
 
 def _restore_reasoning_history(persisted_history, in_memory_history, provider_identity=None):

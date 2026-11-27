@@ -76,6 +76,12 @@ class BrowserControlTests(unittest.TestCase):
                     self.assertIn("Last action", [item["name"] for item in snapshot["buttons"]])
                     self.assertTrue(next(item for item in snapshot["buttons"]
                                          if item["name"] == "Last action")["in_viewport"])
+                    capture = session._dispatch("browser_screenshot", {})
+                    self.assertEqual(capture["tab"], snapshot["tab"])
+                    self.assertTrue(capture["image_data_url"].startswith("data:image/jpeg;base64,"))
+                    self.assertEqual([item["id"] for item in capture["buttons"]], ["last-action"])
+                    self.assertTrue(capture["links"])
+                    self.assertTrue(all(item["in_viewport"] for item in capture["links"]))
                 finally:
                     session._executor.shutdown(wait=False, cancel_futures=True)
                     context.close()

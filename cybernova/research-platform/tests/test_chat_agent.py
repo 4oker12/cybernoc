@@ -295,7 +295,10 @@ class AgentTests(unittest.TestCase):
                     },
                 }]},
                 {"role": "tool", "tool_name": "browser_screenshot",
-                 "content": '{"ok":true}',
+                 "content": json.dumps({
+                     "ok": True, "tab": index,
+                     "buttons": [{"id": f"button-{index}", "in_viewport": True}],
+                 }),
                  "_visual_image": "data:image/png;base64," + image},
             ])
         compact = _compact_context(messages)
@@ -304,6 +307,11 @@ class AgentTests(unittest.TestCase):
         self.assertNotIn("_visual_image", encoded)
         self.assertIn("BBBB", encoded)
         self.assertIsInstance(compact[-1]["content"], list)
+        capture = json.loads(compact[-1]["content"][0]["text"])
+        self.assertEqual(capture["tab"], 1)
+        self.assertEqual(capture["buttons"][0]["id"], "button-1")
+        self.assertEqual(compact[-1]["content"][1]["image_url"]["url"],
+                         "data:image/png;base64,BBBB")
         self.assertIsInstance(compact[-3]["content"], str)
 
     def test_image_blocks_survive_deepseek_context_normalization(self):
@@ -915,6 +923,26 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(observation["observation_truncated"])
         self.assertEqual(observation["form_fields"], page["form_fields"])
         self.assertEqual(observation["buttons"], page["buttons"])
+
+    def test_browser_delta_resends_controls_clipped_from_previous_observation(self):
+        links = [{"name": f"Link {index}", "url": "https://example.org/" + "x" * 135}
+                 for index in range(16)]
+        page = {"ok": True, "url": "https://example.org/", "tab": 0,
+                "visible_text": "Large page " * 400, "links": links}
+        messages = [{"role": "user", "content": "Find a link"}]
+        for observation in (page, {**page, "visible_text": "Short page"}):
+            messages.extend([
+                {"role": "assistant", "tool_calls": [
+                    {"function": {"name": "browser_snapshot", "arguments": "{}"}}
+                ]},
+                {"role": "tool", "tool_name": "browser_snapshot",
+                 "content": json.dumps(observation)},
+            ])
+        first, second = [json.loads(item["content"]) for item in _compact_context(messages)
+                         if item["role"] == "tool"]
+        self.assertLess(len(first["links"]), len(links))
+        self.assertEqual(second["links"], links)
+        self.assertNotIn("links", second.get("unchanged_page_fields", []))
 
     def test_compact_context_keeps_recent_tool_pairs_and_bounds_payloads(self):
         messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "task"}]
