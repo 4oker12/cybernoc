@@ -418,5 +418,49 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertIn("oldest-rotation-entry", report)
 
 
+    def test_tool_dispatch_records_source_safe_args_and_search_fallback(self):
+        with self.journal():
+            result, failed = diagnostics.observe_tool_call(
+                "google_search",
+                lambda: ({
+                    "ok": True,
+                    "provider": "Bing Search RSS fallback",
+                    "fallback_reason": "google_javascript_shell",
+                    "fallback_attempts": ["bing_html: no results"],
+                    "pagination_verified": False,
+                    "result_count": 2,
+                    "query": "Python official documentation",
+                    "results": [
+                        {
+                            "title": "Official Python documentation",
+                            "domain": "docs.python.org",
+                            "url": "https://docs.python.org/3/",
+                            "snippet": "private-snippet-must-not-be-recorded",
+                        },
+                    ],
+                }, False),
+                backend="local",
+                call_ref="c" * 16,
+                args_preview={"query": "[privacy-filtered query]", "query_chars": 28},
+            )
+            report = diagnostics.export_jsonl().decode("utf-8")
+        self.assertFalse(failed)
+        self.assertTrue(result["ok"])
+        rows = [json.loads(line).get("timeline", {}) for line in report.splitlines()]
+        start = next(row for row in rows if row.get("event") == "agent_tool_dispatch_start")
+        finish = next(row for row in rows if row.get("event") == "agent_tool_dispatch_finish")
+        self.assertEqual(start["call_ref"], finish["call_ref"])
+        self.assertEqual(finish["status"], "ok")
+        self.assertEqual(finish["handler_file"], "console/research_web.py")
+        self.assertEqual(finish["handler_function"], "research_web_call")
+        self.assertEqual(finish["dispatch_file"], "console/agent.py")
+        self.assertIn("test_diagnostics.py", finish["source_file"])
+        self.assertEqual(finish["source_function"], "test_tool_dispatch_records_source_safe_args_and_search_fallback")
+        self.assertIn("Bing Search RSS fallback", finish["result_preview"])
+        self.assertIn("google_javascript_shell", finish["result_preview"])
+        self.assertIn("args_preview", start)
+        self.assertNotIn("private-snippet-must-not-be-recorded", report)
+
+
 if __name__ == "__main__":
     unittest.main()
