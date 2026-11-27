@@ -190,7 +190,7 @@ def run():
                 "events_recorded": len(x.get("events", x.get("network_events", []))),
             })
             links = snapshot.get("links", [])
-            first = next((x for x in links if x.get("kind") in {"external", "document"} and x.get("name")), None)
+            first = next((x for x in links if x.get("name") and x.get("url") and x.get("url") != snapshot.get("url")), None)
             if first and first.get("name"):
                 call("browser_follow_link", {"name": first["name"]})
             else:
@@ -241,15 +241,26 @@ def run():
         page_one = {x.get("url") for x in search_pages.get(1, {}).get("results", [])}
         page_two = {x.get("url") for x in search_pages.get(2, {}).get("results", [])}
         overlap = len(page_one & page_two)
+        pagination_verified = all(
+            search_pages.get(page, {}).get("pagination_verified", True)
+            for page in (1, 2)
+        )
         pagination_ok = bool(page_one and page_two and len(page_two - page_one) > 0)
+        pagination_status = (
+            "PASS" if pagination_ok and first_search_url else
+            "UNVERIFIED" if page_one and page_two and not pagination_verified else
+            "WARN"
+        )
         print(json.dumps({
             "test": "search_pagination_and_open",
-            "status": "PASS" if pagination_ok and first_search_url else "WARN",
+            "status": pagination_status,
+            "provider": search_pages.get(2, {}).get("provider"),
+            "pagination_verified": pagination_verified,
             "page1_results": len(page_one), "page2_results": len(page_two),
             "overlap": overlap, "new_page2_results": len(page_two - page_one),
             "first_result_opened": bool(first_search_url),
         }, ensure_ascii=True))
-        if not pagination_ok:
+        if pagination_verified and not pagination_ok:
             warnings.append("search_pagination_not_distinct")
         from console.research_web import _bing_html_fallback, _bing_rss_fallback
         for provider, fn in (

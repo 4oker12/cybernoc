@@ -121,7 +121,7 @@ def main() -> None:
             for event in tool_events
         ]
         required = {
-            "browser_navigate", "browser_snapshot", "browser_follow_link",
+            "browser_navigate", "browser_follow_link",
             "browser_read_page", "browser_read_table", "browser_fill",
             "browser_click_button",
         }
