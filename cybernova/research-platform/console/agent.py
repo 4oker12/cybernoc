@@ -246,6 +246,18 @@ def _safe_args(name: str, args: dict) -> dict:
     return {key: "[provided: %d characters]" % len(str(val)) for key, val in args.items()}
 
 
+def _diagnostic_tool_args(name: str, args: dict) -> dict:
+    """Metadata-safe argument preview for the private JSONL journal."""
+    if name == "google_search":
+        query = args.get("query")
+        return {
+            "query": "[privacy-filtered query]",
+            "query_chars": len(query) if isinstance(query, str) else 0,
+            "page": args.get("page") if type(args.get("page")) is int else 1,
+        }
+    return safe_preview(args)
+
+
 _DSML_BAR = r"(?:[|｜]\s*){1,2}"
 _DSML_OPEN = r"<\s*" + _DSML_BAR + r"DSML\s*" + _DSML_BAR
 _DSML_CLOSE = r"</\s*" + _DSML_BAR + r"DSML\s*" + _DSML_BAR
@@ -688,6 +700,7 @@ class Agent:
             result, is_error = observe_tool_call(
                 name, lambda: self.local_tool_runtime.call(name, args, **runtime_kwargs),
                 backend="local", call_ref=call_ref,
+                args_preview=_diagnostic_tool_args(name, args),
             )
             if isinstance(result, dict) and isinstance(result.get("image_data_url"), str):
                 result = dict(result)
@@ -706,7 +719,8 @@ class Agent:
     @staticmethod
     def _call_mcp(mcp, name, args, *, call_ref=None):
         return observe_tool_call(name, lambda: mcp.call(name, args),
-                                 backend="mcp", call_ref=call_ref)
+                                 backend="mcp", call_ref=call_ref,
+                                 args_preview=_diagnostic_tool_args(name, args))
 
     def run(self, history: list[dict], text: str, *, public_get=True, force_tools=True,
             scope: dict | None = None, user_context: str = "",
@@ -1085,6 +1099,7 @@ class Agent:
         checkpoint = None
         try:
             for round_no in range(MAX_ROUNDS):
+                diagnostic_event("agent_round_start", round=round_no, status="started")
                 if stop_requested():
                     return stopped_result()
                 if round_no and round_no % PLAN_CHECKPOINT_INTERVAL == 0:
@@ -1319,6 +1334,25 @@ class Agent:
                         context.append({"role": "tool", "tool_name": "dev_list",
                                         "content": json.dumps(observed, ensure_ascii=False)[:MAX_RESULT]})
                         continue
+                if selected_by != "native":
+                    fallback_reasons = {
+                        "model_json_fallback": "native_tool_calls_missing_or_invalid",
+                        "google_research_fallback": "research_tool_not_selected_for_security_research",
+                        "evidence_first_fallback": "browser_tool_not_selected_for_explicit_url",
+                        "developer_evidence_fallback": "repository_tool_not_selected_for_development_task",
+                    }
+                    fallback_tool = "none"
+                    if isinstance(calls, list) and calls:
+                        first_function = calls[0].get("function") if isinstance(calls[0], dict) else None
+                        if isinstance(first_function, dict) and isinstance(first_function.get("name"), str):
+                            fallback_tool = first_function["name"]
+                    diagnostic_event(
+                        "agent_fallback_selected", round=round_no, source=selected_by,
+                        fallback_reason=fallback_reasons.get(selected_by, "controller_fallback"),
+                        tool=fallback_tool,
+                        tool_calls=len(calls) if isinstance(calls, list) else 0,
+                        status="selected",
+                    )
                 diagnostic_event("agent_tool_selection", round=round_no, source=selected_by,
                                  tool_calls=len(calls) if isinstance(calls, list) else 0,
                                  advertised_count=len(tools),
