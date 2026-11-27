@@ -148,6 +148,7 @@ class Elem {
     };
   }
   addEventListener(type,fn){this.listeners[type]=fn;}
+  querySelectorAll(){return [];}
   setAttribute(){}
   append(...child){this.children.push(...child);}
   appendChild(child){this.children.push(child);return child;}
@@ -214,6 +215,16 @@ if(byId('messages').hidden||!byId('gptMessages').hidden)
 byId('modeCollab').listeners.click();
 if(byId('collabMessages').hidden||!byId('messages').hidden||!byId('gptMessages').hidden)
  throw Error('Collaboration click did not show the two-model transcript');
+byId('modeQwen').listeners.click();
+context.busy(true);
+if(byId('modeCollab').disabled)
+ throw Error('Independent model request wrongly disabled collaboration tab');
+byId('modeCollab').listeners.click();
+if(byId('collabMessages').hidden)
+ throw Error('Could not enter collaboration while regular model is running');
+if(byId('newSession').disabled)
+ throw Error('Collaboration new task was locked by an unrelated model call');
+context.busy(false);
 byId('sidebarCollapse').listeners.click();
 if(byId('sidebarExpand').hidden)
  throw Error('Sidebar could not be collapsed');
@@ -222,6 +233,10 @@ if(!byId('sidebarExpand').hidden)
  throw Error('Sidebar could not be expanded');
 if(typeof byId('collabFinish').listeners.click!=='function')
  throw Error('Finish button not wired');
+for(const id of ['collabPlan','collabWorkRun']){
+ if(typeof byId(id).listeners.click!=='function')
+   throw Error('Work orchestrator button not wired: '+id);
+}
 const largeMessage='Full technical evidence paragraph. '.repeat(25);
 const run={
  task_id:'task_test',goal:'Test',state:'paused',step:10,max_cycles:5,
@@ -242,6 +257,44 @@ if(!excerpt.endsWith('…') || excerpt.length>180)
 detail.open=true;detail.listeners.toggle();
 if(detail.children[1].textContent!==largeMessage)
  throw Error('Expansion lost the full original answer');
+
+context.renderCollabRun({
+ task_id:'task_parallel',goal:'Test',mode:'parallel',state:'active',
+ step:0,max_cycles:5,pause_at:10,next_actor:null,messages:[]
+});
+if(byId('collabWorkPanel').hidden)
+ throw Error('Parallel mode did not show planning panel');
+if(byId('collabPlan').hidden)
+ throw Error('Parallel mode did not offer a planning action');
+context.renderWorkItems('task_parallel',[
+ {item_id:'wi_1',position:0,title:'Audit logs',instructions:'Read safe logs',
+  state:'needs_review',depends_on:[],attempt:1,result:'Observed two events.',review:''},
+ {item_id:'wi_2',position:1,title:'Summary',instructions:'Compare sources',
+  state:'queued',depends_on:['wi_1'],attempt:0,result:'',review:''}
+]);
+if(byId('collabWorkItems').children.length!==2)
+ throw Error('Work item cards were not rendered');
+const first=byId('collabWorkItems').children[0];
+const report=first.children.find(child=>child.className==='collab-work-details' &&
+  child.children[0]?.textContent?.startsWith('Результат DeepSeek'));
+if(!report)throw Error('Work item report must be expandable');
+report.open=true;
+report.listeners.toggle();
+context.renderWorkItems('task_parallel',[
+ {item_id:'wi_1',position:0,title:'Audit logs',instructions:'Read safe logs',
+  state:'accepted',depends_on:[],attempt:1,result:'Observed two events.',review:'Accepted'},
+]);
+const refreshed=byId('collabWorkItems').children[0].children.find(
+  child=>child.className==='collab-work-details'&&
+    child.children[0]?.textContent?.startsWith('Результат DeepSeek'));
+if(!refreshed?.open)throw Error('Expanded work report collapsed after status refresh');
+byId('collabStrategy').value='dialog';
+byId('collabStrategy').listeners.change();
+if(byId('collabCyclesLabel').hidden)throw Error('Dialog must offer cycle selector');
+byId('collabStrategy').value='parallel';
+byId('collabStrategy').listeners.change();
+if(!byId('collabCyclesLabel').hidden)
+ throw Error('Parallel planning must hide unused dialog cycle selector');
 
 """
         run=subprocess.run(["node","-e",script,html,app],
