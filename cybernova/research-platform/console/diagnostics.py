@@ -42,16 +42,20 @@ _TIMELINE_STRINGS = frozenset({
     "error_type", "error_code", "method", "session_kind", "backend", "preferred_backend", "fallback_reason", "agent", "source",
     "tool_group", "target_host", "resource_type", "shell", "operation",
     "decision", "action", "component", "result_code", "input_type",
-    "call_ref", "finish_reason", "groups",
+    "call_ref", "finish_reason", "groups", "source_file", "source_function",
+    "handler_file", "handler_function", "dispatch_file", "dispatch_function",
+    "args_preview", "result_preview", "result_status",
 })
 _TIMELINE_INTS = frozenset({
     "duration_ms", "http_status", "upstream_http_status", "pid", "exit_code",
     "round", "tool_calls", "input_tokens", "output_tokens",
     "local_count", "remote_count", "filtered_remote_count", "combined_count",
     "discovered_count", "advertised_count", "omitted_count", "raw_tool_calls", "dropped_tool_calls",
+    "source_line",
 })
-_TIMELINE_BOOLS = frozenset({"headless", "timed_out"})
+_TIMELINE_BOOLS = frozenset({"headless", "timed_out", "result_ok", "is_error", "verified", "pagination_verified"})
 _SAFE_LABEL = re.compile(r"[A-Za-z0-9_.:-]{1,160}")
+_SAFE_SOURCE_PATH = re.compile(r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]{1,160}")
 
 MAX_FILE_BYTES = 512 * 1024
 BACKUP_COUNT = 3
@@ -192,6 +196,31 @@ def diagnostic_context(*, run_id=None, session_id=None, task_id=None, agent=None
             variable.reset(token)
 
 
+def _source_location() -> dict:
+    """Return a repository-relative callsite; never export absolute user paths."""
+    frame = inspect.currentframe()
+    try:
+        frame = frame.f_back
+        while frame is not None and frame.f_globals.get("__name__") == __name__:
+            frame = frame.f_back
+        if frame is None:
+            return {}
+        raw = str(frame.f_code.co_filename).replace("\\\\", "/").replace("\\", "/")
+        marker = "/research-platform/"
+        source_file = raw.rsplit(marker, 1)[-1] if marker in raw else raw.rsplit("/", 1)[-1]
+        if not _SAFE_SOURCE_PATH.fullmatch(source_file):
+            source_file = raw.rsplit("/", 1)[-1]
+        function = frame.f_code.co_name
+        if not _SAFE_LABEL.fullmatch(function):
+            function = "unknown"
+        return {"source_file": source_file, "source_function": function,
+                "source_line": frame.f_lineno}
+    except Exception:
+        return {}
+    finally:
+        del frame
+
+
 def _event_kind(name, fields):
     requested = fields.get("kind")
     if requested in _TIMELINE_KINDS:
@@ -279,7 +308,15 @@ def _clean_timeline(value):
     result = {}
     for key in _TIMELINE_STRINGS:
         raw = value.get(key)
-        if isinstance(raw, str) and _SAFE_LABEL.fullmatch(raw):
+        if key in {"args_preview", "result_preview"}:
+            if isinstance(raw, str) and raw:
+                result[key] = scrub(raw, 1400)
+        elif key in {"source_file", "handler_file", "dispatch_file"}:
+            if isinstance(raw, str):
+                normalized = raw.replace("\\\\", "/").replace("\\", "/")
+                if _SAFE_SOURCE_PATH.fullmatch(normalized):
+                    result[key] = normalized
+        elif isinstance(raw, str) and _SAFE_LABEL.fullmatch(raw):
             result[key] = raw
     # MCP methods have a slash; permit only the known protocol labels.
     method = value.get("method")
@@ -320,7 +357,7 @@ def event(name: str, **fields) -> None:
         if task_id is not None:
             supplied.setdefault("task_ref", diagnostic_ref("task", task_id))
         supplied.setdefault("kind", _event_kind(name, supplied))
-        data = {"event": name, "boot_id": BOOT_ID, **supplied, **_trace_fields()}
+        data = {"event": name, "boot_id": BOOT_ID, **_source_location(), **supplied, **_trace_fields()}
         clean = _clean_timeline(data)
         if clean is not None:
             TIMELINE_LOG.info("event %s", clean["event"], extra={"timeline": clean})
@@ -357,26 +394,151 @@ def tool_outcome(result, failed=False):
     return "unverified"
 
 
-def observe_tool_call(name, invoke, *, backend, call_ref=None):
-    """One start and one terminal record for an actual dispatch, never its payload."""
+def _tool_handler_source(name: str, backend: str) -> dict:
+    """Best-known implementation location for the selected local or MCP tool."""
+    if backend != "local":
+        return {"handler_file": "external/mcp", "handler_function": "MCPClient.call"}
+    if name.startswith("browser_"):
+        if name in {
+            "browser_request_protected_input", "browser_fill_owner_input",
+            "browser_generate_and_fill_password", "browser_fill_saved_credential",
+            "browser_request_and_fill_payment_card", "browser_submit_payment",
+        }:
+            return {"handler_file": "console/gpt_tool_runtime.py",
+                    "handler_function": "GPTToolRuntime.call"}
+        return {"handler_file": "console/browser_control.py",
+                "handler_function": "browser_control_call"}
+    if name.startswith("computer_"):
+        return {"handler_file": "console/computer_control.py",
+                "handler_function": "computer_control_call"}
+    if name.startswith("terminal_") or name == "safe_terminal":
+        return {"handler_file": "console/gpt_tool_runtime.py",
+                "handler_function": "_run_terminal"}
+    if name in {"google_search", "research_source_open"}:
+        return {"handler_file": "console/research_web.py",
+                "handler_function": "research_web_call"}
+    if name.startswith("github_"):
+        if re.search(r"(?:create|update|delete|merge|push|write|remove)", name):
+            return {"handler_file": "console/github_write_tools.py",
+                    "handler_function": "github_write_call"}
+        return {"handler_file": "console/github_tools.py", "handler_function": "github_call"}
+    if name.startswith("dev_"):
+        return {"handler_file": "console/developer_tools.py", "handler_function": "SOURCE"}
+    if name.startswith("account_mission_"):
+        return {"handler_file": "console/account_missions.py",
+                "handler_function": "AccountMissionStore"}
+    if name.startswith("account_vault_"):
+        return {"handler_file": "console/account_vault.py", "handler_function": "AccountVault"}
+    if name == "owner_request_input":
+        return {"handler_file": "console/owner_input.py", "handler_function": "owner_input_broker"}
+    return {"handler_file": "console/gpt_tool_runtime.py", "handler_function": "GPTToolRuntime.call"}
+
+
+def _preview_json(value, limit=1200) -> str:
+    try:
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    except Exception:
+        raw = str(value)
+    return scrub(raw, limit)
+
+
+def _tool_result_preview(name: str, result) -> dict:
+    """Compact result metadata only; never persist response bodies or page text."""
+    if not isinstance(result, dict):
+        return {"result_type": type(result).__name__}
+    preview = {}
+    scalar_keys = (
+        "ok", "success", "status", "provider", "fallback_reason", "fallback_error",
+        "pagination_verified", "result_count", "source_status", "http_status",
+        "exit_code", "timed_out", "duration_ms", "page", "start_index",
+        "title", "page_type", "text_chars", "visible_text_chars", "headings_count",
+        "links_count", "buttons_count", "matched_count", "count", "verified",
+        "verification_ok",
+    )
+    for key in scalar_keys:
+        value = result.get(key)
+        if type(value) in {bool, int, float}:
+            preview[key] = value
+        elif isinstance(value, str) and key in {
+            "status", "provider", "fallback_reason", "fallback_error", "title", "page_type"
+        }:
+            preview[key] = scrub(value, 180)
+    for key in ("query", "url"):
+        value = result.get(key)
+        if isinstance(value, str):
+            preview[key] = scrub(value, 240)
+    attempts = result.get("fallback_attempts")
+    if isinstance(attempts, list):
+        preview["fallback_attempts"] = [scrub(item, 120) for item in attempts[:3]]
+    rows = result.get("results")
+    if isinstance(rows, list):
+        compact = []
+        for item in rows[:3]:
+            if not isinstance(item, dict):
+                continue
+            entry = {}
+            for key in ("title", "domain", "url", "source"):
+                value = item.get(key)
+                if isinstance(value, str):
+                    entry[key] = scrub(value, 180)
+            if entry:
+                compact.append(entry)
+        if compact:
+            preview["results_preview"] = compact
+    stats = result.get("content_stats")
+    if isinstance(stats, dict):
+        safe_stats = {str(key): value for key, value in list(stats.items())[:20]
+                      if type(value) in {bool, int}}
+        if safe_stats:
+            preview["content_stats"] = safe_stats
+    for key in ("stdout", "stderr", "text", "visible_text", "html", "body", "content"):
+        value = result.get(key)
+        if isinstance(value, str):
+            preview[key + "_chars"] = len(value)
+    return preview
+
+
+def observe_tool_call(name, invoke, *, backend, call_ref=None, args_preview=None):
+    """Record a correlated dispatch, safe argument preview, handler location and result summary."""
     ref = call_ref or os.urandom(8).hex()
     started = time.monotonic()
-    fields = {"tool": name, "call_ref": ref, "backend": backend, "stage": "dispatch"}
+    fields = {
+        "tool": name, "call_ref": ref, "backend": backend, "stage": "dispatch",
+        "dispatch_file": "console/agent.py",
+        "dispatch_function": "Agent._call_registered_tool" if backend == "local" else "Agent._call_mcp",
+        **_tool_handler_source(name, backend),
+    }
+    if args_preview is not None:
+        fields["args_preview"] = _preview_json(args_preview, 1000)
     event("agent_tool_dispatch_start", **fields, status="started")
     try:
         result, failed = invoke()
     except BaseException as exc:
+        code = adapter_error_code(exc)
         event("agent_tool_dispatch_finish", **fields, status="failed",
-              error_type=type(exc).__name__,
-              duration_ms=round((time.monotonic() - started) * 1000))
+              error_type=type(exc).__name__, error_code=code,
+              is_error=True, duration_ms=round((time.monotonic() - started) * 1000))
         raise
-    fields["status"] = tool_outcome(result, failed)
-    if fields["status"] == "failed":
+    outcome = tool_outcome(result, failed)
+    fields["status"] = outcome
+    fields["is_error"] = bool(failed or outcome == "failed")
+    if outcome == "failed":
         fields["error_type"] = "ToolResultError"
     if isinstance(result, dict):
+        result_status = result.get("status")
+        if isinstance(result_status, str) and _SAFE_LABEL.fullmatch(result_status):
+            fields["result_status"] = result_status
+        result_ok = result.get("ok", result.get("success"))
+        if type(result_ok) is bool:
+            fields["result_ok"] = result_ok
+        if type(result.get("verified")) is bool:
+            fields["verified"] = result["verified"]
         for key in ("exit_code", "http_status"):
             if type(result.get(key)) is int:
                 fields[key] = result[key]
+        preview = _tool_result_preview(name, result)
+        if preview:
+            fields["result_preview"] = _preview_json(preview, 1400)
     event("agent_tool_dispatch_finish", **fields,
           duration_ms=round((time.monotonic() - started) * 1000))
     return result, failed
