@@ -369,7 +369,7 @@ class WorkItemTests(unittest.TestCase):
         self.assertEqual(len(runtime.received), 1)
         name, kwargs = runtime.received[0]
         self.assertEqual(name, "browser_tabs")
-        self.assertEqual(kwargs["session_id"], "wi_server_owned_123456")
+        self.assertEqual(kwargs["conversation_key"], "deepseek:wi_server_owned_123456")
         self.assertIn("example.org", kwargs["authorized_targets"])
         self.assertNotIn("generated-target.example", kwargs["authorized_targets"])
         self.assertEqual(kwargs["user_messages"],
