@@ -298,8 +298,11 @@ def run():
         agent = Agent(model, lambda: StubMCP(), local_tool_runtime=runtime)
         res = agent.run([], "Проверь свой терминал", force_tools=False)
         advertised = {item["function"]["name"] for item in model.advertised_history[0]}
-        review_disables_tools = (len(model.advertised_history) >= 3 and
-                                 model.advertised_history[-1] == [])
+        review = res.get("review") or {}
+        review_disables_tools = (
+            review.get("status") != "completed"
+            or (len(model.advertised_history) >= 3 and model.advertised_history[-1] == [])
+        )
         if (not {"terminal_status", "computer_system_overview", "browser_navigate"}.issubset(advertised)
                 or res.get("tool_calls") != 1 or not review_disables_tools):
             failures.append("deepseek_shared_tool_dispatch")
