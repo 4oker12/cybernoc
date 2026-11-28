@@ -28,9 +28,17 @@ from urllib.parse import urljoin, urlsplit
 try:
     from .diagnostics import event as diagnostic_event
     from .browser_backend import launch_with_backend
+    from .browser_intelligence import (
+        ACTION_TOOLS as _INTEL_ACTION_TOOLS, StrategyTracker, compact_action_result,
+        page_digest, recovery_for, response_mode, verify_expectations,
+    )
 except ImportError:
     from diagnostics import event as diagnostic_event
     from browser_backend import launch_with_backend
+    from browser_intelligence import (
+        ACTION_TOOLS as _INTEL_ACTION_TOOLS, StrategyTracker, compact_action_result,
+        page_digest, recovery_for, response_mode, verify_expectations,
+    )
 
 MAX_URL = 2048
 MAX_TEXT = 4000
@@ -156,6 +164,13 @@ BROWSER_CONTROL_TOOLS = [
           {"frame_index": {"type": "integer", "minimum": 0},
            "table_index": {"type": "integer", "minimum": 0},
            "row_offset": {"type": "integer", "minimum": 0}}, ["frame_index", "table_index", "row_offset"]),
+    _tool("browser_verify",
+          "Read-only verification of the current page after an action: check that expected text is present or absent, the URL contains a fragment, or a control exists. Returns boolean or unknown checks with coverage; page text and input values are never returned. Use it to confirm real outcomes instead of assuming a click worked.",
+          {"expect_text": {"type": ["array", "null"], "items": STRING, "maxItems": 8, "description": "Literal phrases that must be visible"},
+           "absent_text": {"type": ["array", "null"], "items": STRING, "maxItems": 8, "description": "Literal phrases that must NOT be visible (e.g. an error message)"},
+           "url_contains": {"type": ["string", "null"], "description": "Fragment the current URL must contain"},
+           "control": {"type": ["string", "null"], "description": "Control name or id:<id> that must exist"}},
+          ["expect_text", "absent_text", "url_contains", "control"]),
     _tool("browser_find_controls",
           "Find visible links, buttons, native disclosures or form controls by a literal name, label, placeholder or id across page frames, before the normal snapshot control limit. Use after an ambiguous or missing target. Read-only.",
           {"query": STRING}, ["query"]),
@@ -519,9 +534,9 @@ def _locate_across_frames(page, target: str):
     )
     strategies = []
     # Stable snapshot refs take priority over heuristic name matching.
-    if re.fullmatch(r"e\d{1,5}", target) or target.startswith("ref:") or target.startswith("data-cybernova-ref:"):
+    if re.fullmatch(r"e\d{1,12}", target) or target.startswith("ref:") or target.startswith("data-cybernova-ref:"):
         ref = target.split(":", 1)[-1] if ":" in target else target
-        if re.fullmatch(r"e\d{1,5}", ref):
+        if re.fullmatch(r"e\d{1,12}", ref):
             strategies.append(lambda context, ref=ref: context.locator(
                 f'[data-cybernova-ref={_css_string(ref)}]'))
     if explicit_selector:
@@ -679,7 +694,7 @@ _RADIO_CONTEXT_JS = r"""el => {
 
 
 _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
-(query) => {
+({query, startRef, namespace}) => {
   const radioContext = __RADIO_CONTEXT__;
   const clean = v => String(v || '').replace(/\s+/g, ' ').trim();
   const byIds = (el, attr) => (el.getAttribute(attr) || '').split(/\s+/)
@@ -738,19 +753,17 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
       el.getAttribute('role'), el.getAttribute('data-cybernova-ref'),
       radioContext(el)].some(v => clean(v).toLocaleLowerCase().includes(q));
   }) : collected;
-  let nextRef = 1;
-  const existing = new Set();
-  for (const {el} of filtered) {
-    const cur = el.getAttribute('data-cybernova-ref');
-    if (cur && /^e\d{1,5}$/.test(cur)) existing.add(cur);
-  }
+  // A document-local node map plus a session-wide counter prevents collisions
+  // across frames, filtered searches, pagination and replacement DOM nodes.
+  const key = Symbol.for('cybernova.refs.' + namespace);
+  const refs = document[key] || (document[key] = new WeakMap());
+  let nextRef = startRef;
   const assignRef = el => {
-    let ref = el.getAttribute('data-cybernova-ref');
-    if (ref && /^e\d{1,5}$/.test(ref)) return ref;
-    while (existing.has('e' + nextRef)) nextRef += 1;
-    ref = 'e' + nextRef;
-    nextRef += 1;
-    existing.add(ref);
+    let ref = refs.get(el);
+    if (!ref) {
+      ref = 'e' + nextRef++;
+      refs.set(el, ref);
+    }
     try { el.setAttribute('data-cybernova-ref', ref); } catch (_) {}
     return ref;
   };
@@ -800,7 +813,7 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
       ].join('|'),
     };
   });
-  return {total: filtered.length, rows};
+  return {total: filtered.length, rows, next_ref: nextRef};
 }
 """
 
@@ -834,6 +847,8 @@ class BrowserSession:
         self._page = None
         self._widget_targets = {}
         self._element_refs: dict[str, dict] = {}
+        self._next_element_ref = 1
+        self._ref_namespace = secrets.token_hex(8)
         self._action_seq = 0
         self._dns_cache: dict[str, tuple[float, list[str]]] = {}
         self._blocked: list[dict] = []
@@ -853,6 +868,9 @@ class BrowserSession:
         self._attached_pages: set[int] = set()
         self._write_approval_handler = None
         self._active_action = None
+        self._last_digest = None
+        self._strategy = StrategyTracker()
+        self._response_mode = response_mode(os.environ.get("CYBERNOVA_BROWSER_RESPONSE_MODE"))
 
     def _dispatch_observed(self, name: str, args: dict) -> dict:
         started = time.monotonic()
@@ -876,7 +894,8 @@ class BrowserSession:
         }:
             self._action_seq += 1
             raw_label = args.get("name") or args.get("target") or args.get("label") or args.get("url") or name
-            action_label = re.sub(r"\s+", " ", str(raw_label)).strip()[:120]
+            action_label = (_safe_url(raw_label) if args.get("url") == raw_label
+                            else _redact_text(str(raw_label), 120))
             self._active_action = {
                 "id": f"a{self._action_seq}",
                 "tool": name,
@@ -885,6 +904,8 @@ class BrowserSession:
             }
         try:
             result = self._dispatch(name, args)
+            if isinstance(result, dict) and self._active_action is not previous_action:
+                result.update(self._action_context())
         except Exception as exc:
             fields = {
                 "tool": name, "source": "browser", "target_host": target_host,
@@ -913,7 +934,30 @@ class BrowserSession:
             "browser_action_completed" if succeeded else "browser_action_blocked",
             kind="action", **fields,
         )
+        return self._apply_intelligence(name, args, result)
+
+    def _apply_intelligence(self, name: str, args: dict, result):
+        """Track page state, compact post-action snapshots and learn from outcomes."""
+        if not isinstance(result, dict):
+            return result
+        try:
+            if result.get("ok") is True:
+                self._strategy.record_success(name, args)
+            if (self._response_mode == "compact" and name in _INTEL_ACTION_TOOLS
+                    and "visible_text" in result):
+                result, self._last_digest = compact_action_result(name, result, self._last_digest)
+            elif "visible_text" in result:
+                self._last_digest = page_digest(result)
+        except Exception:
+            # Intelligence is advisory; it must never break a browser action.
+            self._last_digest = None
         return result
+
+    def note_failure(self, name: str, args: dict, error: str) -> dict:
+        try:
+            return self._strategy.record_failure(name, args, error)
+        except Exception:
+            return {"recovery": recovery_for(error, name)}
 
     def call(self, name: str, args: dict) -> dict:
         if self._closed:
@@ -1777,7 +1821,7 @@ class BrowserSession:
         children = [frame for frame in frames if frame is not main]
         return [page] + (children[:11] if bounded else children)
 
-    def _page_text(self, frames) -> tuple[str, list[str], bool]:
+    def _page_text(self, frames, max_chars=MAX_PAGE_TEXT) -> tuple[str, list[str], bool]:
         """Return bounded, redacted visible text with main content before chrome."""
         parts, scopes = [], []
         frame_clipped = False
@@ -1807,24 +1851,29 @@ class BrowserSession:
                     }
                     return {text: parts.join('').trim(),
                         scope: root === document.body ? 'body' : 'main', clipped: length > maxChars};
-                }""", MAX_PAGE_TEXT + 100)
+                }""", max_chars + 100)
                 text, scope = result["text"], result["scope"]
                 frame_clipped = frame_clipped or bool(result["clipped"])
             except Exception:
+                frame_clipped = True
                 continue
+            scopes.append(scope)
             if text:
                 prefix = "" if index == 0 else f"[frame {index} {_safe_url(getattr(frame, 'url', '') or '')}]\n"
                 parts.append(prefix + text)
-                scopes.append(scope)
+            if sum(len(part) for part in parts) >= max_chars:
+                frame_clipped = frame_clipped or index + 1 < len(frames)
+                break
         raw = "\n\n".join(parts)
-        clipped = frame_clipped or len(raw) > MAX_PAGE_TEXT
-        return _redact_text(raw, MAX_PAGE_TEXT), scopes, clipped
+        clipped = frame_clipped or len(raw) > max_chars
+        return _redact_text(raw, max_chars), scopes, clipped
 
     def _read_page(self, offset: int) -> dict:
         if self._page is None or self._page.is_closed():
             raise ValueError("browser_no_open_page")
         frames = self._frame_contexts()
         text, scopes, clipped = self._page_text(frames)
+        clipped = clipped or len(frames) < len(self._frame_contexts(bounded=False))
         if offset > len(text):
             raise ValueError("browser_read_offset_out_of_range")
         end = min(offset + PAGE_TEXT_CHUNK, len(text))
@@ -1884,19 +1933,24 @@ class BrowserSession:
         page = self._page
         self._widget_targets.clear()
         frames = self._frame_contexts()
-        # orientation/compact skip full page text extraction to save work and tokens
-        want_text = control_query is None and mode == "full"
-        text, scopes, text_clipped = self._page_text(frames) if want_text else ("", [], False)
+        # Compact reads only a short preview; orientation skips text extraction.
+        want_text = control_query is None and mode in {"full", "compact"}
+        text, scopes, text_clipped = self._page_text(
+            frames, MAX_PAGE_TEXT if mode == "full" else 700
+        ) if want_text else ("", [], False)
         links, buttons, fields, headings, landmarks, tables, focused = [], [], [], [], [], [], []
         scan_incomplete = len(self._frame_contexts(bounded=False)) > len(frames)
-        # Clear previous refs; new snapshot assigns fresh stable refs.
-        self._element_refs.clear()
+        # Retain bounded refs across pagination/search; navigation invalidates them.
         page_url = _safe_url(page.url)
         collect_js = _collect_elements_js()
         for frame_index, frame in enumerate(frames):
             frame_url = _safe_url(frame.url or "")
             try:
-                payload = frame.evaluate(collect_js, control_query or "")
+                payload = frame.evaluate(collect_js, {
+                    "query": control_query or "", "startRef": self._next_element_ref,
+                    "namespace": self._ref_namespace,
+                })
+                self._next_element_ref = max(self._next_element_ref, int(payload["next_ref"]))
                 scan_incomplete = scan_incomplete or payload["total"] > len(payload["rows"])
             except Exception:
                 scan_incomplete = True
@@ -1911,13 +1965,14 @@ class BrowserSession:
                 if re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.:-]{0,79}", element_id):
                     identity["id"] = element_id
                 ref = item.get("ref") or ""
-                if re.fullmatch(r"e\d{1,5}", ref or ""):
+                if re.fullmatch(r"e\d{1,12}", ref or ""):
                     identity["ref"] = ref
                     # Persist fingerprint so later actions can verify the target is still the same node.
                     self._element_refs[ref] = {
                         "frame_index": frame_index,
-                        "page_url": page_url,
-                        "frame_url": frame_url,
+                        "page": page, "frame": frame,
+                        "page_url": page.url,
+                        "frame_url": frame.url,
                         "fingerprint": item.get("fingerprint") or "",
                         "tag": item.get("tag") or "",
                         "role": item.get("role") or "",
@@ -1926,6 +1981,8 @@ class BrowserSession:
                         "shadow_path": item.get("shadow_path") or "",
                         "name": item.get("name") or "",
                     }
+                    while len(self._element_refs) > 2048:
+                        self._element_refs.pop(next(iter(self._element_refs)))
                 if item.get("shadow_path"):
                     identity["shadow_path"] = str(item["shadow_path"])[:120]
                 if item.get("shadow_host"):
@@ -2056,7 +2113,16 @@ class BrowserSession:
                 form_fields=page_slice(fields),
             )
         if control_query is None:
-            text_truncated = text_clipped or len(text) > MAX_TEXT
+            frames_total = len(self._frame_contexts(bounded=False))
+            text_truncated = (mode != "full" or text_clipped or len(text) > MAX_TEXT
+                              or len(scopes) < frames_total)
+            shadow_controls = any(row.get("shadow_path") for row in links + buttons + fields)
+            result["text_coverage"] = {
+                "scope": "visible main/body text; form values and shadow text excluded",
+                "frames_total": frames_total, "frames_scanned": len(scopes),
+                "complete": not text_truncated and all(s == "body" for s in scopes)
+                            and not shadow_controls,
+            }
             visible_text = _redact_text(text) if mode == "full" else ""
             page_type = _classify_page_type(
                 page.url, page.title(), visible_text or " ".join(
@@ -2101,13 +2167,12 @@ class BrowserSession:
             result["query"] = _redact_text(control_query)
         return result
 
-    def _find_text(self, query: str, limit: int = 8) -> dict:
-        return self._page.evaluate(
-            r"""({query, limit}) => {
+    _FIND_TEXT_JS = r"""({query, limit}) => {
                 const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
                 const visible = el => {
                     if (!el || !el.isConnected ||
-                        el.closest('script,style,noscript,template,svg,[hidden],[aria-hidden="true"]')) return false;
+                        el.closest('script,style,noscript,template,svg,input,textarea,select,option,[contenteditable],[role="textbox"],[role="searchbox"],[hidden],[aria-hidden="true"]') ||
+                        el.querySelector('input,textarea,select,[contenteditable],[role="textbox"],[role="searchbox"]')) return false;
                     const closed = el.closest('details:not([open])');
                     if (closed && !closed.querySelector(':scope > summary')?.contains(el)) return false;
                     const rect = el.getBoundingClientRect();
@@ -2118,7 +2183,15 @@ class BrowserSession:
                 };
                 const root = document.querySelector('main,[role="main"],article') || document.body;
                 const selector = 'h1,h2,h3,h4,h5,h6,[role="heading"],p,li,td,th,dt,dd,blockquote,pre,code,summary';
-                const nodes = Array.from(root.querySelectorAll(selector));
+                const semantic = Array.from(root.querySelectorAll(selector));
+                const seen = new Set(semantic);
+                // Universal fallback: generic containers (div/span/label/button/...) that own
+                // visible text directly, so apps that avoid semantic tags are still searchable.
+                const leaf = Array.from(root.querySelectorAll(
+                    'div,span,label,a,button,em,strong,b,i,small,section,figcaption,caption,legend,option'
+                )).filter(el => !seen.has(el) && Array.from(el.childNodes).some(
+                    n => n.nodeType === 3 && n.textContent.trim().length > 0));
+                const nodes = semantic.concat(leaf);
                 const needle = clean(query).toLocaleLowerCase();
                 const matches = [];
                 let total = 0;
@@ -2157,9 +2230,37 @@ class BrowserSession:
                     root_scope: root === document.body ? 'body' : 'main_or_article',
                     scan_limit_reached: nodes.length > cap
                 };
-            }""",
-            {"query": query, "limit": limit}
-        )
+            }"""
+
+    def _find_text(self, query: str, limit: int = 8) -> dict:
+        arg = {"query": query, "limit": limit}
+        result = self._page.evaluate(self._FIND_TEXT_JS, arg)
+        if not isinstance(result, dict):
+            return result
+        for item in result.get("matches", ()):
+            if isinstance(item, dict):
+                item.setdefault("frame_index", 0)
+        frames_scanned = 1
+        for offset, frame in enumerate(self._frame_contexts()[1:], start=1):
+            try:
+                inner = frame.evaluate(self._FIND_TEXT_JS, arg)
+            except Exception:
+                continue
+            if not isinstance(inner, dict):
+                continue
+            frames_scanned += 1
+            if inner.get("root_scope") != "body":
+                result["root_scope"] = "main_or_article"
+            result["scanned_blocks"] = int(result.get("scanned_blocks") or 0) + int(inner.get("scanned_blocks") or 0)
+            result["candidate_blocks"] = int(result.get("candidate_blocks") or 0) + int(inner.get("candidate_blocks") or 0)
+            result["total_matches"] = int(result.get("total_matches") or 0) + int(inner.get("total_matches") or 0)
+            result["scan_limit_reached"] = bool(result.get("scan_limit_reached") or inner.get("scan_limit_reached"))
+            for item in inner.get("matches", ()):
+                if isinstance(item, dict) and len(result["matches"]) < limit:
+                    item["frame_index"] = offset
+                    result["matches"].append(item)
+        result["frames_scanned"] = frames_scanned
+        return result
 
     def _unique(self, locator):
         visible = locator.filter(visible=True)
@@ -2182,7 +2283,7 @@ class BrowserSession:
             value = value[4:].strip()
         elif value.startswith("data-cybernova-ref:"):
             value = value[len("data-cybernova-ref:"):].strip()
-        if re.fullmatch(r"e\d{1,5}", value):
+        if re.fullmatch(r"e\d{1,12}", value):
             return value
         return None
 
@@ -2203,14 +2304,10 @@ class BrowserSession:
         page = self._page
         if page is None or page.is_closed():
             raise ValueError("browser_no_open_page")
-        if _safe_url(page.url) != meta["page_url"]:
+        if meta.get("page") is not page or page.url != meta["page_url"]:
             raise ValueError("browser_target_stale")
-        frames = self._frame_contexts(bounded=False)
-        frame_index = meta["frame_index"]
-        if frame_index >= len(frames):
-            raise ValueError("browser_target_stale")
-        frame = frames[frame_index]
-        if _safe_url(frame.url or "") != meta["frame_url"]:
+        frame = meta.get("frame")
+        if frame not in self._frame_contexts(bounded=False) or frame.url != meta["frame_url"]:
             raise ValueError("browser_target_stale")
         locator = self._locator_by_ref(ref, frame)
         try:
@@ -2222,12 +2319,25 @@ class BrowserSession:
         expected = meta.get("fingerprint") or ""
         if expected:
             try:
-                current = locator.evaluate(r"""el => {
+                current = locator.evaluate(r"""(el, info) => {
+                    const refs = el.ownerDocument[Symbol.for('cybernova.refs.' + info.namespace)];
+                    if (!refs || refs.get(el) !== info.ref) return null;
                     const clean = v => String(v || '').replace(/\s+/g, ' ').trim();
+                    const byIds = (node, attr) => (node.getAttribute(attr) || '').split(/\s+/)
+                        .filter(Boolean).map(id => {
+                            const found = node.getRootNode().getElementById?.(id);
+                            return found ? clean(found.innerText || found.textContent) : '';
+                        }).filter(Boolean).join(' ');
+                    const editable = el.isContentEditable ||
+                        ['textbox','searchbox'].includes(el.getAttribute('role'));
                     const label = clean(el.getAttribute('aria-label') ||
+                        byIds(el, 'aria-labelledby') ||
                         Array.from(el.labels || []).map(x => x.innerText || x.textContent).join(' ') ||
-                        el.getAttribute('placeholder') ||
-                        (!el.isContentEditable ? el.innerText : '') || '');
+                        el.getAttribute('title') || el.getAttribute('placeholder') ||
+                        (['submit','button','reset'].includes(el.type) ? el.value : '') ||
+                        (!editable ? el.innerText : '') || el.getAttribute('alt') ||
+                        el.querySelector?.('img[alt]')?.getAttribute('alt') ||
+                        el.querySelector?.('svg title')?.textContent);
                     let shadowPath = '';
                     let node = el.getRootNode();
                     const parts = [];
@@ -2244,7 +2354,7 @@ class BrowserSession:
                         label.slice(0, 80),
                         shadowPath,
                     ].join('|');
-                }""")
+                }""", {"namespace": self._ref_namespace, "ref": ref})
             except Exception:
                 raise ValueError("browser_target_stale") from None
             if current != expected:
@@ -2470,6 +2580,13 @@ class BrowserSession:
     def _field(self, label, selector):
         if not isinstance(label, str) or not label.strip() or len(label) > 180:
             raise ValueError("browser_field_label_invalid")
+        resolved = self._resolve_action_target(label)
+        if resolved is not None:
+            frame, candidate = resolved
+            field = self._unique(candidate.and_(frame.locator(selector)))
+            if field is None:
+                raise ValueError("browser_ref_role_mismatch")
+            return field
         if label.startswith("id:"):
             field = self._unique_across(
                 lambda frame: frame.locator(selector).and_(self._by_id(label[3:], frame)))
@@ -2537,6 +2654,25 @@ class BrowserSession:
             return self._snapshot(mode=mode, control_offset=int(control_offset or 0),
                                   control_limit=control_limit)
 
+        if name == "browser_verify":
+            allowed = {"expect_text", "absent_text", "url_contains", "control"}
+            if set(args) - allowed or not args:
+                raise ValueError("browser_verify_arguments_invalid")
+            for key in ("expect_text", "absent_text"):
+                value = args.get(key)
+                if value is not None and (not isinstance(value, list) or len(value) > 8
+                        or any(not isinstance(v, str) or not 1 <= len(v) <= 180 for v in value)):
+                    raise ValueError("browser_verify_arguments_invalid")
+            for key in ("url_contains", "control"):
+                value = args.get(key)
+                if value is not None and (not isinstance(value, str) or not 1 <= len(value) <= 180):
+                    raise ValueError("browser_verify_arguments_invalid")
+            snapshot = self._snapshot()
+            self._last_digest = page_digest(snapshot)
+            return verify_expectations(
+                snapshot, expect_text=args.get("expect_text"), absent_text=args.get("absent_text"),
+                url_contains=args.get("url_contains"), control=args.get("control"),
+            )
         if name == "browser_find_controls":
             if set(args) != {"query"} or not isinstance(args["query"], str) or not 1 <= len(args["query"].strip()) <= 120:
                 raise ValueError("browser_control_query_invalid")
@@ -2567,7 +2703,8 @@ class BrowserSession:
                 {"heading_context": _redact_text(str(item.get("heading_context") or ""))[:180],
                  "element": str(item.get("element") or "")[:20],
                  "role": str(item.get("role") or "")[:30],
-                 "snippet": _redact_text(str(item.get("snippet") or ""))[:500]}
+                 "snippet": _redact_text(str(item.get("snippet") or ""))[:500],
+                 **({"frame_index": int(item["frame_index"])} if int(item.get("frame_index") or 0) else {})}
                 for item in result.get("matches", [])[:limit] if isinstance(item, dict)
             ]
             scanned = int(result.get("scanned_blocks") or 0)
@@ -2575,7 +2712,8 @@ class BrowserSession:
             limited = bool(result.get("scan_limit_reached"))
             frame_count = max(1, len(self._page.frames))
             root_scope = result.get("root_scope") or "unknown"
-            incomplete = limited or frame_count > 1 or root_scope != "body"
+            frames_scanned = max(1, min(frame_count, int(result.get("frames_scanned") or 1)))
+            incomplete = limited or frames_scanned < frame_count or root_scope != "body"
             return {
                 "ok": True,
                 "url": _safe_url(self._page.url),
@@ -2591,11 +2729,11 @@ class BrowserSession:
                            "success" if matches else "empty"),
                 "truncated": total > len(matches),
                 "coverage": {
-                    "documents_scanned": 1,
+                    "documents_scanned": frames_scanned,
                     "frames_total": frame_count,
-                    "frames_scanned": 1,
-                    "frames_skipped": frame_count - 1,
-                    "skip_reasons": (["iframe_not_scanned"] if frame_count > 1 else []) +
+                    "frames_scanned": frames_scanned,
+                    "frames_skipped": frame_count - frames_scanned,
+                    "skip_reasons": (["iframe_not_scanned"] if frames_scanned < frame_count else []) +
                                     (["candidate_limit"] if limited else []) +
                                     (["main_or_article_only"] if root_scope == "main_or_article" else []) +
                                     (["no_visible_text_blocks"] if scanned == 0 else []),
@@ -2992,7 +3130,12 @@ class BrowserSession:
             button = None
             resolved = self._resolve_action_target(target_name)
             if resolved is not None:
-                _frame, button = resolved
+                frame, candidate = resolved
+                if name in APPROVAL_TOOL_NAMES and frame is not self._page:
+                    raise ValueError("browser_form_requires_main_frame")
+                button = self._unique(candidate.and_(frame.get_by_role(role)))
+                if button is None:
+                    raise ValueError("browser_ref_role_mismatch")
             if button is None:
                 button = self._one(role, target_name, main_only=name in APPROVAL_TOOL_NAMES)
             form = button.evaluate("""el => {
@@ -3156,6 +3299,8 @@ class BrowserSession:
         self._backend = None
         self._attached_pages.clear()
         self._widget_targets.clear()
+        self._element_refs.clear()
+        self._last_digest = None
         diagnostic_event("browser_shutdown", status="ok")
 
 
@@ -3174,7 +3319,9 @@ def _classify_browser_error(exc: BaseException) -> dict:
         code, alternatives = "browser_no_open_page", ["browser_navigate", "open_page_first"]
     elif "timeout" in lower or "timed out" in lower:
         code, alternatives = "browser_timeout", ["browser_wait", "browser_reload", "browser_snapshot"]
-    elif "not unique" in lower or "strict mode violation" in lower:
+    elif "not_unique:0" in lower or "not_found" in lower:
+        code, alternatives = "browser_target_not_found", ["browser_find_controls", "browser_snapshot"]
+    elif "not_unique" in lower or "not unique" in lower or "strict mode violation" in lower:
         code, alternatives = "browser_target_ambiguous", ["browser_find_controls", "use_ref_from_snapshot"]
     elif "not visible" in lower or "not attached" in lower or "detached" in lower:
         code, alternatives = "browser_target_stale", ["browser_snapshot", "reselect_target"]
@@ -3194,7 +3341,7 @@ def _classify_browser_error(exc: BaseException) -> dict:
         "ok": False,
         "error": code,
         "error_class": type(exc).__name__,
-        "detail": message[:220],
+        "detail": message if re.fullmatch(r"browser_[a-z0-9_]+(?::\d+)?", message) else type(exc).__name__,
         "alternatives": alternatives,
     }
 
@@ -3210,12 +3357,11 @@ def browser_control_call(name: str, args: dict, session: BrowserSession) -> tupl
         classified = _classify_browser_error(exc)
         if classified["error"] == "chromium_not_installed":
             classified["hint"] = "Run native.py --data-dir <existing-data-dir> install-browser"
+        classified.update(session.note_failure(name, args, classified["error"]))
         return classified, True
     except Exception as exc:
         classified = _classify_browser_error(exc)
         if classified["error"] == "chromium_not_installed":
             classified["hint"] = "Run native.py --data-dir <existing-data-dir> install-browser"
-        else:
-            classified["error"] = "browser_runtime_error"
-            classified["detail"] = type(exc).__name__ + ":" + str(exc)[:160]
+        classified.update(session.note_failure(name, args, classified["error"]))
         return classified, True

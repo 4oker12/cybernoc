@@ -184,7 +184,7 @@ def filter_tool_rows(rows, groups=None) -> list[dict]:
 
 # Routing chooses capabilities; dispatch still enforces the existing policy.
 _ROUTE_HINTS = {
-    "browser": r"браузер|хром|страниц|сайт|ссылк|вкладк|интерфейс|зависан|browser|chrome|https?://|html|\bdom\b|\bh1|",
+    "browser": r"браузер|хром|страниц|сайт|ссылк|вкладк|интерфейс|зависан|browser|chrome|https?://|html|\bdom\b|\bh1\b",
     "computer": r"компьютер|ноутбук|локальн.{0,12}файл|папк|процесс|служб|диск|окн[оа]|памят|windows|desktop|computer|defender|cpu|ram",
     "terminal": r"терминал|powershell|\bcmd\b|\bshell\b|\bterminal(?:_run|_status)?\b|консол|выполни команду|запусти команду|\bgit\s+(?:status|diff|log|show|grep|add|commit|push|fetch|branch|ls-remote)\b",
     "web": r"интернет|поиск|поищи|найди|знайди|гугл|источник|search|research|web|погод|weather|forecast|прогноз|курс валют|новост|\bcve\b|уязвимост",
@@ -202,7 +202,7 @@ _ROUTE_NEGATION = re.compile(
 )
 _BROWSER_READ = (
     "browser_navigate", "browser_snapshot", "browser_read_page", "browser_find_text",
-    "browser_find_controls",
+    "browser_find_controls", "browser_verify",
     "browser_read_table", "browser_follow_link", "browser_tabs", "browser_new_tab",
     "browser_switch_tab", "browser_back", "browser_forward", "browser_scroll",
     "browser_wait", "browser_reload", "browser_screenshot", "browser_open",

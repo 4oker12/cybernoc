@@ -348,7 +348,15 @@ def run():
             review.get("status") != "completed"
             or (len(model.advertised_history) >= 3 and model.advertised_history[-1] == [])
         )
-        if (not {"terminal_status", "computer_system_overview", "browser_navigate"}.issubset(advertised)
+        terminal_results = [event for event in res.get("events", [])
+                            if event.get("type") == "tool_result"
+                            and event.get("name") == "terminal_status"]
+        result_ok = (len(terminal_results) == 1
+                     and not terminal_results[0].get("is_error")
+                     and terminal_results[0].get("result", {}).get("ok") is True)
+        unrelated = any(name.startswith(("browser_", "computer_")) for name in advertised)
+        if (not {"terminal_status", "terminal_run", "tool_capabilities"}.issubset(advertised)
+                or unrelated or not result_ok
                 or res.get("tool_calls") != 1 or not review_disables_tools):
             failures.append("deepseek_shared_tool_dispatch")
             print('{"test":"deepseek_shared_tool_dispatch","status":"FAIL"}')
