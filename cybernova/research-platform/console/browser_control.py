@@ -3065,7 +3065,7 @@ class BrowserSession:
                 raise ValueError("browser_target_focus_not_confirmed")
             # Dispatch only after the exact ref is observed as the active element.
             # Page.keyboard sends to the focused target without an implicit locator refocus.
-            frame.page.keyboard.press(key)
+            self._page.keyboard.press(key)
         elif interaction == "double_click":
             button = self._unique(locator.and_(frame.get_by_role("button")))
             if button is None:
