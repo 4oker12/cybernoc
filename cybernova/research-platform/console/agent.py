@@ -44,6 +44,11 @@ except ImportError:
     from agent_profile import AGENT_PROFILE, AGENT_PROFILE_TEXT_ONLY
     from local_tools_profile import LOCAL_TOOLS_PROFILE
 
+try:
+    from .research_progress import PROGRESS_STORE, RESEARCH_STATE_TOOLS
+except ImportError:
+    from research_progress import PROGRESS_STORE, RESEARCH_STATE_TOOLS
+
 OLLAMA_URL = os.environ.get("CYBERNOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MCP_URL = os.environ.get("CYBERNOVA_MCP_URL", "http://127.0.0.1:18792/mcp")
 MODEL = os.environ.get("CYBERNOVA_MODEL", "cybernova-security:30b")
@@ -51,7 +56,8 @@ MAX_ROUNDS = 48
 MAX_CALLS = 128
 MAX_HTTP_GETS = 3
 MAX_PROMPT = 10000
-MAX_RESULT = 12000
+MAX_RESULT = 8000
+MAX_BROWSER_RESULT = 4500  # Stricter bound for browser observations entering the model.
 MAX_INPUT_TOKENS = 0  # No cumulative local token ceiling by default.
 TOOL_CAPABILITIES = {
     "name": "tool_capabilities",
@@ -64,13 +70,11 @@ TOOL_CAPABILITIES = {
     },
 }
 PLAN_CHECKPOINT_INTERVAL = 6
-MAX_CONTEXT_HISTORY_MESSAGES = 8
-MAX_CONTEXT_HISTORY_CHARS = 2500
-MAX_CONTEXT_TOOL_CALLS = 8
-MAX_CONTEXT_TOOL_CHARS = 3500
-MAX_CONTEXT_SUMMARY_CHARS = 5000
-_BROWSER_PAGE_FIELDS = ("visible_text", "links", "buttons", "form_fields", "headings",
-                        "landmarks", "tables", "focused_elements", "page_type", "content_stats")
+MAX_CONTEXT_HISTORY_MESSAGES = 6
+MAX_CONTEXT_HISTORY_CHARS = 1600
+MAX_CONTEXT_TOOL_CALLS = 5
+MAX_CONTEXT_TOOL_CHARS = 2200
+MAX_CONTEXT_SUMMARY_CHARS = 2800
 _ROUTINE_READ_TOOLS = frozenset({
     "browser_navigate", "browser_snapshot", "browser_follow_link", "browser_tabs",
     "browser_back", "browser_forward", "browser_reload", "terminal_status",
@@ -540,9 +544,9 @@ def _compact_context(messages):
         function = call.get("function", {}) if isinstance(call, dict) else {}
         name = str(function.get("name") or "tool")
         snippet = str(output.get("content") or "").replace("\\n", " ")
-        summary_lines.append("- " + name + ": " + snippet[:280])
+        summary_lines.append("- " + name + ": " + snippet[:140])
     for name, content in loose_results:
-        summary_lines.append("- " + name + ": " + content.replace("\\n", " ")[:280])
+        summary_lines.append("- " + name + ": " + content.replace("\\n", " ")[:140])
 
     compact.extend(notes)
     if summary_lines:
@@ -590,6 +594,13 @@ def _browser_json(result, limit):
     def encode(value):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
+    if isinstance(result, dict):
+        result = {
+            key: value for key, value in result.items()
+            if key not in {
+                "browser", "browser_backend", "untrusted_page_content", "note",
+            }
+        }
     content = encode(result)
     if len(content) <= limit:
         return content
@@ -598,35 +609,81 @@ def _browser_json(result, limit):
                    "focused_elements", "matches", "rows")
     lists = {key: result[key] for key in list_fields if isinstance(result.get(key), list)}
     bounded = {key: value for key, value in result.items()
-               if key not in lists and key != "visible_text"}
+               if key not in lists and key not in {"visible_text", "visible_text_preview"}}
     bounded["observation_truncated"] = True
     for key in lists:
         bounded[key] = []
+    preview = result.get("visible_text_preview")
     visible_text = result.get("visible_text")
-    if isinstance(visible_text, str):
-        bounded["visible_text"] = visible_text[:min(600, limit // 5)]
+    if isinstance(preview, str) and preview:
+        bounded["visible_text_preview"] = preview[:min(500, max(120, limit // 5))]
+    elif isinstance(visible_text, str):
+        bounded["visible_text"] = visible_text[:min(400, max(100, limit // 6))]
     for index in range(max((len(items) for items in lists.values()), default=0)):
+        stopped = False
         for key, items in lists.items():
             if index >= len(items):
                 continue
             item = items[index]
-            if key == "form_fields" and isinstance(item, dict) and "options" in item:
-                item = {**item, "options": item["options"][:8]}
+            if isinstance(item, dict):
+                item = {
+                    k: v for k, v in item.items()
+                    if k not in {"bounds", "frame_url", "in_frame_viewport", "shadow_path"}
+                }
+                if key == "form_fields" and isinstance(item.get("options"), list):
+                    item = {**item, "options": item["options"][:6]}
             bounded[key].append(item)
             if len(encode(bounded)) > limit:
                 bounded[key].pop()
+                stopped = True
+                break
+        if stopped:
+            break
     content = encode(bounded)
     if len(content) <= limit:
         return content
-    # Non-page tools may return their own large arrays (e.g. browser_network_session).
-    return encode({"ok": result.get("ok"), "observation_truncated": True,
-                   "preview": content[:limit // 3]})
+    return encode({
+        "ok": result.get("ok"), "observation_truncated": True,
+        "url": result.get("url"), "title": result.get("title"),
+        "mode": result.get("mode"), "page_type": result.get("page_type"),
+        "content_stats": result.get("content_stats"),
+        "preview": content[: max(200, limit // 4)],
+    })
 
 
 def _serialize_tool_result(name, result):
     if name.startswith("browser_") and isinstance(result, dict):
-        return _browser_json(result, MAX_RESULT)
+        return _browser_json(result, MAX_BROWSER_RESULT)
     return json.dumps(result, ensure_ascii=False)[:MAX_RESULT]
+
+
+_BROWSER_PAGE_FIELDS = (
+    "visible_text", "visible_text_preview", "links", "buttons", "form_fields",
+    "headings", "landmarks", "tables", "focused_elements", "page_type",
+    "content_stats", "mode", "control_offset", "control_next_offset",
+)
+_BROWSER_EPHEMERAL_FIELDS = (
+    "blocked_requests", "note", "browser", "browser_backend", "untrusted_page_content",
+)
+
+
+def _strip_browser_ephemeral(result: dict) -> dict:
+    cleaned = {k: v for k, v in result.items() if k not in _BROWSER_EPHEMERAL_FIELDS}
+    for key in ("links", "buttons", "form_fields"):
+        rows = cleaned.get(key)
+        if not isinstance(rows, list):
+            continue
+        slim = []
+        for row in rows:
+            if not isinstance(row, dict):
+                slim.append(row)
+                continue
+            slim.append({
+                k: v for k, v in row.items()
+                if k not in {"bounds", "frame_url", "in_frame_viewport", "shadow_path", "shadow_host"}
+            })
+        cleaned[key] = slim
+    return cleaned
 
 
 def _compact_tool_output(output, seen_pages):
@@ -639,33 +696,37 @@ def _compact_tool_output(output, seen_pages):
         return content[:MAX_CONTEXT_TOOL_CHARS]
     if not isinstance(result, dict):
         return content[:MAX_CONTEXT_TOOL_CHARS]
-    if not result.get("url") or "visible_text" not in result:
-        return _browser_json(result, MAX_CONTEXT_TOOL_CHARS)
-    # Build each delta against the previous observation of this page still in
-    # the current context window, including after older tool calls are evicted.
-    key = (result["url"], result.get("title"), result.get("tab"))
-    previous = seen_pages.get(key, {})
+    result = _strip_browser_ephemeral(result)
+    key = (result.get("url"), result.get("title"), result.get("tab"))
+    previous = seen_pages.get(key, {}) if result.get("url") else {}
     unchanged = []
-    if result.get("ok") is True:
-        unchanged = [field for field in _BROWSER_PAGE_FIELDS
-                     if field in result and field in previous and previous[field] == result[field]]
+    if result.get("ok") is True and previous:
+        unchanged = [
+            field for field in _BROWSER_PAGE_FIELDS
+            if field in result and field in previous and previous[field] == result[field]
+        ]
     if unchanged:
-        result = {key: value for key, value in result.items() if key not in unchanged}
+        result = {k: v for k, v in result.items() if k not in unchanged}
         result["page_content"] = (
             "changed_fields_only" if any(field in result for field in _BROWSER_PAGE_FIELDS)
             else "unchanged_from_earlier_tool_result"
         )
         result["unchanged_page_fields"] = unchanged
+    if "visible_text" in result and "visible_text_preview" in result:
+        result.pop("visible_text", None)
     content = _browser_json(result, MAX_CONTEXT_TOOL_CHARS)
-    # A later delta can refer only to fields the model actually received.
-    delivered = json.loads(content)
-    seen_pages[key] = {
-        field: delivered[field] if field in delivered else previous[field]
-        for field in _BROWSER_PAGE_FIELDS
-        if field in delivered or (
-            field in unchanged and "unchanged_page_fields" in delivered
-        )
-    }
+    try:
+        delivered = json.loads(content)
+    except ValueError:
+        delivered = result
+    if result.get("url"):
+        seen_pages[key] = {
+            field: delivered[field] if field in delivered else previous.get(field)
+            for field in _BROWSER_PAGE_FIELDS
+            if field in delivered or (
+                field in unchanged and "unchanged_page_fields" in delivered
+            )
+        }
     return content
 
 
@@ -806,6 +867,16 @@ class Agent:
         if input_token_budget < 0:
             raise ValueError("agent_input_token_budget_invalid")
         conversation_key = ("deepseek:" + session_id) if isinstance(session_id, str) and session_id.strip() else None
+        progress_key = conversation_key or ("run:" + secrets.token_hex(6))
+        progress = PROGRESS_STORE.get(progress_key)
+        progress.set_goal(text)
+        diagnostic_event(
+            "research_progress",
+            kind="observation",
+            session=progress_key[:40],
+            goal=progress.goal[:80] if progress.goal else "",
+            model_phase=progress.phase,
+        )
         usage_totals = {
             "input_tokens": 0, "output_tokens": 0, "requests": 0,
             "measured_requests": 0, "cached_tokens": 0, "cache_reports": 0,
@@ -836,11 +907,21 @@ class Agent:
                 usage_totals["measured_requests"] += 1
 
         def publish_usage():
+            report = usage_report()
+            progress.record_usage({
+                "input_tokens": usage_totals["input_tokens"],
+                "output_tokens": usage_totals["output_tokens"],
+            })
             if callable(on_usage):
                 try:
-                    on_usage(usage_report())
+                    enriched = dict(report)
+                    enriched["research_progress"] = progress.ui_card()
+                    on_usage(enriched)
                 except Exception:
-                    pass
+                    try:
+                        on_usage(report)
+                    except Exception:
+                        pass
 
         def usage_report():
             available = bool(usage_totals["input_reports"] or usage_totals["output_reports"])
@@ -975,6 +1056,7 @@ class Agent:
                 "selected_by": selected_by if count or executed else "none",
                 "model": self.ollama.model,
                 "usage": usage_report(),
+                "research_progress": progress.ui_card(),
             }
             if isinstance(history_reasoning_content, str):
                 # Internal-only metadata; server.py removes it before returning JSON.
@@ -989,6 +1071,13 @@ class Agent:
             context.append({"role": "system", "content": user_context[:8500]})
         if profile_instructions:
             context.append({"role": "system", "content": profile_instructions[:12500]})
+        # Compact progress only — never replay full evidence or long histories.
+        progress_note = progress.system_note()
+        if progress_note:
+            context.append({
+                "role": "system",
+                "content": ("RUNTIME STATE (observed facts + model-declared fields only; not a substitute for your plan): " + progress_note),
+            })
         if tools_enabled:
             context.append({"role": "system", "content": (
                 "VISUAL INPUT: the active adapter supports native tool-result screenshots. "
@@ -1141,6 +1230,9 @@ class Agent:
                 registered = discovered_tools(merged_rows, limit=MAX_DISCOVERED)
                 discovered_count = len(registered)
                 registered.append(TOOL_CAPABILITIES)
+                for row in RESEARCH_STATE_TOOLS:
+                    if row["name"] not in {item.get("name") for item in registered}:
+                        registered.append(row)
                 advertised = route_model_tool_rows(
                     registered, route_text, limit=MAX_ADVERTISED, selected_groups=selected_groups
                 )
@@ -1148,6 +1240,14 @@ class Agent:
                 if (len({row["name"] for row in registered if row["name"] != "tool_capabilities"}
                         - advertised_names) and "tool_capabilities" not in advertised_names):
                     advertised = advertised[:MAX_ADVERTISED - 1] + [TOOL_CAPABILITIES]
+                # Always expose model-declared research state tool when registered.
+                if "research_state_update" not in {row["name"] for row in advertised}:
+                    state_row = next(
+                        (row for row in registered if row.get("name") == "research_state_update"),
+                        None,
+                    )
+                    if state_row is not None:
+                        advertised = advertised[: max(0, MAX_ADVERTISED - 1)] + [state_row]
                 descriptors = {t["name"]: t for t in advertised}
                 tools = _tool_schema(advertised)
             except ToolPolicyError as exc:
@@ -1565,6 +1665,54 @@ class Agent:
                                 max_argument_bytes=1_100_000 if name in GITHUB_WRITE_NAMES else 8192,
                                 max_value_length=250_000 if name in GITHUB_WRITE_NAMES else 4096,
                             )
+                        if name == "research_state_update":
+                            args = validate_dynamic_arguments(
+                                function.get("arguments"),
+                                descriptors[name].get("inputSchema", {}),
+                            )
+                            dispatched = True
+                            executed += 1
+                            try:
+                                card = progress.apply_model_update(
+                                    phase=args.get("phase"),
+                                    summary=args.get("summary"),
+                                    open_items=args.get("open_items"),
+                                    findings=args.get("findings"),
+                                    hypotheses=args.get("hypotheses"),
+                                    resolve_open=args.get("resolve_open"),
+                                )
+                                safe_result = {
+                                    "ok": True, "status": "success",
+                                    "research_progress": card,
+                                    "note": (
+                                        "Stored model-declared research state. "
+                                        "Observed tool counters are unchanged by this call."
+                                    ),
+                                }
+                            except ValueError as exc:
+                                safe_result = {
+                                    "ok": False, "error": str(exc)[:120],
+                                    "status": "failed",
+                                }
+                            # Reuse the shared post-execution path below.
+                            serialized = _serialize_tool_result(name, safe_result)
+                            event_result = safe_result
+                            failed = safe_result.get("ok") is False
+                            safe_event = {
+                                "type": "tool_result", "name": name,
+                                "arguments": safe_preview(args),
+                                "is_error": failed,
+                                "result": event_result,
+                            }
+                            events.append(safe_event)
+                            if on_tool_event is not None:
+                                on_tool_event(safe_event)
+                            context.append({
+                                "role": "tool", "tool_name": name,
+                                "content": serialized,
+                            })
+                            count += 1
+                            continue
                         if name == "tool_capabilities":
                             target = args["name"]
                             available = {row["name"]: row for row in registered}
@@ -1715,8 +1863,36 @@ class Agent:
                     }
                     safe_event.update(event)
                     events.append(safe_event)
+                    # Runtime observations only — never infer research phase from tool names.
+                    tool_ok = not (failed or safe_result.get("ok") is False)
+                    page_url = ""
+                    err = ""
+                    if isinstance(safe_result, dict):
+                        page_url = str(safe_result.get("url") or "")[:140]
+                        if not tool_ok:
+                            err = str(
+                                safe_result.get("error")
+                                or safe_result.get("error_code")
+                                or name
+                            )[:60]
+                    progress.record_observation(
+                        tool=str(name)[:60],
+                        ok=tool_ok,
+                        error=err,
+                        page_url=page_url,
+                    )
                     if on_tool_event is not None:
                         on_tool_event(safe_event)
+                    diagnostic_event(
+                        "research_progress",
+                        kind="observation",
+                        last_tool=str(name)[:60],
+                        last_ok=tool_ok,
+                        tools_ok=progress.tools_ok,
+                        tools_failed=progress.tools_failed,
+                        pages_observed=progress.pages_observed,
+                        model_phase=progress.phase,
+                    )
                     if safe_result.get("status") == "human_challenge_required":
                         count += 1
                         return result_payload("Сайт показал браузерную проверку. Выполнение приостановлено.",

@@ -143,10 +143,12 @@ LOCAL_TOOLS_PROFILE = """
   browser_snapshot, browser_follow_link, browser_back/forward/reload,
   browser_tabs, browser_new_tab, browser_switch_tab, browser_scroll,
   browser_fill/select, browser_console и browser_network_session.
+- Экономь токены: сначала browser_snapshot с mode=orientation, затем
+  mode=compact; mode=full и browser_read_page — только когда нужен полный текст.
+  Адресуй элементы через ref:eN из снимка; не повторяй snapshot без изменения страницы.
 - Для неполного снимка используй browser_find_controls, для длинного текста —
-  browser_read_page с next_offset и проверкой content_sha256, для таблиц —
-  browser_read_table, для локального поиска — browser_find_text.
-  При неоднозначности не выбирай произвольный элемент; уточни текущий контекст.
+  browser_read_page с next_offset, для таблиц — browser_read_table, для поиска —
+  browser_find_text. При неоднозначности не выбирай произвольный элемент.
 - Если найден раскрывающийся блок с action_target, передай этот идентификатор
   в browser_click_button и проверь disclosure_changed и expanded_after.
   Если ссылка на элемент устарела, найди его заново через browser_find_controls.

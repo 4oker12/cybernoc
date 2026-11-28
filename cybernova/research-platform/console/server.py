@@ -199,6 +199,7 @@ def _begin_usage_progress(run_id: str) -> None:
                 "total_tokens": None, "requests": 0, "measured_requests": 0,
                 "complete": False, "provider": None,
             },
+            "research_progress": None,
             "updated_at": time.time(),
         }
 
@@ -210,7 +211,11 @@ def _update_usage_progress(run_id: str, usage: dict) -> None:
         item = run_usage_progress.get(run_id)
         if item is None or item["status"] != "running":
             return
-        item["usage"] = dict(usage)
+        payload = dict(usage)
+        research = payload.pop("research_progress", None)
+        item["usage"] = payload
+        if isinstance(research, dict):
+            item["research_progress"] = research
         item["updated_at"] = time.time()
         run_usage_progress.move_to_end(run_id)
 
@@ -221,7 +226,11 @@ def _finish_usage_progress(run_id: str, status: str, usage: dict | None = None) 
         if item is None:
             return
         if isinstance(usage, dict):
-            item["usage"] = dict(usage)
+            payload = dict(usage)
+            research = payload.pop("research_progress", None)
+            item["usage"] = payload
+            if isinstance(research, dict):
+                item["research_progress"] = research
         item["status"] = status
         item["updated_at"] = time.time()
         run_usage_progress.move_to_end(run_id)
@@ -232,8 +241,15 @@ def _read_usage_progress(run_id: str) -> dict | None:
         item = run_usage_progress.get(run_id)
         if item is None:
             return None
-        return {"status": item["status"], "usage": dict(item["usage"]),
-                "updated_at": item["updated_at"]}
+        result = {
+            "status": item["status"],
+            "usage": dict(item["usage"]),
+            "updated_at": item["updated_at"],
+        }
+        research = item.get("research_progress")
+        if isinstance(research, dict):
+            result["research_progress"] = dict(research)
+        return result
 
 
 @lru_cache(maxsize=1)

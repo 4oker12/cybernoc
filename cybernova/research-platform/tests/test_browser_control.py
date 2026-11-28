@@ -815,7 +815,10 @@ class BrowserControlTests(unittest.TestCase):
                 browser._network_total_observed = 68
                 network = browser._dispatch("browser_network_session", {})
             self.assertEqual(network["status"], "truncated")
-            self.assertEqual(network["coverage"]["omitted_events"], 5)
+            # Returned window is intentionally capped for token efficiency.
+            returned = len(network["events"])
+            self.assertLessEqual(returned, 30)
+            self.assertEqual(network["coverage"]["omitted_events"], 65 - returned)
             self.assertEqual(network["coverage"]["dropped_events"], 3)
             self.assertFalse(network["coverage"]["complete"])
         finally:
@@ -1362,6 +1365,66 @@ class BrowserControlTests(unittest.TestCase):
         ):
             with self.subTest(target=target):
                 self.assertIsNotNone(IRREVERSIBLE_SUBMIT_TARGET.search(target))
+
+    def test_snapshot_mode_and_error_classification(self):
+        from console.browser_control import _classify_browser_error, BROWSER_CONTROL_TOOLS
+        # Tool schema exposes mode and pagination
+        snapshot_tool = next(t for t in BROWSER_CONTROL_TOOLS if t["name"] == "browser_snapshot")
+        props = snapshot_tool["inputSchema"]["properties"]
+        self.assertIn("mode", props)
+        self.assertTrue({"orientation", "compact", "full"}.issubset(set(props["mode"]["enum"])))
+        self.assertIn("control_offset", props)
+        self.assertIn("control_limit", props)
+
+        classified = _classify_browser_error(ValueError("browser_no_open_page"))
+        self.assertEqual(classified["error"], "browser_no_open_page")
+        self.assertIn("browser_navigate", classified["alternatives"])
+
+        classified = _classify_browser_error(TimeoutError("Timeout 20000ms exceeded"))
+        self.assertEqual(classified["error"], "browser_timeout")
+
+        classified = _classify_browser_error(ValueError("browser_target_not_interactable"))
+        self.assertEqual(classified["error"], "browser_target_not_interactable")
+        self.assertTrue(any("scroll" in str(x) or "snapshot" in str(x) for x in classified["alternatives"]))
+
+        classified = _classify_browser_error(ValueError("browser_arguments_invalid"))
+        self.assertEqual(classified["error"], "browser_arguments_invalid")
+
+
+    def test_stable_ref_parse_and_stale_verification(self):
+        session = BrowserSession()
+        self.addCleanup(session._executor.shutdown, wait=False)
+        self.assertEqual(session._parse_ref("e12"), "e12")
+        self.assertEqual(session._parse_ref("ref:e3"), "e3")
+        self.assertEqual(session._parse_ref("data-cybernova-ref:e9"), "e9")
+        self.assertIsNone(session._parse_ref("Submit"))
+        self.assertIsNone(session._parse_ref("id:foo"))
+        # No stored meta -> stale
+        with self.assertRaisesRegex(ValueError, "browser_target_stale"):
+            session._verify_ref("e1")
+        session._page = Mock()
+        session._page.is_closed.return_value = False
+        session._page.url = "https://example.com/app"
+        session._element_refs["e1"] = {
+            "frame_index": 0,
+            "page_url": "https://example.com/app",
+            "frame_url": "https://example.com/app",
+            "fingerprint": "button||btn-ok|ok|OK|",
+            "tag": "button", "role": "", "text": "OK", "id": "btn-ok",
+            "shadow_path": "", "name": "",
+        }
+        # Navigated page invalidates refs
+        session._page.url = "https://example.com/other"
+        with self.assertRaisesRegex(ValueError, "browser_target_stale"):
+            session._verify_ref("e1")
+
+    def test_collect_elements_js_includes_shadow_walk(self):
+        from console.browser_control import _collect_elements_js
+        js = _collect_elements_js()
+        self.assertIn("shadowRoot", js)
+        self.assertIn("data-cybernova-ref", js)
+        self.assertIn("fingerprint", js)
+
 
 if __name__ == "__main__":
     unittest.main()
