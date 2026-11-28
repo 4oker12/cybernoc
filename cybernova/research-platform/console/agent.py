@@ -1027,7 +1027,8 @@ class Agent:
         # Recover the last substantive user task for a short continuation.
         # Tool results and assistant text never authorize a new capability.
         route_text = text
-        continuation = r"(?i)\s*(?:продолжи(?:ть| работу)?|дальше|continue|go on)[.! ]*\s*"
+        continuation = (r"(?i)\s*(?:продолжи(?:ть| работу)?|продолжай(?: предыдущую задачу)?|"
+                        r"дальше|continue|go on)[.! ]*\s*")
         if re.fullmatch(continuation, text):
             prior_tasks = [item["content"] for item in task_messages
                            if not re.fullmatch(continuation, item["content"])]
@@ -1036,6 +1037,8 @@ class Agent:
         mcp = None
         remote_rows = []
         descriptors, tools = {}, []
+        registered = []
+        requested_expansion = set()
         count, gets, executed = 0, 0, 0
         selected_by = "native"
         diagnostic_event("tool_catalog_start", status="started" if tools_enabled else "disabled",
@@ -1060,7 +1063,6 @@ class Agent:
             combined_rows = local_rows + [
                 row for row in remote_rows
                 if isinstance(row, dict)
-                and row.get("name") not in local_names
                 and not (self.local_tool_runtime is not None and row.get("name") == "browser_open")
             ]
             catalog_counts = {
@@ -1068,6 +1070,16 @@ class Agent:
                 "filtered_remote_count": len(remote_rows), "combined_count": len(combined_rows),
             }
             try:
+                seen_names = set()
+                collisions = set()
+                for row in combined_rows:
+                    if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+                        continue
+                    if row["name"] in seen_names:
+                        collisions.add(row["name"])
+                    seen_names.add(row["name"])
+                if collisions:
+                    raise ToolPolicyError("tool_name_collision:" + ",".join(sorted(collisions)[:8]))
                 registered = discovered_tools(combined_rows, limit=MAX_DISCOVERED)
                 advertised = route_model_tool_rows(
                     registered, route_text, limit=MAX_ADVERTISED, selected_groups=selected_groups
@@ -1092,7 +1104,7 @@ class Agent:
                 context.append({"role": "system", "content":
                     "Контроллер автоматически выбрал подходящие схемы из большего каталога. "
                     "Доступны только функции в этом запросе; не имитируй отсутствующие. "
-                    "Если нужной функции нет, прямо укажи это для следующего целевого запроса."})
+                    "Если нужной функции нет, назови её точно: Runtime раскроет схему в следующем раунде, если она зарегистрирована и разрешена."})
         else:
             diagnostic_event("tool_catalog_ready", status="disabled", advertised_count=0)
         if ("github_status" in descriptors and "github_status" in local_names
@@ -1143,6 +1155,14 @@ class Agent:
         try:
             for round_no in range(MAX_ROUNDS):
                 diagnostic_event("agent_round_start", round=round_no, status="started")
+                if requested_expansion and tools_enabled:
+                    advertised = route_model_tool_rows(
+                        registered, route_text, limit=MAX_ADVERTISED,
+                        selected_groups=selected_groups,
+                        additional_names=sorted(requested_expansion),
+                    )
+                    descriptors = {row["name"]: row for row in advertised}
+                    tools = _tool_schema(advertised)
                 if stop_requested():
                     return stopped_result()
                 if round_no and round_no % PLAN_CHECKPOINT_INTERVAL == 0:
@@ -1447,6 +1467,9 @@ class Agent:
                     args, kind, event = {}, "tool_result", {}
                     try:
                         if name not in allowed_names:
+                            if name in {row["name"] for row in registered}:
+                                requested_expansion.add(name)
+                                raise BackendError("tool_not_exposed_in_this_round")
                             raise BackendError("tool_not_registered")
                         if name in {"gateway_status", "python_static_review",
                                     "http_header_review", "ip_network_summary",
@@ -1523,6 +1546,14 @@ class Agent:
                         failed = True
                         rejection_code = type(exc).__name__
                         safe_result = {"ok": False, "error": str(exc)[:200]}
+                        if str(exc) == "tool_not_exposed_in_this_round":
+                            safe_result["available_capabilities"] = sorted({
+                                tool_group_for_name(row["name"]) for row in registered
+                            })
+                            safe_result["hint"] = (
+                                "The registered tool schema will be offered in the next round "
+                                "if task scope and group restrictions allow it."
+                            )
                     if not dispatched:
                         diagnostic_event("agent_tool_not_dispatched", tool=log_name,
                                          call_ref=call_ref, round=round_no, status="not_executed",
@@ -1591,6 +1622,11 @@ class Agent:
                     if visual_image is not None:
                         tool_message["_visual_image"] = visual_image
                     context.append(tool_message)
+                    if dispatched and name.startswith("browser_"):
+                        requested_expansion.update(
+                            row["name"] for row in registered
+                            if tool_group_for_name(row["name"]) == "browser"
+                        )
                     count += 1
                 if stop_requested():
                     return stopped_result()

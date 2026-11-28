@@ -184,7 +184,7 @@ def filter_tool_rows(rows, groups=None) -> list[dict]:
 
 # Routing chooses capabilities; dispatch still enforces the existing policy.
 _ROUTE_HINTS = {
-    "browser": r"браузер|хром|страниц|сайт|ссылк|вкладк|browser|chrome|https?://|html|\bdom\b|\bh1\b",
+    "browser": r"браузер|хром|страниц|сайт|ссылк|вкладк|интерфейс|зависан|browser|chrome|https?://|html|\bdom\b|\bh1|",
     "computer": r"компьютер|ноутбук|локальн.{0,12}файл|папк|процесс|служб|диск|окн[оа]|памят|windows|desktop|computer|defender|cpu|ram",
     "terminal": r"терминал|powershell|\bcmd\b|\bshell\b|\bterminal(?:_run|_status)?\b|консол|выполни команду|запусти команду|\bgit\s+(?:status|diff|log|show|grep|add|commit|push|fetch|branch|ls-remote)\b",
     "web": r"интернет|поиск|поищи|найди|знайди|гугл|источник|search|research|web|погод|weather|forecast|прогноз|курс валют|новост|\bcve\b|уязвимост",
@@ -202,12 +202,13 @@ _ROUTE_NEGATION = re.compile(
 )
 _BROWSER_READ = (
     "browser_navigate", "browser_snapshot", "browser_read_page", "browser_find_text",
+    "browser_find_controls",
     "browser_read_table", "browser_follow_link", "browser_tabs", "browser_new_tab",
     "browser_switch_tab", "browser_back", "browser_forward", "browser_scroll",
     "browser_wait", "browser_reload", "browser_screenshot", "browser_open",
 )
 _BROWSER_INTERACT = (
-    "browser_find_controls", "browser_click_button", "browser_fill", "browser_select",
+    "browser_click_button", "browser_fill", "browser_select",
     "browser_set_checked", "browser_press", "browser_submit", "browser_close_tab",
     "browser_register", "browser_login",
 )
@@ -241,7 +242,8 @@ _DEVELOPER_WRITE = ("dev_edit", "dev_move", "dev_delete", "dev_test", "dev_commi
 
 
 def route_model_tool_rows(
-    rows: list[dict], task: str, *, limit: int, selected_groups=None
+    rows: list[dict], task: str, *, limit: int, selected_groups=None,
+    additional_names=(),
 ) -> list[dict]:
     """Prefer task-specific tools and deterministic order; retain manual groups.
 
@@ -291,6 +293,9 @@ def route_model_tool_rows(
         return [name for name in valid if tool_group_for_name(name) == group]
 
     add(exact)
+    # Runtime discoveries can widen the next model request without changing
+    # task authorization. The same group and explicit-denial checks apply.
+    add(additional_names)
     if manual:
         for group in manual:
             add(group_names(group))
@@ -318,9 +323,9 @@ def route_model_tool_rows(
             continue
         if group == "browser":
             add(_BROWSER_READ)
-            if re.search(r"клик|нажм|заполни|форм|выбер|войд|логин|регистрац|вход|submit|click|fill|login|register|interact|интерфейс", task):
+            if re.search(r"клик|нажм|заполни|форм|выбер|войд|логин|регистрац|вход|submit|click|fill|login|register|interact", task):
                 add(_BROWSER_INTERACT)
-            if re.search(r"devtools|console|network|консол|сетев|трафик", task):
+            if re.search(r"devtools|console|network|консол|сетев|трафик|завис|ошиб|не работает|stuck|hang|fail|error", task):
                 add(("browser_console", "browser_network"))
         elif group == "computer":
             add(_COMPUTER_BASE)

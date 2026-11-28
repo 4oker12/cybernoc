@@ -156,6 +156,46 @@ class DynamicToolPolicyTests(unittest.TestCase):
         self.assertEqual(offered, [row["name"] for row in route_model_tool_rows(
             list(reversed(rows)), task, limit=128)])
 
+    def test_browser_phrasings_expose_control_search_and_diagnostics(self):
+        rows = [{"name": name} for name in (
+            "browser_snapshot", "browser_find_controls", "browser_console",
+            "browser_network", "browser_click_button", "terminal_run",
+        )]
+        for task in ("Исследуй сайт самостоятельно", "Разберись, как устроена страница",
+                     "Проверь интерфейс"):
+            names = {row["name"] for row in route_model_tool_rows(rows, task, limit=64)}
+            self.assertIn("browser_find_controls", names, task)
+            self.assertNotIn("browser_click_button", names, task)
+        names = {row["name"] for row in route_model_tool_rows(
+            rows, "Выясни причину зависания", limit=64)}
+        self.assertTrue({"browser_console", "browser_network"} <= names)
+
+    def test_unexposed_tool_is_identified_and_offered_next_round(self):
+        rows = [{"name": name, "description": "Fixture", "inputSchema": {
+            "type": "object", "properties": {}, "additionalProperties": False,
+        }} for name in ("browser_snapshot", "browser_find_controls", "browser_click_button")]
+        mcp = FakeMCP(rows)
+        model = FakeQwen([tool_call("browser_click_button", {}),
+                          tool_call("browser_click_button", {}), {"content": "Готово"}])
+        result = Agent(model, lambda: mcp).run([], "Исследуй сайт самостоятельно")
+        self.assertEqual(result["events"][0]["result"]["error"],
+                         "tool_not_exposed_in_this_round")
+        self.assertIn("browser_click_button", [row["function"]["name"]
+                                              for row in model.inputs[1]["tools"]])
+        self.assertEqual(mcp.calls, [("browser_click_button", {})])
+
+    def test_duplicate_local_and_remote_name_fails_catalog(self):
+        class Local:
+            def mcp_tools(self, groups):
+                return [{"name": "browser_snapshot", "inputSchema": {"type": "object", "properties": {}}}]
+            tool_map = {"browser_snapshot": object()}
+        mcp = FakeMCP([{"name": "browser_snapshot", "inputSchema": {"type": "object", "properties": {}}}])
+        model = FakeQwen([])
+        result = Agent(model, lambda: mcp, local_tool_runtime=Local()).run(
+            [], "Исследуй сайт самостоятельно")
+        self.assertEqual(model.inputs, [])
+        self.assertIn("tool_name_collision", result["events"][-1]["message"])
+
     def test_manual_group_does_not_widen_exact_named_tool(self):
         rows = [{"name": "terminal_run"}, {"name": "browser_read_page"}]
         offered = route_model_tool_rows(rows, "Вызови terminal_run", limit=128,
