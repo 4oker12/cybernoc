@@ -139,11 +139,11 @@ def _normalize_tool_content(content, allow_images: bool):
     if not isinstance(content, list):
         return str(content or "")
     blocks = []
-    for part in content[:8]:
+    for part in content:
         if not isinstance(part, dict):
             continue
         if part.get("type") == "text" and isinstance(part.get("text"), str):
-            blocks.append({"type": "text", "text": part["text"][:20000]})
+            blocks.append({"type": "text", "text": part["text"]})
         elif part.get("type") == "image_url":
             if not allow_images:
                 raise ModelConfigError("active_model_has_no_supported_tool_vision")
@@ -210,7 +210,7 @@ def _normalize_context(messages: list[dict], *, require_reasoning: bool = False,
                 item["reasoning_content"] = message["reasoning_content"]
             if role == "assistant" and message.get("tool_calls"):
                 calls = []
-                for i, call in enumerate(message["tool_calls"][:16]):
+                for i, call in enumerate(message["tool_calls"]):
                     function = call.get("function", {}) if isinstance(call, dict) else {}
                     if not isinstance(function, dict) or not isinstance(function.get("name"), str):
                         continue
