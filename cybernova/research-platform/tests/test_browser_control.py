@@ -3,7 +3,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 import sys
 import threading
@@ -101,10 +101,11 @@ class BrowserControlTests(unittest.TestCase):
             "browser_forward", "browser_reload", "browser_tabs",
             "browser_new_tab", "browser_switch_tab", "browser_close_tab",
             "browser_press", "browser_scroll", "browser_screenshot",
-            "browser_console", "browser_network", "browser_submit_payment",
+            "browser_console", "browser_network_session", "browser_submit_payment",
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
-        self.assertIn("explicitly requested ordinary POST form", submit["description"])
+        self.assertIn("approve the exact method and target", submit["description"])
+        self.assertIn("Supports the form's declared HTTP method", submit["description"])
         follow = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_follow_link")
         self.assertIn("url:<URL>", follow["description"])
 
@@ -219,7 +220,7 @@ class BrowserControlTests(unittest.TestCase):
         self.assertEqual(len(model.tool_history), 1)  # No redundant review pass without tool activity.
         gpt_names = {item["name"] for item in runtime.tools}
         for name in ("browser_navigate", "browser_snapshot", "browser_find_text",
-                     "browser_follow_link", "browser_tabs", "browser_network",
+                     "browser_follow_link", "browser_tabs", "browser_network_session",
                      "browser_read_page", "browser_read_table", "browser_find_controls",
                      "browser_set_checked", "browser_register", "browser_login"):
             self.assertIn(name, gpt_names)
@@ -678,10 +679,95 @@ class BrowserControlTests(unittest.TestCase):
         browser = BrowserSession()
         try:
             with patch.object(browser, "_ensure"):
-                result = browser._dispatch("browser_network", {})
+                result = browser._dispatch("browser_network_session", {})
             self.assertFalse(result["request_response_bodies_captured"])
             self.assertFalse(result["sensitive_headers_captured"])
             self.assertTrue(result["safe_response_headers_captured"])
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+
+    def test_network_request_is_visible_while_response_is_delayed(self):
+        browser = BrowserSession()
+        try:
+            request = SimpleNamespace(
+                url="https://example.test/api/data?access_token=private-value",
+                method="GET", resource_type="fetch",
+            )
+            browser._on_request(request)
+            with patch.object(browser, "_ensure"):
+                result = browser._dispatch("browser_network_session", {})
+            self.assertEqual(len(result["events"]), 1)
+            event = result["events"][0]
+            self.assertEqual(event["state"], "pending")
+            self.assertEqual(event["state_history"], ["started", "pending"])
+            self.assertEqual(event["url"], "https://example.test/api/data")
+            self.assertNotIn("private-value", str(result))
+            self.assertNotIn("path-secret", _safe_url(
+                "https://example.test/password=path-secret?access_token=private-value"
+            ))
+            self.assertEqual(event["session_id"], browser._network_session_id)
+            self.assertTrue(event["request_id"])
+            self.assertLessEqual(event["timestamp_started"], event["timestamp_updated"])
+            self.assertIn(id(request), browser._request_started)
+
+            response = SimpleNamespace(
+                request=request, url=request.url, status=200, ok=True,
+                headers={"content-type": "application/json",
+                         "set-cookie": "session=secret"},
+            )
+            browser._on_response(response)
+            self.assertIs(result["events"][0], event)
+            self.assertEqual(event["state"], "response_received")
+            self.assertEqual(event["status"], 200)
+            self.assertEqual(event["safe_response_headers"],
+                             {"content-type": "application/json"})
+            browser._on_request_finished(request)
+            self.assertEqual(event["state"], "completed")
+            self.assertEqual(event["state_history"],
+                             ["started", "pending", "response_received", "completed"])
+            self.assertNotIn(id(request), browser._request_started)
+            self.assertEqual(len(browser._network_events), 1)
+            self.assertNotIn("session=secret", str(event))
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+
+    def test_network_http_error_completes_and_transport_failures_are_classified(self):
+        browser = BrowserSession()
+        try:
+            http_error = SimpleNamespace(url="https://example.test/missing",
+                                         method="GET", resource_type="fetch")
+            browser._on_request(http_error)
+            browser._on_response(SimpleNamespace(
+                request=http_error, url=http_error.url, status=503,
+                ok=False, headers={},
+            ))
+            browser._on_request_finished(http_error)
+            self.assertEqual(browser._network_events[-1]["state"], "completed")
+            self.assertEqual(browser._network_events[-1]["status"], 503)
+            self.assertFalse(browser._network_events[-1]["ok"])
+
+            cases = (
+                ("net::ERR_BLOCKED_BY_CLIENT", "blocked", "blocked_by_client"),
+                ("net::ERR_ABORTED", "cancelled", "request_aborted"),
+                ("net::ERR_TIMED_OUT", "timed_out", "network_timeout"),
+                ("net::ERR_CONNECTION_RESET password=private-value",
+                 "failed", "request_failed"),
+            )
+            for failure, state, safe_reason in cases:
+                with self.subTest(state=state):
+                    request = SimpleNamespace(
+                        url="https://example.test/api?secret=private-value",
+                        method="GET", resource_type="fetch", failure=failure,
+                    )
+                    browser._on_request(request)
+                    browser._on_request_failed(request)
+                    event = browser._network_events[-1]
+                    self.assertEqual(event["state"], state)
+                    self.assertEqual(event["state_history"],
+                                     ["started", "pending", state])
+                    self.assertEqual(event["failure"], safe_reason)
+                    self.assertNotIn("private-value", str(event))
+                    self.assertNotIn(id(request), browser._request_started)
         finally:
             browser._executor.shutdown(wait=False, cancel_futures=True)
 
@@ -690,8 +776,53 @@ class BrowserControlTests(unittest.TestCase):
         self.assertTrue({
             "browser_tabs", "browser_new_tab", "browser_switch_tab",
             "browser_close_tab", "browser_forward", "browser_reload",
-            "browser_press", "browser_scroll", "browser_console", "browser_network",
+            "browser_press", "browser_scroll", "browser_console", "browser_network_session",
         }.issubset(names))
+
+    def test_find_text_zero_scan_does_not_claim_absence(self):
+        browser = BrowserSession()
+        try:
+            browser._page = SimpleNamespace(
+                url="https://example.test/", title=lambda: "Test",
+                frames=[object(), object()],
+            )
+            browser._find_text = lambda *_: {"matches": [], "scanned_blocks": 0,
+                                             "candidate_blocks": 0, "root_scope": "body"}
+            with patch.object(browser, "_ensure"):
+                result = browser._dispatch("browser_find_text", {"query": "missing",
+                                                                 "max_matches": 3})
+            self.assertEqual(result["status"], "not_covered")
+            self.assertFalse(result["coverage"]["complete"])
+            self.assertEqual(result["coverage"]["frames_skipped"], 1)
+            self.assertIn("no_visible_text_blocks", result["coverage"]["skip_reasons"])
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+
+    def test_console_degradation_and_network_window_report_coverage(self):
+        browser = BrowserSession()
+        try:
+            browser._backend = "patchright"
+            browser._console_events = []
+            with patch.object(browser, "_ensure"):
+                console = browser._dispatch("browser_console", {})
+                self.assertEqual(console["status"], "partial")
+                self.assertTrue(console["degraded"])
+                self.assertFalse(console["console_api_available"])
+                self.assertTrue(console["pageerror_available"])
+                self.assertFalse(console["coverage"]["complete"])
+
+                browser._network_events = [{"state": "completed"} for _ in range(65)]
+                browser._network_total_observed = 68
+                network = browser._dispatch("browser_network_session", {})
+            self.assertEqual(network["status"], "truncated")
+            # Returned window is intentionally capped for token efficiency.
+            returned = len(network["events"])
+            self.assertLessEqual(returned, 30)
+            self.assertEqual(network["coverage"]["omitted_events"], 65 - returned)
+            self.assertEqual(network["coverage"]["dropped_events"], 3)
+            self.assertFalse(network["coverage"]["complete"])
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
 
     def test_high_impact_labels_require_manual_user_action(self):
         for label in (
@@ -1234,6 +1365,66 @@ class BrowserControlTests(unittest.TestCase):
         ):
             with self.subTest(target=target):
                 self.assertIsNotNone(IRREVERSIBLE_SUBMIT_TARGET.search(target))
+
+    def test_snapshot_mode_and_error_classification(self):
+        from console.browser_control import _classify_browser_error, BROWSER_CONTROL_TOOLS
+        # Tool schema exposes mode and pagination
+        snapshot_tool = next(t for t in BROWSER_CONTROL_TOOLS if t["name"] == "browser_snapshot")
+        props = snapshot_tool["inputSchema"]["properties"]
+        self.assertIn("mode", props)
+        self.assertTrue({"orientation", "compact", "full"}.issubset(set(props["mode"]["enum"])))
+        self.assertIn("control_offset", props)
+        self.assertIn("control_limit", props)
+
+        classified = _classify_browser_error(ValueError("browser_no_open_page"))
+        self.assertEqual(classified["error"], "browser_no_open_page")
+        self.assertIn("browser_navigate", classified["alternatives"])
+
+        classified = _classify_browser_error(TimeoutError("Timeout 20000ms exceeded"))
+        self.assertEqual(classified["error"], "browser_timeout")
+
+        classified = _classify_browser_error(ValueError("browser_target_not_interactable"))
+        self.assertEqual(classified["error"], "browser_target_not_interactable")
+        self.assertTrue(any("scroll" in str(x) or "snapshot" in str(x) for x in classified["alternatives"]))
+
+        classified = _classify_browser_error(ValueError("browser_arguments_invalid"))
+        self.assertEqual(classified["error"], "browser_arguments_invalid")
+
+
+    def test_stable_ref_parse_and_stale_verification(self):
+        session = BrowserSession()
+        self.addCleanup(session._executor.shutdown, wait=False)
+        self.assertEqual(session._parse_ref("e12"), "e12")
+        self.assertEqual(session._parse_ref("ref:e3"), "e3")
+        self.assertEqual(session._parse_ref("data-cybernova-ref:e9"), "e9")
+        self.assertIsNone(session._parse_ref("Submit"))
+        self.assertIsNone(session._parse_ref("id:foo"))
+        # No stored meta -> stale
+        with self.assertRaisesRegex(ValueError, "browser_target_stale"):
+            session._verify_ref("e1")
+        session._page = Mock()
+        session._page.is_closed.return_value = False
+        session._page.url = "https://example.com/app"
+        session._element_refs["e1"] = {
+            "frame_index": 0,
+            "page_url": "https://example.com/app",
+            "frame_url": "https://example.com/app",
+            "fingerprint": "button||btn-ok|ok|OK|",
+            "tag": "button", "role": "", "text": "OK", "id": "btn-ok",
+            "shadow_path": "", "name": "",
+        }
+        # Navigated page invalidates refs
+        session._page.url = "https://example.com/other"
+        with self.assertRaisesRegex(ValueError, "browser_target_stale"):
+            session._verify_ref("e1")
+
+    def test_collect_elements_js_includes_shadow_walk(self):
+        from console.browser_control import _collect_elements_js
+        js = _collect_elements_js()
+        self.assertIn("shadowRoot", js)
+        self.assertIn("data-cybernova-ref", js)
+        self.assertIn("fingerprint", js)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -30,7 +30,7 @@ MAX_SITE_HOSTS = 8
 MAX_SECONDS = 17
 
 NETWORK_TOOLS = [{
-    "name": "browser_network",
+    "name": "browser_network_capture",
     "description": (
         "Open ONE authorized public HTTPS site in an isolated Chromium browser "
         "and observe the DevTools-equivalent Network events. Return sanitized "
@@ -43,7 +43,7 @@ NETWORK_TOOLS = [{
         "url": {"type": "string", "description": "Absolute HTTPS URL on allowed public host"}},
         "required": ["url"], "additionalProperties": False},
 }]
-NETWORK_NAMES = frozenset({"browser_network"})
+NETWORK_NAMES = frozenset({"browser_network_capture"})
 
 
 def _public_v4(host: str) -> str:

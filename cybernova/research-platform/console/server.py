@@ -199,6 +199,7 @@ def _begin_usage_progress(run_id: str) -> None:
                 "total_tokens": None, "requests": 0, "measured_requests": 0,
                 "complete": False, "provider": None,
             },
+            "research_progress": None,
             "updated_at": time.time(),
         }
 
@@ -210,7 +211,11 @@ def _update_usage_progress(run_id: str, usage: dict) -> None:
         item = run_usage_progress.get(run_id)
         if item is None or item["status"] != "running":
             return
-        item["usage"] = dict(usage)
+        payload = dict(usage)
+        research = payload.pop("research_progress", None)
+        item["usage"] = payload
+        if isinstance(research, dict):
+            item["research_progress"] = research
         item["updated_at"] = time.time()
         run_usage_progress.move_to_end(run_id)
 
@@ -221,7 +226,11 @@ def _finish_usage_progress(run_id: str, status: str, usage: dict | None = None) 
         if item is None:
             return
         if isinstance(usage, dict):
-            item["usage"] = dict(usage)
+            payload = dict(usage)
+            research = payload.pop("research_progress", None)
+            item["usage"] = payload
+            if isinstance(research, dict):
+                item["research_progress"] = research
         item["status"] = status
         item["updated_at"] = time.time()
         run_usage_progress.move_to_end(run_id)
@@ -232,8 +241,15 @@ def _read_usage_progress(run_id: str) -> dict | None:
         item = run_usage_progress.get(run_id)
         if item is None:
             return None
-        return {"status": item["status"], "usage": dict(item["usage"]),
-                "updated_at": item["updated_at"]}
+        result = {
+            "status": item["status"],
+            "usage": dict(item["usage"]),
+            "updated_at": item["updated_at"],
+        }
+        research = item.get("research_progress")
+        if isinstance(research, dict):
+            result["research_progress"] = dict(research)
+        return result
 
 
 @lru_cache(maxsize=1)
@@ -1217,7 +1233,8 @@ def status():
         "http_get": "available_for_preconfigured_mcp_hosts_only",
         "traffic_intelligence": "offline_multi_domain_analysis",
         "scoped_network_checks": "DNS A/AAAA and verified TLS 443",
-        "browser_network": "isolated_chromium_readonly_metadata",
+        "browser_network_capture": "isolated_chromium_readonly_metadata",
+        "browser_network_session": "current_browser_session_metadata",
         "web_research": {"provider": "Google HTML with Bing RSS fallback", "tools": ["google_search", "research_source_open"], "mode": "public_read_only", "requires_api_key": False},
         "research_scope": {"type": "owner_selected_per_task", "active_actions": "propose_and_confirm"},
         "browser": {"mode": "isolated_chromium", "configured_hosts": [x.strip() for x in os.environ.get("CYBERNOVA_BROWSER_HOSTS", "").split(",") if x.strip()], "live_javascript": True, "tabs": True, "personal_profile_access": False},
@@ -1478,7 +1495,8 @@ def chat(payload: ChatRequest):
                 on_tool_event=persist_tool_event,
                 should_stop=(lambda: jobs.should_stop(receipt)) if jobs else None,
             )
-            run_status = "partial" if outcome.get("stop_reason") else "completed"
+            run_status = ("failed" if outcome.get("error_code") == "tool_catalog_invalid"
+                          else "partial" if outcome.get("stop_reason") else "completed")
         except Exception as exc:
             store.append(task_id, "controller", "system",
                          "Agent failed: " + type(exc).__name__, status="blocked")

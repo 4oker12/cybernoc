@@ -1,5 +1,6 @@
 """Offline regression suite for dynamic MCP discovery and explicit approvals."""
 import sys
+import tempfile
 import time
 import unittest
 from unittest.mock import patch
@@ -105,7 +106,9 @@ class DynamicToolPolicyTests(unittest.TestCase):
         self.assertEqual(result["tool_calls"], 1)
         ready = [call.kwargs for call in log.call_args_list if call.args == ("tool_catalog_ready",)]
         self.assertEqual(ready[0]["discovered_count"], 160)
-        self.assertEqual(ready[0]["omitted_count"], 160 - len(offered))
+        self.assertEqual(ready[0]["omitted_count"], 160 - len([
+            item for item in offered if item["function"]["name"] != "tool_capabilities"
+        ]))
 
     def test_weather_task_does_not_advertise_terminal_or_computer_tools(self):
         rows = [
@@ -155,6 +158,115 @@ class DynamicToolPolicyTests(unittest.TestCase):
         self.assertEqual(offered, names[:4])
         self.assertEqual(offered, [row["name"] for row in route_model_tool_rows(
             list(reversed(rows)), task, limit=128)])
+
+    def test_browser_phrasings_expose_control_search_and_diagnostics(self):
+        rows = [{"name": name} for name in (
+            "browser_snapshot", "browser_find_controls", "browser_console",
+            "browser_network_session", "browser_network_capture", "browser_click_button", "terminal_run",
+        )]
+        for task in ("Исследуй сайт самостоятельно", "Разберись, как устроена страница",
+                     "Проверь интерфейс"):
+            names = {row["name"] for row in route_model_tool_rows(rows, task, limit=64)}
+            self.assertIn("browser_find_controls", names, task)
+            self.assertNotIn("browser_click_button", names, task)
+        names = {row["name"] for row in route_model_tool_rows(
+            rows, "Выясни причину зависания", limit=64)}
+        self.assertTrue({"browser_console", "browser_network_session",
+                         "browser_network_capture"} <= names)
+
+    def test_unexposed_tool_is_identified_and_offered_next_round(self):
+        rows = [{"name": name, "description": "Fixture", "inputSchema": {
+            "type": "object", "properties": {}, "additionalProperties": False,
+        }} for name in ("browser_snapshot", "browser_find_controls", "browser_click_button")]
+        mcp = FakeMCP(rows)
+        model = FakeQwen([tool_call("browser_click_button", {}),
+                          tool_call("browser_click_button", {}), {"content": "Готово"}])
+        result = Agent(model, lambda: mcp).run([], "Исследуй сайт самостоятельно")
+        self.assertEqual(result["events"][0]["result"]["error"],
+                         "tool_not_exposed_in_this_round")
+        self.assertIn("browser_click_button", [row["function"]["name"]
+                                              for row in model.inputs[1]["tools"]])
+        self.assertEqual(mcp.calls, [("browser_click_button", {})])
+
+    def test_model_can_request_omitted_schema_without_executing_tool(self):
+        rows = [{"name": name, "description": "Fixture", "inputSchema": {
+            "type": "object", "properties": {}, "additionalProperties": False,
+        }} for name in ("browser_snapshot", "browser_click_button")]
+        mcp = FakeMCP(rows)
+        model = FakeQwen([tool_call("tool_capabilities", {"name": "browser_click_button"}),
+                          tool_call("browser_click_button", {}), {"content": "Готово"}])
+        result = Agent(model, lambda: mcp).run([], "Исследуй сайт самостоятельно")
+        self.assertIn("tool_capabilities", [row["function"]["name"]
+                                            for row in model.inputs[0]["tools"]])
+        self.assertEqual(result["events"][0]["result"]["name"], "browser_click_button")
+        self.assertEqual(result["events"][0]["result"]["inputSchema"],
+                         rows[1]["inputSchema"])
+        self.assertEqual(mcp.calls, [("browser_click_button", {})])
+
+    def test_duplicate_local_and_remote_name_fails_catalog(self):
+        class Local:
+            def mcp_tools(self, groups):
+                return [{"name": "browser_snapshot", "inputSchema": {"type": "object", "properties": {}}}]
+            tool_map = {"browser_snapshot": object()}
+        mcp = FakeMCP([{"name": "browser_snapshot", "inputSchema": {"type": "object", "properties": {}}}])
+        model = FakeQwen([])
+        result = Agent(model, lambda: mcp, local_tool_runtime=Local()).run(
+            [], "Исследуй сайт самостоятельно")
+        self.assertEqual(model.inputs, [])
+        self.assertIn("tool_name_collision", result["events"][-1]["message"])
+        self.assertEqual(result["error_code"], "tool_catalog_invalid")
+
+    def test_real_composite_catalog_accepts_reviewed_mirrors_and_dispatches_local(self):
+        from console.communication import CommunicationStore
+        from console.communication_tools import CommunicationToolClient
+        from console.traffic_tools import TrafficToolClient
+        from console.gpt_tool_runtime import GPTToolRuntime
+        from console.github_tools import GITHUB_TOOLS
+        from console.research_web import RESEARCH_WEB_TOOLS
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = CommunicationStore(Path(directory) / "comm.sqlite3")
+            task = store.create_task("Catalog regression")
+            upstream = FakeMCP()
+            remote = CommunicationToolClient(TrafficToolClient(upstream, {}), store, task["task_id"])
+            local = GPTToolRuntime(browser_profile_dir=Path(directory) / "browser")
+            self.addCleanup(local.close)
+            remote_rows = remote.initialize()
+            local_rows = local.mcp_tools()
+            overlap = {row["name"] for row in remote_rows} & {row["name"] for row in local_rows}
+            self.assertTrue({row["name"] for row in GITHUB_TOOLS + RESEARCH_WEB_TOOLS} <= overlap)
+            arguments = {"repo": "owner/repo", "per_page": 1}
+            model = FakeQwen([tool_call("github_list_branches", arguments), {"content": "Branches read"}])
+            with patch("console.gpt_tool_runtime.github_call", return_value=({"ok": True}, False)) as local_call, \
+                    patch("console.communication_tools.github_call") as remote_call:
+                result = Agent(model, lambda: remote, local_tool_runtime=local).run(
+                    [], "github_list_branches", force_tools=False)
+            self.assertNotIn("error_code", result)
+            self.assertEqual(result["tool_calls"], 1)
+            local_call.assert_called_once_with("github_list_branches", arguments)
+            remote_call.assert_not_called()
+            names = [row["function"]["name"] for row in model.inputs[0]["tools"]]
+            self.assertEqual(names.count("github_list_branches"), 1)
+
+    def test_known_mirror_with_incompatible_schema_or_duplicate_remote_fails(self):
+        from console.github_tools import GITHUB_TOOLS
+        canonical = next(row for row in GITHUB_TOOLS if row["name"] == "github_list_branches")
+
+        class Local:
+            tool_map = {canonical["name"]: object()}
+
+            def mcp_tools(self, groups=None):
+                return [canonical]
+
+        changed = {**canonical, "inputSchema": {"type": "object", "properties": {}}}
+        for remote_rows in ([changed], [canonical, canonical]):
+            with self.subTest(remote_rows=remote_rows):
+                model = FakeQwen([])
+                result = Agent(model, lambda: FakeMCP(remote_rows), local_tool_runtime=Local()).run(
+                    [], "github_list_branches")
+                self.assertEqual(model.inputs, [])
+                self.assertEqual(result["error_code"], "tool_catalog_invalid")
+                self.assertIn("tool_name_collision", result["events"][-1]["message"])
 
     def test_manual_group_does_not_widen_exact_named_tool(self):
         rows = [{"name": "terminal_run"}, {"name": "browser_read_page"}]

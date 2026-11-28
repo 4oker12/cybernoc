@@ -635,14 +635,16 @@ def _export_chat_turn(fields):
     for key, allowed in (
         ("mode", ("account_gpt", "researcher")),
         ("status", ("failed", "partial", "completed")),
-        ("stage", ("chat_turn", "provider_http", "provider_stream", "provider_transport", "provider_response")),
+        ("stage", ("chat_turn", "tool_catalog", "provider_http", "provider_stream", "provider_transport", "provider_response")),
     ):
         value = fields.get(key)
         result[key] = value if value in allowed else None
     for key, pattern in (("error_type", re.compile(r"[A-Za-z_][A-Za-z_0-9]{0,79}")),
                          ("error_code", _ADAPTER_CODE)):
         value = fields.get(key)
-        result[key] = value if isinstance(value, str) and pattern.fullmatch(value) else None
+        result[key] = value if isinstance(value, str) and (
+            pattern.fullmatch(value) or (key == "error_code" and value == "tool_catalog_invalid")
+        ) else None
     result["usage_complete"] = fields.get("usage_complete") if type(fields.get("usage_complete")) is bool else None
     return result
 
@@ -682,14 +684,17 @@ def observe_chat(mode, backend, latest_usage):
                         not partial and isinstance(result_code, str)
                         and _ADAPTER_CODE.fullmatch(result_code)
                     )
-                    status = ("failed" if error is not None or handled_provider_failure
+                    handled_catalog_failure = not partial and result_code == "tool_catalog_invalid"
+                    status = ("failed" if error is not None or handled_provider_failure or handled_catalog_failure
                               else "partial" if partial else "completed")
                     root, code = (
                         _chat_error(error) if error is not None
                         else (None, result_code if handled_provider_failure else result.get("error_code"))
                     )
                     stage, upstream = "chat_turn", None
-                    if isinstance(code, str) and _ADAPTER_CODE.fullmatch(code):
+                    if handled_catalog_failure:
+                        stage = "tool_catalog"
+                    elif isinstance(code, str) and _ADAPTER_CODE.fullmatch(code):
                         if "_http_" in code:
                             stage, upstream = "provider_http", int(code.rsplit("_", 1)[1])
                         elif "_stream_" in code:
@@ -704,7 +709,7 @@ def observe_chat(mode, backend, latest_usage):
                                   model=scrub(model, 160), status=status, stage=stage,
                                   duration_ms=round((time.monotonic()-start)*1000),
                                   error_type=(type(root).__name__ if root is not None else
-                                              result.get("error_type") if handled_provider_failure else "SIWCError" if partial else None),
+                                              result.get("error_type") if handled_provider_failure or handled_catalog_failure else "SIWCError" if partial else None),
                                   error_code=code, upstream_http_status=upstream,
                                   http_status=getattr(error, "status_code", 500) if error else 200)
                     events = result.get("tool_events", result.get("events", []))

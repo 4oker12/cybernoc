@@ -10,6 +10,14 @@ on:
       - AGENTS.md
       - .github/workflows/cybernova-windows-readonly-smoke.yml
 
+  pull_request:
+    branches:
+      - feature/full-shell-computer-discovery
+    paths:
+      - cybernova/research-platform/**
+      - AGENTS.md
+      - .github/workflows/cybernova-windows-readonly-smoke.yml
+
 concurrency:
   group: cybernova-windows-smoke-${{ github.ref }}
   cancel-in-progress: true
@@ -39,3 +47,10 @@ jobs:
           CYBERNOVA_GPT_BROWSER_EPHEMERAL: "1"
           CYBERNOVA_GPT_BROWSER_HEADLESS: "1"
         run: python cybernova/research-platform/tests/windows_readonly_smoke.py
+
+      - name: Browser intelligence regression tests
+        shell: pwsh
+        env:
+          CYBERNOVA_GPT_BROWSER_EPHEMERAL: "1"
+          CYBERNOVA_GPT_BROWSER_HEADLESS: "1"
+        run: python -m unittest discover -s cybernova/research-platform/tests -p test_browser_intelligence.py -v

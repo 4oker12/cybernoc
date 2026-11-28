@@ -142,11 +142,13 @@ LOCAL_TOOLS_PROFILE = """
 - Используй общий изолированный Chromium через browser_navigate,
   browser_snapshot, browser_follow_link, browser_back/forward/reload,
   browser_tabs, browser_new_tab, browser_switch_tab, browser_scroll,
-  browser_fill/select, browser_console и browser_network.
+  browser_fill/select, browser_console и browser_network_session.
+- Экономь токены: сначала browser_snapshot с mode=orientation, затем
+  mode=compact; mode=full и browser_read_page — только когда нужен полный текст.
+  Адресуй элементы через ref:eN из снимка; не повторяй snapshot без изменения страницы.
 - Для неполного снимка используй browser_find_controls, для длинного текста —
-  browser_read_page с next_offset и проверкой content_sha256, для таблиц —
-  browser_read_table, для локального поиска — browser_find_text.
-  При неоднозначности не выбирай произвольный элемент; уточни текущий контекст.
+  browser_read_page с next_offset, для таблиц — browser_read_table, для поиска —
+  browser_find_text. При неоднозначности не выбирай произвольный элемент.
 - Если найден раскрывающийся блок с action_target, передай этот идентификатор
   в browser_click_button и проверь disclosure_changed и expanded_after.
   Если ссылка на элемент устарела, найди его заново через browser_find_controls.
@@ -156,6 +158,16 @@ LOCAL_TOOLS_PROFILE = """
 - Если навигация вернула browser_access_limited, сообщи код ответа. Не повторяй
   запрос к тому же адресу без изменившегося условия. Справку из другого
   источника обозначай отдельно от наблюдений на недоступной странице.
+- Результат click/fill/select/press/scroll/wait приходит компактной дельтой
+  (snapshot_mode=delta): смотри delta, effect и page_state, а не ждёт полного
+  снимка. effect=none_observed значит, что изменений не видно: проверь исход
+  через browser_verify (expect_text/absent_text/url_contains/control; возвращает
+  булевы значения или unknown) и не повторяй то же действие вслепую. Для полного
+  состояния вызови browser_snapshot.
+- recovery/alternatives — варианты, а не обязательный маршрут. Модель выбирает
+  следующий шаг по цели и наблюдениям. change_strategy=true означает повторную
+  неудачу, а не разрешение обойти подтверждение. unknown в browser_verify не
+  доказывает отсутствие текста или контроля.
 - После перехода по ссылке проверяй URL, заголовок и содержимое страницы.
   Внутренние ссылки на уже разрешённом хосте можно проходить обычной навигацией.
   Для нового внутреннего хоста требуется его явное указание пользователем
