@@ -59,6 +59,12 @@ BrowserSession now keeps bounded per-session structural observation memory: obse
 ### Provider-neutral model profile
 The active local tool profile is expanded with semantics, spatial evidence, ref gestures, schema discovery, effect verification, goal and observation memory. Agent.run injects the shared AGENT_PROFILE with LOCAL_TOOLS_PROFILE when tools are enabled, and appends existing user profile_instructions separately. No user settings overwritten. No new training or provider capability claimed. Full AX/vision and practical DeepSeek acceptance remain outstanding.
 
+#### Profile follow-up: evidence interpretation
+
+The shared defaults still describe native AX as main-document only and omit the new visual hints. Update the built-in instructions against the current collector output. Describe the sampled coverage, geometry and inferred relationships, and preserve additive user profiles. The coordinator owns the profile update. The existing provider-neutral prompt and custom-profile tests must pass.
+
+Implemented. All 66 chat agent and Account GPT tool-loop tests passed. Four live tests on Cloud Linux with system Chromium passed on `93e930a`. They covered native AX and geometry for a nested frame and an open shadow root, inferred card context and a visual hint, state delta and verification, and service worker routing. The operating system, browser distribution and DeepSeek provider in the intended Windows deployment still require hands-on validation.
+
 ### P0.2 refinement: native AX evidence
 Targeted control search and screenshot observations now request up to six native Chromium AX nodes for verified main-document DOM refs, correlate via backendDOMNodeId and expose only role, ignored and allowlisted boolean/enumerated states. No AX names, values, descriptions or raw nodes returned. Coverage explicitly partial; iframe/shadow mapping and full visual recognition remain outstanding. Tests mock CDP node correlation and redaction; live backend verification remains required.
 
