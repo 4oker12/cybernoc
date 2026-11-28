@@ -129,6 +129,11 @@ class BrowserControlTests(unittest.TestCase):
         self.assertEqual(insecure_public.closed["code"], 1008)
         self.assertEqual(session._blocked[-1]["reason"], "websocket_target_not_allowed")
 
+        private_wss = FakeWebSocket("wss://192.168.1.10/socket")
+        session._route_web_socket(private_wss)
+        self.assertFalse(private_wss.connected)
+        self.assertEqual(private_wss.closed["code"], 1008)
+
         session._authorized_hosts = {"router.local"}
         scoped_internal = FakeWebSocket("ws://router.local:8080/events")
         with patch("console.browser_control.validate_public_url",
