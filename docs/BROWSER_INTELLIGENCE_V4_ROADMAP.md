@@ -25,3 +25,6 @@ Existing collector now reports bounded nearest semantic ancestry, native form as
 
 ### P0.2 partial implementation record
 Frame-local bounds, focus and center-point hit evidence now accompany refs in all snapshot modes; screenshot results declare top viewport coordinate space and non-atomic correlation. No new coordinate action or visibility override. Center hit does not prove interactability or absence of overlay, particularly across frames. Native full AX tree, visual object recognition and screenshot-to-iframe transformation remain pending; explicit correlation coverage is returned. Focused structural tests added; runtime execution pending.
+
+### P0.3 partial implementation record
+Existing browser_click_button dispatch accepts explicit hover/focus/double_click prefixes with a verified ref, preserving the old schema and click path. Double click is limited to ordinary non-form buttons and rejects recognized high-impact/account/payment targets; no forced click or write preauthorization. Existing network policy stays active. Tests added for ref-only gestures and rejecting double click on a form. Arbitrary custom text widgets and richer gestures are not yet covered. Execution pending CI/local checkout.

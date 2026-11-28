@@ -1466,5 +1466,33 @@ class SpatialContextTests(unittest.TestCase):
         self.assertEqual(_spatial_context({"bounds": {"x": "unsafe"}}, 0), {})
 
 
+class RefInteractionTests(unittest.TestCase):
+    def test_hover_and_focus_use_verified_ref(self):
+        session = BrowserSession.__new__(BrowserSession)
+        locator = Mock()
+        session._verify_ref = Mock(return_value=(Mock(), locator))
+        session._snapshot = Mock(return_value={"ok": True})
+        for interaction in ("hover", "focus"):
+            result = session._interact_ref(interaction, "ref:e12")
+            self.assertEqual(result["interaction"], interaction)
+            self.assertEqual(result["interaction_ref"], "e12")
+        locator.hover.assert_called_once_with(timeout=8000)
+        locator.focus.assert_called_once_with(timeout=8000)
+        with self.assertRaisesRegex(ValueError, "browser_interaction_requires_ref"):
+            session._interact_ref("hover", "arbitrary CSS")
+
+    def test_double_click_rejects_form_controls(self):
+        session = BrowserSession.__new__(BrowserSession)
+        session._page = Mock(url="https://example.test/")
+        locator = Mock()
+        button = Mock()
+        button.evaluate.return_value = {"form": True, "submit": False, "text": "Continue"}
+        session._verify_ref = Mock(return_value=(Mock(), locator))
+        session._unique = Mock(return_value=button)
+        with self.assertRaisesRegex(ValueError, "browser_double_click_requires_ordinary_button"):
+            session._interact_ref("double_click", "ref:e12")
+        button.dblclick.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

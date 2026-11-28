@@ -125,8 +125,8 @@ BROWSER_CONTROL_TOOLS = [
           {"label": {**STRING, "description": "Exact select label"},
            "value": {**STRING, "description": "Option label or value"}}, ["label", "value"]),
     _tool("browser_click_button",
-          "Click one visible button by exact accessible name. Ordinary navigation is allowed. High-impact actions ask for owner confirmation before the click; any unsafe HTTP request triggered by the click is paused for one-request confirmation in the Cybernova chat.",
-          {"name": {**STRING, "description": "Exact accessible name of one button, or action_target for a native disclosure or ARIA tab from the latest browser snapshot or control search"}}, ["name"]),
+          "Click one visible button by exact accessible name. For a fresh snapshot ref, use hover:ref:eN or focus:ref:eN; double_click:ref:eN is restricted to ordinary non-form buttons. High-impact clicks require owner confirmation; unsafe HTTP requests remain guarded.",
+          {"name": {**STRING, "description": "Exact button name, ref:eN, widget action_target, or hover:ref:eN / focus:ref:eN / double_click:ref:eN from latest observation"}}, ["name"]),
     _tool("browser_back",
           "Navigate back one page in the isolated Chromium session."),
     _tool("browser_wait",
@@ -2509,6 +2509,42 @@ class BrowserSession:
             return self._verify_ref(ref)
         return None
 
+    def _interact_ref(self, interaction: str, target: str) -> dict:
+        """Reuse the guarded click dispatch for bounded, explicit ref gestures."""
+        ref = self._parse_ref(target)
+        if ref is None:
+            raise ValueError("browser_interaction_requires_ref")
+        frame, locator = self._verify_ref(ref)
+        if not locator.is_visible() or not locator.is_enabled():
+            raise ValueError("browser_target_not_interactable")
+        if interaction == "hover":
+            locator.hover(timeout=8000)
+        elif interaction == "focus":
+            locator.focus(timeout=8000)
+        elif interaction == "double_click":
+            button = self._unique(locator.and_(frame.get_by_role("button")))
+            if button is None:
+                raise ValueError("browser_ref_role_mismatch")
+            meta = button.evaluate("""el => ({
+                form: !!el.form || !!el.closest('form,a,[role=link]'),
+                submit: ['submit','reset','image'].includes(el.getAttribute('type')),
+                text: [el.innerText,el.getAttribute('aria-label'),el.getAttribute('title')].join(' ')
+            })""")
+            context = meta["text"] + " " + urlsplit(self._page.url).path
+            if (meta["form"] or meta["submit"] or HIGH_IMPACT.search(context)
+                    or REGISTRATION_TARGET.search(context) or LOGIN_TARGET.search(context)
+                    or PAYMENT_SUBMIT_TARGET.search(context)):
+                raise ValueError("browser_double_click_requires_ordinary_button")
+            # Do not pre-authorize any write or force a hit. Network policy
+            # remains active for each request caused by either click.
+            button.dblclick(timeout=8000)
+        else:
+            raise ValueError("browser_interaction_invalid")
+        result = self._snapshot()
+        result["interaction"] = interaction
+        result["interaction_ref"] = ref
+        return result
+
     def _by_id(self, element_id, frame=None):
         if not isinstance(element_id, str) or not re.fullmatch(
                 r"[a-zA-Z_][a-zA-Z0-9_.:-]{0,79}", element_id):
@@ -3266,6 +3302,9 @@ class BrowserSession:
             target = args["name"]
             if not isinstance(target, str) or not target.strip() or len(target) > 180:
                 raise ValueError("browser_button_name_invalid")
+            if name == "browser_click_button" and target.startswith(("hover:", "focus:", "double_click:")):
+                interaction, ref_target = target.split(":", 1)
+                return self._interact_ref(interaction, ref_target)
             if name == "browser_click_button" and target.startswith("disclosure:"):
                 return self._toggle_disclosure(target)
             if name == "browser_click_button" and target.startswith("tab:"):
