@@ -202,7 +202,7 @@ _ROUTE_NEGATION = re.compile(
 )
 _BROWSER_READ = (
     "browser_navigate", "browser_snapshot", "browser_read_page", "browser_find_text",
-    "browser_find_controls",
+    "browser_find_controls", "browser_verify",
     "browser_read_table", "browser_follow_link", "browser_tabs", "browser_new_tab",
     "browser_switch_tab", "browser_back", "browser_forward", "browser_scroll",
     "browser_wait", "browser_reload", "browser_screenshot", "browser_open",

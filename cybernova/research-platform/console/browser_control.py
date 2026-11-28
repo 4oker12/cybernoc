@@ -28,9 +28,17 @@ from urllib.parse import urljoin, urlsplit
 try:
     from .diagnostics import event as diagnostic_event
     from .browser_backend import launch_with_backend
+    from .browser_intelligence import (
+        ACTION_TOOLS as _INTEL_ACTION_TOOLS, StrategyTracker, compact_action_result,
+        page_digest, recovery_for, response_mode, verify_expectations,
+    )
 except ImportError:
     from diagnostics import event as diagnostic_event
     from browser_backend import launch_with_backend
+    from browser_intelligence import (
+        ACTION_TOOLS as _INTEL_ACTION_TOOLS, StrategyTracker, compact_action_result,
+        page_digest, recovery_for, response_mode, verify_expectations,
+    )
 
 MAX_URL = 2048
 MAX_TEXT = 6500
@@ -149,6 +157,13 @@ BROWSER_CONTROL_TOOLS = [
           {"frame_index": {"type": "integer", "minimum": 0},
            "table_index": {"type": "integer", "minimum": 0},
            "row_offset": {"type": "integer", "minimum": 0}}, ["frame_index", "table_index", "row_offset"]),
+    _tool("browser_verify",
+          "Read-only verification of the current page after an action: check that expected text is present or absent, the URL contains a fragment, or a control exists. Returns booleans only; page text and input values are never returned. Use it to confirm real outcomes instead of assuming a click worked.",
+          {"expect_text": {"type": ["array", "null"], "items": STRING, "maxItems": 8, "description": "Literal phrases that must be visible"},
+           "absent_text": {"type": ["array", "null"], "items": STRING, "maxItems": 8, "description": "Literal phrases that must NOT be visible (e.g. an error message)"},
+           "url_contains": {"type": ["string", "null"], "description": "Fragment the current URL must contain"},
+           "control": {"type": ["string", "null"], "description": "Control name or id:<id> that must exist"}},
+          ["expect_text", "absent_text", "url_contains", "control"]),
     _tool("browser_find_controls",
           "Find visible links, buttons, native disclosures or form controls by a literal name, label, placeholder or id across page frames, before the normal snapshot control limit. Use after an ambiguous or missing target. Read-only.",
           {"query": STRING}, ["query"]),
@@ -704,6 +719,9 @@ class BrowserSession:
         self._attached_pages: set[int] = set()
         self._write_approval_handler = None
         self._active_action = None
+        self._last_digest = None
+        self._strategy = StrategyTracker()
+        self._response_mode = response_mode(os.environ.get("CYBERNOVA_BROWSER_RESPONSE_MODE"))
 
     def _dispatch_observed(self, name: str, args: dict) -> dict:
         started = time.monotonic()
@@ -754,7 +772,30 @@ class BrowserSession:
             "browser_action_completed" if succeeded else "browser_action_blocked",
             kind="action", **fields,
         )
+        return self._apply_intelligence(name, args, result)
+
+    def _apply_intelligence(self, name: str, args: dict, result):
+        """Track page state, compact post-action snapshots and learn from outcomes."""
+        if not isinstance(result, dict):
+            return result
+        try:
+            if result.get("ok") is True:
+                self._strategy.record_success(name, args)
+            if (self._response_mode == "compact" and name in _INTEL_ACTION_TOOLS
+                    and "visible_text" in result):
+                result, self._last_digest = compact_action_result(name, result, self._last_digest)
+            elif "visible_text" in result:
+                self._last_digest = page_digest(result)
+        except Exception:
+            # Intelligence is advisory; it must never break a browser action.
+            self._last_digest = None
         return result
+
+    def note_failure(self, name: str, args: dict, error: str) -> dict:
+        try:
+            return self._strategy.record_failure(name, args, error)
+        except Exception:
+            return {"recovery": recovery_for(error, name)}
 
     def call(self, name: str, args: dict) -> dict:
         if self._closed:
@@ -1918,9 +1959,7 @@ class BrowserSession:
             result["query"] = _redact_text(control_query)
         return result
 
-    def _find_text(self, query: str, limit: int = 8) -> dict:
-        return self._page.evaluate(
-            r"""({query, limit}) => {
+    _FIND_TEXT_JS = r"""({query, limit}) => {
                 const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
                 const visible = el => {
                     if (!el || !el.isConnected ||
@@ -1935,7 +1974,15 @@ class BrowserSession:
                 };
                 const root = document.querySelector('main,[role="main"],article') || document.body;
                 const selector = 'h1,h2,h3,h4,h5,h6,[role="heading"],p,li,td,th,dt,dd,blockquote,pre,code,summary';
-                const nodes = Array.from(root.querySelectorAll(selector));
+                const semantic = Array.from(root.querySelectorAll(selector));
+                const seen = new Set(semantic);
+                // Universal fallback: generic containers (div/span/label/button/...) that own
+                // visible text directly, so apps that avoid semantic tags are still searchable.
+                const leaf = Array.from(root.querySelectorAll(
+                    'div,span,label,a,button,em,strong,b,i,small,section,figcaption,caption,legend,option'
+                )).filter(el => !seen.has(el) && Array.from(el.childNodes).some(
+                    n => n.nodeType === 3 && n.textContent.trim().length > 0));
+                const nodes = semantic.concat(leaf);
                 const needle = clean(query).toLocaleLowerCase();
                 const matches = [];
                 let total = 0;
@@ -1974,9 +2021,40 @@ class BrowserSession:
                     root_scope: root === document.body ? 'body' : 'main_or_article',
                     scan_limit_reached: nodes.length > cap
                 };
-            }""",
-            {"query": query, "limit": limit}
-        )
+            }"""
+
+    def _find_text(self, query: str, limit: int = 8) -> dict:
+        arg = {"query": query, "limit": limit}
+        result = self._page.evaluate(self._FIND_TEXT_JS, arg)
+        if not isinstance(result, dict):
+            return result
+        for item in result.get("matches", ()):
+            if isinstance(item, dict):
+                item.setdefault("frame_index", 0)
+        frames_scanned = 1
+        main = self._page.main_frame
+        try:
+            frames = [f for f in self._page.frames if f != main and not f.is_detached()][:8]
+        except Exception:
+            frames = []
+        for offset, frame in enumerate(frames, start=1):
+            try:
+                inner = frame.evaluate(self._FIND_TEXT_JS, arg)
+            except Exception:
+                continue
+            if not isinstance(inner, dict):
+                continue
+            frames_scanned += 1
+            result["scanned_blocks"] = int(result.get("scanned_blocks") or 0) + int(inner.get("scanned_blocks") or 0)
+            result["candidate_blocks"] = int(result.get("candidate_blocks") or 0) + int(inner.get("candidate_blocks") or 0)
+            result["total_matches"] = int(result.get("total_matches") or 0) + int(inner.get("total_matches") or 0)
+            result["scan_limit_reached"] = bool(result.get("scan_limit_reached") or inner.get("scan_limit_reached"))
+            for item in inner.get("matches", ()):
+                if isinstance(item, dict) and len(result["matches"]) < limit:
+                    item["frame_index"] = offset
+                    result["matches"].append(item)
+        result["frames_scanned"] = frames_scanned
+        return result
 
     def _unique(self, locator):
         visible = locator.filter(visible=True)
@@ -2257,6 +2335,25 @@ class BrowserSession:
                 raise ValueError("browser_arguments_invalid")
             return self._snapshot()
 
+        if name == "browser_verify":
+            allowed = {"expect_text", "absent_text", "url_contains", "control"}
+            if set(args) - allowed or not args:
+                raise ValueError("browser_verify_arguments_invalid")
+            for key in ("expect_text", "absent_text"):
+                value = args.get(key)
+                if value is not None and (not isinstance(value, list) or len(value) > 8
+                        or any(not isinstance(v, str) or not 1 <= len(v) <= 180 for v in value)):
+                    raise ValueError("browser_verify_arguments_invalid")
+            for key in ("url_contains", "control"):
+                value = args.get(key)
+                if value is not None and (not isinstance(value, str) or not 1 <= len(value) <= 180):
+                    raise ValueError("browser_verify_arguments_invalid")
+            snapshot = self._snapshot()
+            self._last_digest = page_digest(snapshot)
+            return verify_expectations(
+                snapshot, expect_text=args.get("expect_text"), absent_text=args.get("absent_text"),
+                url_contains=args.get("url_contains"), control=args.get("control"),
+            )
         if name == "browser_find_controls":
             if set(args) != {"query"} or not isinstance(args["query"], str) or not 1 <= len(args["query"].strip()) <= 120:
                 raise ValueError("browser_control_query_invalid")
@@ -2287,7 +2384,8 @@ class BrowserSession:
                 {"heading_context": _redact_text(str(item.get("heading_context") or ""))[:180],
                  "element": str(item.get("element") or "")[:20],
                  "role": str(item.get("role") or "")[:30],
-                 "snippet": _redact_text(str(item.get("snippet") or ""))[:500]}
+                 "snippet": _redact_text(str(item.get("snippet") or ""))[:500],
+                 **({"frame_index": int(item["frame_index"])} if int(item.get("frame_index") or 0) else {})}
                 for item in result.get("matches", [])[:limit] if isinstance(item, dict)
             ]
             scanned = int(result.get("scanned_blocks") or 0)
@@ -2295,7 +2393,8 @@ class BrowserSession:
             limited = bool(result.get("scan_limit_reached"))
             frame_count = max(1, len(self._page.frames))
             root_scope = result.get("root_scope") or "unknown"
-            incomplete = limited or frame_count > 1 or root_scope != "body"
+            frames_scanned = max(1, min(frame_count, int(result.get("frames_scanned") or 1)))
+            incomplete = limited or frames_scanned < frame_count or root_scope != "body"
             return {
                 "ok": True,
                 "url": _safe_url(self._page.url),
@@ -2313,9 +2412,9 @@ class BrowserSession:
                 "coverage": {
                     "documents_scanned": 1,
                     "frames_total": frame_count,
-                    "frames_scanned": 1,
-                    "frames_skipped": frame_count - 1,
-                    "skip_reasons": (["iframe_not_scanned"] if frame_count > 1 else []) +
+                    "frames_scanned": frames_scanned,
+                    "frames_skipped": frame_count - frames_scanned,
+                    "skip_reasons": (["iframe_not_scanned"] if frames_scanned < frame_count else []) +
                                     (["candidate_limit"] if limited else []) +
                                     (["main_or_article_only"] if root_scope == "main_or_article" else []) +
                                     (["no_visible_text_blocks"] if scanned == 0 else []),
@@ -2846,7 +2945,9 @@ def browser_control_call(name: str, args: dict, session: BrowserSession) -> tupl
                 "ok": False, "error": "chromium_not_installed",
                 "hint": "Run native.py --data-dir <existing-data-dir> install-browser",
             }, True
-        return {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}, True
+        failure = {"ok": False, "error": type(exc).__name__ + ":" + str(exc)[:180]}
+        failure.update(session.note_failure(name, args, failure["error"]))
+        return failure, True
     except Exception as exc:
         message = str(exc).lower()
         if "chromium_not_installed" in message or "executable doesn't exist" in message or "please run the following command" in message:
