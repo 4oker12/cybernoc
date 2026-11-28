@@ -39,10 +39,10 @@ except ImportError:
     )
 
 try:
-    from .agent_profile import AGENT_PROFILE, AGENT_PROFILE_TEXT_ONLY
+    from .agent_profile import AGENT_PROFILE, AGENT_PROFILE_TEXT_ONLY, COGNITIVE_METHOD
     from .local_tools_profile import LOCAL_TOOLS_PROFILE
 except ImportError:
-    from agent_profile import AGENT_PROFILE, AGENT_PROFILE_TEXT_ONLY
+    from agent_profile import AGENT_PROFILE, AGENT_PROFILE_TEXT_ONLY, COGNITIVE_METHOD
     from local_tools_profile import LOCAL_TOOLS_PROFILE
 
 try:
@@ -53,8 +53,8 @@ except ImportError:
 OLLAMA_URL = os.environ.get("CYBERNOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MCP_URL = os.environ.get("CYBERNOVA_MCP_URL", "http://127.0.0.1:18792/mcp")
 MODEL = os.environ.get("CYBERNOVA_MODEL", "cybernova-security:30b")
-MAX_ROUNDS = 0  # Zero: no fixed round limit; owner cancellation remains active.
-MAX_CALLS = 0  # Zero: no fixed tool-call limit.
+MAX_ROUNDS = 144  # 3x original default; zero disables the optional ceiling.
+MAX_CALLS = 384  # 3x original default; zero disables the optional ceiling.
 MAX_HTTP_GETS = 3
 MAX_PROMPT = 10000
 MAX_RESULT = 8000
@@ -703,10 +703,17 @@ class Agent:
         selected_groups = normalize_tool_groups(tool_groups or [])
         try:
             input_token_budget = int(os.environ.get("CYBERNOVA_AGENT_INPUT_TOKEN_BUDGET", MAX_INPUT_TOKENS))
+            round_limit = int(os.environ.get("CYBERNOVA_AGENT_MAX_ROUNDS", MAX_ROUNDS))
+            call_limit = int(os.environ.get("CYBERNOVA_AGENT_MAX_CALLS", MAX_CALLS))
         except (ValueError, TypeError):
             raise ValueError("agent_input_token_budget_invalid") from None
         if input_token_budget < 0:
             raise ValueError("agent_input_token_budget_invalid")
+        if round_limit < 0 or call_limit < 0:
+            raise ValueError("agent_execution_budget_invalid")
+        cognitive_mode = os.environ.get("CYBERNOVA_COGNITIVE_METHOD", "1")
+        if cognitive_mode not in {"0", "1"}:
+            raise ValueError("agent_cognitive_method_invalid")
         conversation_key = ("deepseek:" + session_id) if isinstance(session_id, str) and session_id.strip() else None
         progress_key = conversation_key or ("run:" + secrets.token_hex(6))
         progress = research_progress if research_progress is not None else PROGRESS_STORE.get(progress_key)
@@ -912,7 +919,9 @@ class Agent:
             context.append({"role": "system", "content": user_context[:8500]})
         if profile_instructions:
             context.append({"role": "system", "content": profile_instructions[:12500]})
-        # Compact progress only — never replay full evidence or long histories.
+        if tools_enabled and cognitive_mode == "1":
+            context.append({"role": "system", "content": COGNITIVE_METHOD})
+        # Research state is supplemental to the complete current transcript.
         progress_note = progress.system_note()
         if progress_note:
             context.append({
@@ -1158,6 +1167,7 @@ class Agent:
             return outcome
 
         checkpoint = None
+        budget_note = None
         continuation_prompted = False
         try:
             for round_no in iteration_count():
@@ -1193,7 +1203,17 @@ class Agent:
                     context.append(checkpoint)
                     diagnostic_event("agent_plan_checkpoint", status="active",
                                      round=round_no, tool_calls=executed)
-                if MAX_ROUNDS and round_no == MAX_ROUNDS - 1:
+                if budget_note in context:
+                    context.remove(budget_note)
+                if tools_enabled:
+                    budget_note = {"role": "system", "content":
+                        "Runtime resources (not a target or prescribed step count): round "
+                        + str(round_no + 1) + "/" + (str(round_limit) if round_limit else "unlimited")
+                        + ", tool calls " + str(count) + "/"
+                        + (str(call_limit) if call_limit else "unlimited")
+                        + ". Finish when the task is adequately supported, not when the budget runs out."}
+                    context.append(budget_note)
+                if round_limit and round_no == round_limit - 1:
                     context.append({"role": "system", "content":
                         "Достигнут лимит инструментальных итераций. Подготовь итог по уже собранным данным."})
                     diagnostic_event("agent_execution_limit", status="partial",
@@ -1442,7 +1462,7 @@ class Agent:
                 if not calls:
                     if (not continuation_prompted and executed and tools and not pending_requests
                             and progress.open_items and progress.phase in {"explore", "act", "verify"}
-                            and (not MAX_ROUNDS or round_no < MAX_ROUNDS - 2)):
+                            and (not round_limit or round_no < round_limit - 2)):
                         continuation_prompted = True
                         context.append({"role": "system", "content":
                             "У тебя остались явно заявленные незавершённые пункты: " +
@@ -1468,7 +1488,7 @@ class Agent:
                 if isinstance(assistant_reasoning_content, str):
                     assistant_turn["reasoning_content"] = assistant_reasoning_content
                 context.append(assistant_turn)
-                for raw in (calls[:MAX_CALLS-count] if MAX_CALLS else calls):
+                for raw in (calls[:call_limit-count] if call_limit else calls):
                     if stop_requested():
                         return stopped_result()
                     function = raw.get("function", {}) if isinstance(raw, dict) else {}
@@ -1762,7 +1782,7 @@ class Agent:
                     count += 1
                 if stop_requested():
                     return stopped_result()
-                if MAX_CALLS and count >= MAX_CALLS:
+                if call_limit and count >= call_limit:
                     context.append({"role": "system", "content":
                         "Лимит инструментов достигнут. Подготовь итог по уже собранным данным."})
                     answer = finalize_answer()

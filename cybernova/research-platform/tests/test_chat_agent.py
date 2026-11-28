@@ -1002,6 +1002,16 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(len(compact[1]["tool_calls"]), 1)
         self.assertEqual(_normalize_context(compact)[-1]["content"], "evidence")
 
+    def test_cognitive_profile_toggle_changes_only_optional_guidance(self):
+        from console.agent_profile import COGNITIVE_METHOD
+        for mode in ("0", "1"):
+            lm = FakeOllama([{"role": "assistant", "content": "Ready"}])
+            with patch.dict("os.environ", {"CYBERNOVA_COGNITIVE_METHOD": mode}):
+                Agent(lm, lambda: FakeMCP()).run([], "Hello", force_tools=False)
+            included = any(item.get("content") == COGNITIVE_METHOD
+                           for item in lm.prompts[0][0])
+            self.assertEqual(included, mode == "1")
+
     def test_default_run_can_finish_beyond_old_round_and_call_limits(self):
         runtime = FakeLocalToolRuntime()
         runtime.tools[0]["name"] = "terminal_status"

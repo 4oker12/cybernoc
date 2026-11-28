@@ -66,29 +66,20 @@ class TokenEfficiencyTests(unittest.TestCase):
         )
         self.assertLess(total_controls, 40)
 
-    def test_compact_tool_output_deltas_and_size(self):
+    def test_model_observation_retains_every_field(self):
         fat = _fat_snapshot()
-        raw = json.dumps(fat, ensure_ascii=False)
-        output = {"tool_name": "browser_snapshot", "content": raw}
-        seen = {}
-        first = agent_mod._compact_tool_output(output, seen)
-        second = agent_mod._compact_tool_output(output, seen)
-        self.assertLess(len(first), len(raw))
-        self.assertLessEqual(len(first), agent_mod.MAX_CONTEXT_TOOL_CHARS)
-        second_data = json.loads(second)
-        # Second identical observation should mostly report unchanged fields.
-        self.assertIn(second_data.get("page_content"), {
-            "unchanged_from_earlier_tool_result", "changed_fields_only",
-        })
-        # Savings vs naive full dump: at least 40% on repeat, 25% on first pack.
-        self.assertLess(len(first) / max(1, len(raw)), 0.75)
-        self.assertLess(len(second) / max(1, len(raw)), 0.55)
+        raw = agent_mod._serialize_tool_result("browser_snapshot", fat)
+        self.assertEqual(json.loads(raw), fat)
+        self.assertGreater(len(raw), agent_mod.MAX_BROWSER_RESULT)
 
-    def test_context_limits_are_stricter(self):
-        self.assertLessEqual(agent_mod.MAX_CONTEXT_TOOL_CALLS, 6)
-        self.assertLessEqual(agent_mod.MAX_CONTEXT_TOOL_CHARS, 2500)
-        self.assertLessEqual(agent_mod.MAX_BROWSER_RESULT, 5000)
-        self.assertLessEqual(agent_mod.MAX_CONTEXT_HISTORY_MESSAGES, 6)
+    def test_diagnostic_preview_is_not_model_payload(self):
+        fat = _fat_snapshot()
+        preview = json.loads(agent_mod._browser_json(fat, agent_mod.MAX_BROWSER_RESULT))
+        model = json.loads(agent_mod._serialize_tool_result("browser_snapshot", fat))
+        self.assertTrue(preview["observation_truncated"])
+        self.assertEqual(model["links"], fat["links"])
+        self.assertEqual(model["visible_text"], fat["visible_text"])
+
 
 
 if __name__ == "__main__":
