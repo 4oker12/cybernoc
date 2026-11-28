@@ -107,6 +107,12 @@ Implemented. All eight focused tests passed, including real Chromium visual-owne
 ### V4 continuation — P0.3 targeted complex widget interactions
 The collector recognizes explicit tree/menu/listbox/grid/toolbar roles and untyped keyboard-focusable text candidates. It reports allowlisted ARIA pressed/current/active-descendant state. Existing click tool accepts ref-scoped non-activating navigation keys, verifies actual focus and records before/after widget state; `activate:ref` is limited to explicit supported widget roles outside forms/nested controls and shares high-impact and network guards. No arbitrary JS, force click, raw keyboard sequences or activation of untyped candidates. Added unit and local Chromium fixtures.
 
+#### P0.3 follow-up: observed widget semantics
+
+Grid cells, headers and other keyboard-focusable controls can lose explicit role or ancestor context in the generic focus-candidate record. Preserve allowlisted widget semantics on existing observations and distinguish a declared active-descendant ID from a locally resolved target. The interaction reviewer implemented this passive refinement and focused unit tests. The coordinator integrated the change and added live widget checks.
+
+Implemented. The Chromium fixture covers tree, menu, listbox, grid, toolbar and custom focusable text. A same-root visible ID match documents DOM evidence. Widget ownership and actual focus require their own evidence. Existing action eligibility and dispatch rules are preserved. All 244 tests across the nine focused modules passed with system Chromium, as did compilation and the repository artifact guard.
+
 ### V4 continuation — live fixture gate
 A dedicated PR workflow installs actual Playwright Chromium and runs the browser intelligence unit + localhost integration fixtures. No public target access, account operations or secrets in tests. It is limited to PRs changing the browser runtime/test files and this workflow. Existing full quality gate remains unchanged. Profile updated for widget navigation, semantic activation and read-only visual owner refs.
 

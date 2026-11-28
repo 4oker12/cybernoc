@@ -1454,6 +1454,47 @@ class SemanticContextTests(unittest.TestCase):
         self.assertIn("aria-controls", js)
         self.assertIn("el.form", js)
 
+    def test_widget_snapshot_keeps_passive_role_and_active_id_evidence(self):
+        row = {
+            "text": "Focusable grid cell", "tag": "div", "type": "", "role": "gridcell",
+            "ref": "e1", "in_viewport": True, "focus_candidate": True, "disabled": False,
+            "bounds": {"x": 0, "y": 0, "width": 50, "height": 30},
+            "expanded": None, "selected": None, "active_descendant": "local-item",
+            "active_descendant_local_visible": True,
+            "semantic": {"groups": [{"kind": "row"}, {"kind": "treegrid", "label": "Products"}]},
+        }
+        page = Mock(url="https://example.test/")
+        page.is_closed.return_value = False
+        page.title.return_value = "Widgets"
+        page.evaluate.return_value = {
+            "rows": [
+                row,
+                {**row, "ref": "e2", "role": "application", "active_descendant": "missing-item",
+                 "active_descendant_local_visible": False},
+                {**row, "ref": "e3", "active_descendant": "not a valid id"},
+            ],
+            "total": 3,
+            "next_ref": 4,
+        }
+        session = BrowserSession()
+        try:
+            session._page = page
+            session._frame_contexts = Mock(return_value=[page])
+            local, missing, invalid = session._snapshot(control_query="widget")["buttons"]
+        finally:
+            session.close()
+        self.assertEqual(local["type"], "focus_candidate")
+        self.assertEqual(local["declared_role"], "gridcell")
+        self.assertEqual(local["interaction_hint"], "focus_or_navigation_key_only")
+        self.assertEqual(local["semantic"]["groups"], row["semantic"]["groups"])
+        self.assertEqual(local["widget_state"], {
+            "active_descendant": "local-item",
+            "active_descendant_evidence": "local_visible_id_match",
+        })
+        self.assertNotIn("declared_role", missing)
+        self.assertEqual(missing["widget_state"]["active_descendant_evidence"], "declared_only")
+        self.assertNotIn("widget_state", invalid)
+
 
 class SpatialContextTests(unittest.TestCase):
     def test_screenshot_requests_the_same_units_as_top_bounds(self):

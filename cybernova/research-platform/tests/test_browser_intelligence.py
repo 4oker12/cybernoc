@@ -246,7 +246,16 @@ WIDGET_PAGE = b"""<!doctype html><title>Widgets</title>
  onkeydown="if(event.key==='ArrowDown'){this.setAttribute('aria-activedescendant','second');event.preventDefault()}">
  <div role="option" id="first">First</div><div role="option" id="second">Second</div>
 </div>
-<div role="menuitem" tabindex="0" onclick="document.getElementById('out').textContent='Item opened'">Open item</div>
+<div role="menu" aria-label="Item menu">
+ <div role="menuitem" tabindex="0" onclick="document.getElementById('out').textContent='Item opened'">Open item</div>
+</div>
+<div role="tree" aria-label="Folders" aria-activedescendant="missing-item">
+ <div role="treeitem" tabindex="0" aria-expanded="false">Parent folder</div>
+</div>
+<div role="grid" aria-label="Products"><div role="row">
+ <div role="gridcell" tabindex="0">Product name</div>
+</div></div>
+<div role="toolbar" aria-label="Page tools"><button>Refresh view</button></div>
 <div id="out">Nothing opened</div><span tabindex="0">Custom focusable text</span>"""
 
 
@@ -305,6 +314,13 @@ class LiveBrowserTests(unittest.TestCase):
     def test_live_complex_widget_navigation_and_activation(self):
         c = lambda n, **a: self.call(n, a, self.session)[0]
         self.assertTrue(c("browser_navigate", url=self.url + "widgets")["ok"])
+        observed = {row["name"]: row for row in c("browser_snapshot")["buttons"]}
+        for control, group in (("Open item", "menu"), ("Parent folder", "tree"),
+                               ("Product name", "grid"), ("Refresh view", "toolbar"), ("First", "listbox")):
+            self.assertIn(group, {parent["kind"] for parent in observed[control]["semantic"]["groups"]})
+        self.assertEqual(observed["Product name"]["declared_role"], "gridcell")
+        self.assertEqual(observed["Folders"]["widget_state"]["active_descendant_evidence"], "declared_only")
+        self.assertEqual(observed["Choices"]["widget_state"]["active_descendant_evidence"], "local_visible_id_match")
         found = c("browser_find_controls", query="Choices")
         widget = next(row for row in found["buttons"] if row["type"] == "listbox")
         result = c("browser_click_button", name="key:ArrowDown:ref:" + widget["ref"])

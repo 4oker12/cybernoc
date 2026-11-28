@@ -403,9 +403,12 @@ def _redact_text(value: str, limit: int = MAX_TEXT) -> str:
 
 
 
-_SEMANTIC_KINDS = frozenset({
+_PASSIVE_WIDGET_ROLES = frozenset({
+    "cell", "gridcell", "row", "rowheader", "columnheader", "treegrid", "menubar",
+})
+_SEMANTIC_KINDS = _PASSIVE_WIDGET_ROLES | frozenset({
     "form", "search", "dialog", "alertdialog", "article", "list", "listitem",
-    "table", "row", "cell", "grid", "group", "navigation", "main",
+    "table", "grid", "group", "navigation", "main",
     "region", "fieldset", "section", "menu", "tablist", "tabpanel", "card_candidate",
     "listbox", "tree", "treeitem", "toolbar", "radiogroup",
 })
@@ -863,7 +866,8 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
   const semanticCache = new WeakMap();
   const groupKinds = new Set(['form','search','dialog','alertdialog','article',
     'list','listitem','table','row','cell','grid','group','navigation','main',
-    'region','fieldset','section','menu','tablist','tabpanel','listbox','tree','treeitem','toolbar','radiogroup']);
+    'region','fieldset','section','menu','tablist','tabpanel','listbox','tree','treeitem',
+    'toolbar','radiogroup','gridcell','rowheader','columnheader','treegrid','menubar']);
   const nativeKind = {FORM:'form',DIALOG:'dialog',ARTICLE:'article',UL:'list',
     OL:'list',LI:'listitem',TABLE:'table',TR:'row',TD:'cell',TH:'cell',
     FIELDSET:'fieldset',NAV:'navigation',MAIN:'main',SECTION:'section'};
@@ -1093,6 +1097,8 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
     const r = el.getBoundingClientRect();
     const tablist = el.getAttribute('role') === 'tab' ? el.closest('[role=tablist]') : null;
     const ref = assignRef(el);
+    const activeDescendant = (el.getAttribute('aria-activedescendant') || '').trim();
+    const activeTarget = activeDescendant && el.getRootNode().getElementById?.(activeDescendant);
     return {
       ref,
       tag: el.tagName.toLowerCase(),
@@ -1112,7 +1118,8 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
       aria_checked: el.getAttribute('aria-checked'),
       pressed: el.getAttribute('aria-pressed'),
       current: el.getAttribute('aria-current'),
-      active_descendant: el.getAttribute('aria-activedescendant'),
+      active_descendant: activeDescendant,
+      active_descendant_local_visible: Boolean(activeTarget && activeTarget !== el && visible(activeTarget)),
       focus_candidate: focusCandidate(el),
       disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
       readonly: !!el.readOnly || el.getAttribute('aria-readonly') === 'true',
@@ -2416,6 +2423,10 @@ class BrowserSession:
                 active = item.get("active_descendant")
                 if isinstance(active, str) and re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.:-]{0,79}", active):
                     widget_state["active_descendant"] = active
+                    widget_state["active_descendant_evidence"] = (
+                        "local_visible_id_match" if item.get("active_descendant_local_visible") is True
+                        else "declared_only"
+                    )
                 if widget_state:
                     identity["widget_state"] = widget_state
                 if item["tag"] == "summary":
@@ -2439,6 +2450,8 @@ class BrowserSession:
                     ), **identity}
                     if item.get("focus_candidate"):
                         row["interaction_hint"] = "focus_or_navigation_key_only"
+                        if role in _PASSIVE_WIDGET_ROLES:
+                            row["declared_role"] = role
                     elif role in {"combobox", "option", "menuitem", "treeitem", "menuitemcheckbox", "menuitemradio"}:
                         row["interaction_hint"] = "activate_ref_or_navigation_key"
                     if item.get("aria_checked") in {"true", "false", "mixed"}:
