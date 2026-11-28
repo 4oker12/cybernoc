@@ -1,5 +1,6 @@
 """Offline regression suite for dynamic MCP discovery and explicit approvals."""
 import sys
+import tempfile
 import time
 import unittest
 from unittest.mock import patch
@@ -213,6 +214,59 @@ class DynamicToolPolicyTests(unittest.TestCase):
             [], "Исследуй сайт самостоятельно")
         self.assertEqual(model.inputs, [])
         self.assertIn("tool_name_collision", result["events"][-1]["message"])
+        self.assertEqual(result["error_code"], "tool_catalog_invalid")
+
+    def test_real_composite_catalog_accepts_reviewed_mirrors_and_dispatches_local(self):
+        from console.communication import CommunicationStore
+        from console.communication_tools import CommunicationToolClient
+        from console.traffic_tools import TrafficToolClient
+        from console.gpt_tool_runtime import GPTToolRuntime
+        from console.github_tools import GITHUB_TOOLS
+        from console.research_web import RESEARCH_WEB_TOOLS
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = CommunicationStore(Path(directory) / "comm.sqlite3")
+            task = store.create_task("Catalog regression")
+            upstream = FakeMCP()
+            remote = CommunicationToolClient(TrafficToolClient(upstream, {}), store, task["task_id"])
+            local = GPTToolRuntime(browser_profile_dir=Path(directory) / "browser")
+            self.addCleanup(local.close)
+            remote_rows = remote.initialize()
+            local_rows = local.mcp_tools()
+            overlap = {row["name"] for row in remote_rows} & {row["name"] for row in local_rows}
+            self.assertTrue({row["name"] for row in GITHUB_TOOLS + RESEARCH_WEB_TOOLS} <= overlap)
+            arguments = {"repo": "owner/repo", "per_page": 1}
+            model = FakeQwen([tool_call("github_list_branches", arguments), {"content": "Branches read"}])
+            with patch("console.gpt_tool_runtime.github_call", return_value=({"ok": True}, False)) as local_call, \
+                    patch("console.communication_tools.github_call") as remote_call:
+                result = Agent(model, lambda: remote, local_tool_runtime=local).run(
+                    [], "github_list_branches", force_tools=False)
+            self.assertNotIn("error_code", result)
+            self.assertEqual(result["tool_calls"], 1)
+            local_call.assert_called_once_with("github_list_branches", arguments)
+            remote_call.assert_not_called()
+            names = [row["function"]["name"] for row in model.inputs[0]["tools"]]
+            self.assertEqual(names.count("github_list_branches"), 1)
+
+    def test_known_mirror_with_incompatible_schema_or_duplicate_remote_fails(self):
+        from console.github_tools import GITHUB_TOOLS
+        canonical = next(row for row in GITHUB_TOOLS if row["name"] == "github_list_branches")
+
+        class Local:
+            tool_map = {canonical["name"]: object()}
+
+            def mcp_tools(self, groups=None):
+                return [canonical]
+
+        changed = {**canonical, "inputSchema": {"type": "object", "properties": {}}}
+        for remote_rows in ([changed], [canonical, canonical]):
+            with self.subTest(remote_rows=remote_rows):
+                model = FakeQwen([])
+                result = Agent(model, lambda: FakeMCP(remote_rows), local_tool_runtime=Local()).run(
+                    [], "github_list_branches")
+                self.assertEqual(model.inputs, [])
+                self.assertEqual(result["error_code"], "tool_catalog_invalid")
+                self.assertIn("tool_name_collision", result["events"][-1]["message"])
 
     def test_manual_group_does_not_widen_exact_named_tool(self):
         rows = [{"name": "terminal_run"}, {"name": "browser_read_page"}]

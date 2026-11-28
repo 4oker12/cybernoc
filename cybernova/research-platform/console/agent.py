@@ -29,12 +29,12 @@ except ImportError:
 try:
     from .gpt_tool_runtime import (
         extract_user_targets, filter_tool_rows, normalize_tool_groups, route_model_tool_rows,
-        tool_group_for_name, GITHUB_WRITE_NAMES,
+        tool_group_for_name, GITHUB_WRITE_NAMES, GITHUB_TOOLS, RESEARCH_WEB_TOOLS,
     )
 except ImportError:
     from gpt_tool_runtime import (
         extract_user_targets, filter_tool_rows, normalize_tool_groups, route_model_tool_rows,
-        tool_group_for_name, GITHUB_WRITE_NAMES,
+        tool_group_for_name, GITHUB_WRITE_NAMES, GITHUB_TOOLS, RESEARCH_WEB_TOOLS,
     )
 
 try:
@@ -1105,9 +1105,30 @@ class Agent:
                 "filtered_remote_count": len(remote_rows), "combined_count": len(combined_rows),
             }
             try:
+                # These two reviewed catalogs are deliberately published by both
+                # the local runtime and the composite MCP client. Preserve the
+                # existing local-first dispatch only for exact canonical mirrors.
+                # Unknown names, different contracts and duplicates within either
+                # backend must still fail closed.
+                shared = {row["name"]: row for row in GITHUB_TOOLS + RESEARCH_WEB_TOOLS}
+                local_by_name = {row["name"]: row for row in local_rows}
+                mirrored = set()
+                merged_rows = list(local_rows)
+                for row in combined_rows[len(local_rows):]:
+                    name = row.get("name")
+                    canonical = shared.get(name) if isinstance(name, str) else None
+                    local = local_by_name.get(name) if isinstance(name, str) else None
+                    if (canonical is not None and local is not None and name not in mirrored
+                            and local.get("inputSchema") == canonical["inputSchema"]
+                            and row.get("inputSchema") == canonical["inputSchema"]
+                            and local.get("description") == canonical["description"][:1100]
+                            and row.get("description") == canonical["description"]):
+                        mirrored.add(name)
+                        continue
+                    merged_rows.append(row)
                 seen_names = set()
                 collisions = set()
-                for row in combined_rows:
+                for row in merged_rows:
                     if not isinstance(row, dict) or not isinstance(row.get("name"), str):
                         continue
                     if row["name"] in seen_names:
@@ -1117,7 +1138,7 @@ class Agent:
                     collisions.add("tool_capabilities")
                 if collisions:
                     raise ToolPolicyError("tool_name_collision:" + ",".join(sorted(collisions)[:8]))
-                registered = discovered_tools(combined_rows, limit=MAX_DISCOVERED)
+                registered = discovered_tools(merged_rows, limit=MAX_DISCOVERED)
                 discovered_count = len(registered)
                 registered.append(TOOL_CAPABILITIES)
                 advertised = route_model_tool_rows(
@@ -1133,9 +1154,11 @@ class Agent:
                 events.append({"type": "tool_catalog_error", "is_error": True, "message": str(exc)[:240]})
                 diagnostic_event("tool_catalog_failure", **catalog_counts, status="failed",
                                  error_type=type(exc).__name__, error_code="tool_catalog_invalid")
-                return result_payload("Не удалось сформировать каталог инструментов. "
-                                      "Модель не вызывалась. Подробности в журнале.",
-                                      review_tools=False)
+                outcome = result_payload("Не удалось сформировать каталог инструментов. "
+                                         "Модель не вызывалась. Подробности в журнале.",
+                                         review_tools=False)
+                outcome.update(error_code="tool_catalog_invalid", error_type=type(exc).__name__)
+                return outcome
             omitted = discovered_count - sum(
                 row["name"] != "tool_capabilities" for row in advertised
             )

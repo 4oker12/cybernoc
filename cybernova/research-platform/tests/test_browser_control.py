@@ -104,7 +104,8 @@ class BrowserControlTests(unittest.TestCase):
             "browser_console", "browser_network_session", "browser_submit_payment",
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
-        self.assertIn("explicitly requested ordinary POST form", submit["description"])
+        self.assertIn("approve the exact method and target", submit["description"])
+        self.assertIn("Supports the form's declared HTTP method", submit["description"])
         follow = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_follow_link")
         self.assertIn("url:<URL>", follow["description"])
 

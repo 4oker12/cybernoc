@@ -1479,7 +1479,8 @@ def chat(payload: ChatRequest):
                 on_tool_event=persist_tool_event,
                 should_stop=(lambda: jobs.should_stop(receipt)) if jobs else None,
             )
-            run_status = "partial" if outcome.get("stop_reason") else "completed"
+            run_status = ("failed" if outcome.get("error_code") == "tool_catalog_invalid"
+                          else "partial" if outcome.get("stop_reason") else "completed")
         except Exception as exc:
             store.append(task_id, "controller", "system",
                          "Agent failed: " + type(exc).__name__, status="blocked")
