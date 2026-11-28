@@ -1559,16 +1559,21 @@ class RefInteractionTests(unittest.TestCase):
         locator = Mock()
         locator.evaluate.side_effect = [{"focused": True, "active_descendant": "first"},
                                         {"focused": True, "active_descendant": "second"}]
-        session._verify_ref = Mock(return_value=(Mock(), locator))
+        frame = Mock()
+        session._verify_ref = Mock(return_value=(frame, locator))
         session._snapshot = Mock(return_value={"ok": True})
         result = session._interact_ref("key:ArrowDown", "ref:e12")
         self.assertTrue(result["widget_state_changed"])
         self.assertEqual(result["widget_state_after"]["active_descendant"], "second")
-        locator.press.assert_called_once_with("ArrowDown", timeout=8000)
+        self.assertTrue(result["focus_before_dispatch"])
+        self.assertTrue(result["focus_after_dispatch"])
+        self.assertTrue(result["focus_after_dispatch_observed"])
+        frame.page.keyboard.press.assert_called_once_with("ArrowDown")
+        locator.press.assert_not_called()
         for key in ("Enter", "Space", "Control+A"):
             with self.assertRaisesRegex(ValueError, "browser_widget_navigation_key_not_allowed"):
                 session._interact_ref("key:" + key, "ref:e12")
-        locator.press.assert_called_once()
+        frame.page.keyboard.press.assert_called_once()
 
     def test_double_click_rejects_form_controls(self):
         session = BrowserSession.__new__(BrowserSession)
