@@ -333,6 +333,7 @@ class StrategyTracker:
 
     def __init__(self, window: int = 12):
         self._recent: deque[tuple[str, str, str]] = deque(maxlen=window)
+        self._no_effect: deque[tuple[str, str, str]] = deque(maxlen=window)
 
     @staticmethod
     def _target_hash(args: dict) -> str:
@@ -344,6 +345,22 @@ class StrategyTracker:
     def record_success(self, tool: str, args: dict) -> None:
         key = (tool, self._target_hash(args))
         self._recent = deque((e for e in self._recent if e[:2] != key), maxlen=self._recent.maxlen)
+        self._no_effect = deque((e for e in self._no_effect if e[:2] != key),
+                                maxlen=self._no_effect.maxlen)
+
+    def record_no_effect(self, tool: str, args: dict, state_id: str) -> dict:
+        """Repeated successful dispatch without observed effect is not success."""
+        entry = (tool, self._target_hash(args), str(state_id or "")[:32])
+        self._no_effect.append(entry)
+        repeats = self._no_effect.count(entry)
+        result = {"attempts_on_state": repeats,
+                  "recovery": recovery_for("no_visible_change", tool)}
+        if repeats >= 2:
+            result.update(change_strategy=True, escalation=(
+                "Same action on the same observed state had no effect. Verify the goal, "
+                "inspect state/network or choose a different authorized target; do not loop."
+            ))
+        return result
 
     def record_failure(self, tool: str, args: dict, error: str) -> dict:
         match = re.search(r"browser_[a-z0-9_]+(?::\d+)?", str(error or ""))

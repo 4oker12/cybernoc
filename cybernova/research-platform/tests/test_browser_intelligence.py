@@ -143,6 +143,18 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue(recovery_for("browser_action_timeout"))
         self.assertTrue(recovery_for("something_unknown"))
 
+    def test_repeated_no_effect_requires_strategy_change_on_same_state(self):
+        tracker = StrategyTracker()
+        args = {"name": "Open", "value": "never retain"}
+        first = tracker.record_no_effect("browser_click_button", args, "state1")
+        self.assertNotIn("change_strategy", first)
+        second = tracker.record_no_effect("browser_click_button", args, "state1")
+        self.assertTrue(second["change_strategy"])
+        self.assertEqual(tracker.record_no_effect("browser_click_button", args, "state2")["attempts_on_state"], 1)
+        tracker.record_success("browser_click_button", args)
+        self.assertEqual(tracker.record_no_effect("browser_click_button", args, "state1")["attempts_on_state"], 1)
+        self.assertNotIn("never retain", repr(tracker._no_effect))
+
     def test_escalation_and_reset_and_no_value_retention(self):
         t = StrategyTracker()
         args = {"name": "Buy", "value": "SECRET-123"}

@@ -1076,13 +1076,26 @@ class BrowserSession:
         if not isinstance(result, dict):
             return result
         try:
-            if result.get("ok") is True:
+            if (name in _INTEL_ACTION_TOOLS and "visible_text" in result
+                    and result.get("ok") is True):
+                compact, self._last_digest = compact_action_result(name, result, self._last_digest)
+                effect = compact.get("effect")
+                if self._response_mode == "compact":
+                    result = compact
+                else:
+                    result.update({key: compact[key] for key in ("effect", "delta", "recovery")
+                                   if key in compact})
+                if effect in {"observed", "input_applied_value_not_echoed"}:
+                    self._strategy.record_success(name, args)
+                elif effect == "none_observed" and name in {"browser_click_button", "browser_press"}:
+                    result.update(self._strategy.record_no_effect(
+                        name, args, self._last_digest.get("state_id", "")))
+                elif effect == "unverified_partial_observation":
+                    result.setdefault("recovery", recovery_for("no_visible_change", name))
+            elif result.get("ok") is True:
                 self._strategy.record_success(name, args)
-            if (self._response_mode == "compact" and name in _INTEL_ACTION_TOOLS
-                    and "visible_text" in result):
-                result, self._last_digest = compact_action_result(name, result, self._last_digest)
-            elif "visible_text" in result:
-                self._last_digest = page_digest(result)
+                if "visible_text" in result:
+                    self._last_digest = page_digest(result)
         except Exception:
             # Intelligence is advisory; it must never break a browser action.
             self._last_digest = None
