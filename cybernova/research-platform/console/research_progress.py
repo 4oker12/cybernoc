@@ -23,9 +23,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 MAX_SESSIONS = 64
-MAX_LIST = 10
-MAX_NOTE_CHARS = 420
-MAX_ITEM = 140
 MAX_LABEL = 80
 # Model-declared phases only — Runtime never assigns these from tool names.
 MODEL_PHASES = frozenset({
@@ -61,9 +58,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _clip(value: Any, limit: int) -> str:
+def _clip(value: Any, limit: int | None = None) -> str:
     text = _SAFE.sub("", str(value or "")).strip()
-    if len(text) <= limit:
+    if limit is None or len(text) <= limit:
         return text
     return text[: max(0, limit - 1)].rstrip() + "…"
 
@@ -102,7 +99,7 @@ class ResearchProgress:
 
     def set_goal(self, goal: str) -> None:
         """Retain an open root goal; track the latest user request separately."""
-        request = _clip(goal, 160)
+        request = _clip(goal)
         if request and (not self.goal or (self.phase == "done" and not self.open_items
                                           and request != self.current_request)):
             self.goal = request
@@ -150,15 +147,15 @@ class ResearchProgress:
                 raise ValueError("research_phase_invalid")
             self.phase = key
         if summary is not None:
-            self.model_summary = _clip(summary, 200)
+            self.model_summary = _clip(summary)
         if open_items is not None:
-            self.open_items = [_clip(x, MAX_ITEM) for x in open_items if _clip(x, MAX_ITEM)][-MAX_LIST:]
+            self.open_items = [_clip(x) for x in open_items if _clip(x)]
         if findings is not None:
-            self.findings = [_clip(x, MAX_ITEM) for x in findings if _clip(x, MAX_ITEM)][-MAX_LIST:]
+            self.findings = [_clip(x) for x in findings if _clip(x)]
         if hypotheses is not None:
-            self.hypotheses = [_clip(x, MAX_ITEM) for x in hypotheses if _clip(x, MAX_ITEM)][-MAX_LIST:]
+            self.hypotheses = [_clip(x) for x in hypotheses if _clip(x)]
         if resolve_open:
-            drop = {_clip(x, MAX_ITEM) for x in resolve_open}
+            drop = {_clip(x) for x in resolve_open}
             self.open_items = [x for x in self.open_items if x not in drop]
         self.touch()
         return self.ui_card()
@@ -238,11 +235,11 @@ class ResearchProgress:
         if self.model_summary:
             parts.append("model_summary=" + self.model_summary)
         if self.open_items:
-            parts.append("open=[" + "; ".join(self.open_items[-4:]) + "]")
+            parts.append("open=[" + "; ".join(self.open_items) + "]")
         if self.findings:
-            parts.append("findings=[" + "; ".join(self.findings[-4:]) + "]")
+            parts.append("findings=[" + "; ".join(self.findings) + "]")
         if self.hypotheses:
-            parts.append("hyp=[" + "; ".join(self.hypotheses[-3:]) + "]")
+            parts.append("hyp=[" + "; ".join(self.hypotheses) + "]")
         # Observed block — no semantic interpretation
         obs = [
             f"last_tool={self.last_tool or '-'}",
@@ -259,7 +256,7 @@ class ResearchProgress:
             obs.append("errors=[" + "; ".join(self.recent_errors[-3:]) + "]")
         parts.append("observed{" + " ".join(obs) + "}")
         note = " | ".join(parts)
-        return _clip(note, MAX_NOTE_CHARS)
+        return _clip(note)
 
     def ui_card(self) -> dict:
         """Facts for UI/API — not a simulated chain-of-thought."""
@@ -271,9 +268,9 @@ class ResearchProgress:
             "model": {
                 "phase": self.phase,
                 "summary": self.model_summary,
-                "open_items": list(self.open_items[-6:]),
-                "findings": list(self.findings[-6:]),
-                "hypotheses": list(self.hypotheses[-6:]),
+                "open_items": list(self.open_items),
+                "findings": list(self.findings),
+                "hypotheses": list(self.hypotheses),
             },
             "observed": {
                 "last_tool": self.last_tool,

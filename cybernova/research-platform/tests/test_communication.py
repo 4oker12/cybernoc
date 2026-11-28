@@ -84,6 +84,21 @@ class GatewayTests(unittest.TestCase):
         )["messages"], [])
         self.assertEqual(len(reopened.events(after=0)["messages"]), 2)
 
+    def test_full_dialog_restores_all_messages_and_complete_researcher_reply(self):
+        tid = self.task["task_id"]
+        for i in range(101):
+            self.db.append(tid, "human", "instruction", f"message {i}")
+        answer = "evidence " * 2000 + "final finding"
+        self.db.append(tid, "qwen", "result", answer)
+        reopened = CommunicationStore(self.path)
+        self.assertEqual(len(reopened.read_dialog(tid, limit=100)["messages"]), 100)
+        dialog = reopened.read_all_dialog(tid)
+        self.assertEqual(len(dialog["messages"]), 102)
+        self.assertEqual(dialog["messages"][-1]["body"], answer)
+        self.assertEqual(dialog["messages"][0]["body"], "message 0")
+        with self.assertRaises(CommunicationError):
+            self.db.append(tid, "human", "instruction", answer)
+
     def test_provider_continuation_is_private_and_survives_database_reopen(self):
         tid = self.task["task_id"]
         message = self.db.append(

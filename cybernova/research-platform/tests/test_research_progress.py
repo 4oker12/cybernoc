@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from console.research_progress import (
-    ResearchProgress, ResearchProgressStore, MAX_NOTE_CHARS, RESEARCH_STATE_TOOLS,
+    ResearchProgress, ResearchProgressStore, RESEARCH_STATE_TOOLS,
 )
 
 
@@ -53,10 +53,24 @@ class ResearchProgressTests(unittest.TestCase):
         progress.record_observation(tool="browser_snapshot", ok=True, page_url="https://example.com")
         progress.record_usage({"input_tokens": 100, "output_tokens": 20})
         note = progress.system_note()
-        self.assertLessEqual(len(note), MAX_NOTE_CHARS)
         self.assertIn("model_phase=explore", note)
         self.assertIn("observed{", note)
         self.assertIn("last_tool=browser_snapshot", note)
+
+    def test_full_research_progress_retains_goal_summary_and_findings(self):
+        progress = ResearchProgress(session_key="long")
+        goal = "goal " * 400 + "last goal clause"
+        summary = "summary " * 200 + "last summary clause"
+        items = [f"item {i} " + "evidence " * 30 for i in range(20)]
+        progress.set_goal(goal)
+        progress.apply_model_update(phase="verify", summary=summary,
+                                    open_items=items, findings=items, hypotheses=items)
+        note = progress.system_note()
+        self.assertIn(goal, note)
+        self.assertIn(summary, note)
+        for item in items:
+            self.assertIn(item.strip(), note)
+        self.assertEqual(progress.ui_card()["model"]["findings"], [x.strip() for x in items])
 
     def test_open_goal_survives_followup_and_completed_goal_can_advance(self):
         p = ResearchProgress(session_key="s")

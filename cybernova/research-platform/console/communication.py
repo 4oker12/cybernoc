@@ -33,8 +33,8 @@ def _utc() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
-def _check_text(value: str, length: int = MAX_BODY) -> str:
-    if not isinstance(value, str) or not value.strip() or len(value) > length:
+def _check_text(value: str, length: int | None = MAX_BODY) -> str:
+    if not isinstance(value, str) or not value.strip() or (length is not None and len(value) > length):
         raise CommunicationError("invalid_text_length")
     if "\x00" in value:
         raise CommunicationError("nul_not_allowed")
@@ -197,7 +197,8 @@ class CommunicationStore:
         if event_key is not None and (not isinstance(event_key, str)
                                       or not ID.fullmatch(event_key)):
             raise CommunicationError("invalid_event_key")
-        body = _check_text(body)
+        # Persist complete researcher replies; retain input bounds for other actors/kinds.
+        body = _check_text(body, None if actor == "qwen" and kind == "result" else MAX_BODY)
         evidence_refs = _refs(evidence_refs)
         continuation = None
         if provider_state is not None:
@@ -275,6 +276,17 @@ class CommunicationStore:
             ).fetchall()
         return {"task": task, "messages": [self._message(r) for r in rows],
                 "next_after": rows[-1]["seq"] if rows else after}
+
+    def read_all_dialog(self, task_id: str) -> dict:
+        """Internal history reconstruction; public pagination is unchanged."""
+        task = self.get_task(task_id)
+        with self._connection() as db:
+            rows = db.execute(
+                "SELECT * FROM messages WHERE task_id=? ORDER BY seq ASC",
+                (task_id,),
+            ).fetchall()
+        return {"task": task, "messages": [self._message(r) for r in rows],
+                "next_after": rows[-1]["seq"] if rows else 0}
 
     def load_provider_continuation(
         self, task_id: str, message_seq: int, provider: str, model: str, endpoint: str,
