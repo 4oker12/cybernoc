@@ -71,6 +71,7 @@ try:
     from .siwc import connection as chatgpt_connection, SIWCError
     from .siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from .siwc_chat_store import GPTChatStore, GPTChatError
+    from .research_progress import ResearchProgress
     from .research_scope import ResearchScopeStore, scope_profile
     from .profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
     from .model_settings import ModelSettingsError, apply_model_settings, get_model_settings, test_model_connection
@@ -113,6 +114,7 @@ except ImportError:
     from siwc import connection as chatgpt_connection, SIWCError
     from siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from siwc_chat_store import GPTChatStore, GPTChatError
+    from research_progress import ResearchProgress
     from research_scope import ResearchScopeStore, scope_profile
     from profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
     from model_settings import ModelSettingsError, apply_model_settings, get_model_settings, test_model_connection
@@ -439,7 +441,8 @@ def _session(session_id: str | None) -> tuple[str, dict]:
         session = {"last": now, "history": [], "lock": RLock(), "turns": 0,
                    "followups_turn": None, "followups": [], "followups_answer": None,
                    "followups_source": None, "pending_approvals": {},
-                   "traffic_artifacts": {}, "scope": scope_profile([]), "task_id": None}
+                   "traffic_artifacts": {}, "scope": scope_profile([]), "task_id": None,
+                   "research_progress": ResearchProgress(session_key="deepseek:" + key)}
         sessions[key] = session
         while len(sessions) > MAX_SESSIONS:
             sessions.popitem(last=False)
@@ -1491,6 +1494,7 @@ def chat(payload: ChatRequest):
                 tool_groups=selected_tool_groups,
                 tools_enabled=payload.tools_enabled,
                 session_id=sid,
+                research_progress=state["research_progress"],
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
                 on_tool_event=persist_tool_event,
                 should_stop=(lambda: jobs.should_stop(receipt)) if jobs else None,

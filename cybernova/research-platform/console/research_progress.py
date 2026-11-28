@@ -3,7 +3,7 @@
 Architecture:
   - The model decides phase, sub-goals, hypotheses and findings.
   - Runtime records verifiable observations (tool outcomes, errors, usage,
-    last page URL from tool results) and stores model-declared state when the
+    last page origin from tool results) and stores model-declared state when the
     model explicitly updates it.
   - Tool *names* never imply research meaning: browser_snapshot is not
     "investigation", browser_click is not "goal achieved".
@@ -14,11 +14,13 @@ technical timeline are separate layers; this module must not merge them.
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import hashlib
+import re
 from threading import RLock
 from typing import Any
-import re
+from urllib.parse import urlsplit
 
 MAX_SESSIONS = 64
 MAX_LIST = 10
@@ -31,6 +33,28 @@ MODEL_PHASES = frozenset({
 })
 
 _SAFE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+_OBSERVATION_ERRORS = frozenset({
+    "browser_target_stale", "browser_stale_element_ref", "browser_action_timeout",
+    "browser_access_limited", "tool_not_registered", "tool_not_exposed_in_this_round",
+    "tool_denied_by_policy", "tool_backend_unsupported", "tool_unavailable",
+})
+
+
+def _page_location(value: str) -> tuple[str, bytes]:
+    """Retain the origin and an internal page fingerprint for the page count."""
+    try:
+        parsed = urlsplit(value)
+        scheme, host, port = parsed.scheme, parsed.hostname or "", parsed.port
+    except ValueError:
+        return "", b""
+    if scheme not in {"http", "https"} or not re.fullmatch(r"[a-z0-9.:-]{1,253}", host):
+        return "", b""
+    hostname = f"[{host}]" if ":" in host else host
+    origin = f"{scheme}://{hostname}"
+    if port is not None and port != (443 if scheme == "https" else 80):
+        origin += f":{port}"
+    page_key = hashlib.sha256((origin + (parsed.path or "/")).encode("utf-8", "replace")).digest()
+    return origin, page_key
 
 
 def _now() -> str:
@@ -65,7 +89,9 @@ class ResearchProgress:
     last_tool_ok: bool | None = None
     last_error: str = ""
     recent_errors: list[str] = field(default_factory=list)
+    # The existing API field now contains only an origin.
     last_page_url: str = ""
+    _last_page_key: bytes = field(default=b"", init=False, repr=False)
     pages_observed: int = 0
     tools_ok: int = 0
     tools_failed: int = 0
@@ -85,8 +111,10 @@ class ResearchProgress:
             self.open_items.clear()
             self.findings.clear()
             self.hypotheses.clear()
-            self.last_browser_check = None
         if request:
+            # A browser check belongs to the turn in which it ran, including
+            # when the user repeats the same request.
+            self.last_browser_check = None
             self.current_request = request
         self.touch()
 
@@ -149,11 +177,11 @@ class ResearchProgress:
         elif ok is False:
             self.tools_failed += 1
             self.last_tool_ok = False
-            code = _clip(error or tool, MAX_LABEL)
-            if code:
-                self.last_error = code
-                self.recent_errors.append(code)
-                self.recent_errors = self.recent_errors[-6:]
+            code = (error if isinstance(error, str) and error in _OBSERVATION_ERRORS
+                    else "tool_execution_failed")
+            self.last_error = code
+            self.recent_errors.append(code)
+            self.recent_errors = self.recent_errors[-6:]
         if tool == "browser_verify":
             self.last_browser_check = browser_verified if ok is True else None
         elif tool.startswith("browser_") and tool not in {
@@ -163,11 +191,13 @@ class ResearchProgress:
         }:
             # A check describes the previously observed state, not future actions.
             self.last_browser_check = None
-        if page_url:
-            url = _clip(page_url, 140)
-            if url and url != self.last_page_url:
-                self.pages_observed += 1
-            self.last_page_url = url
+        if isinstance(page_url, str) and page_url:
+            origin, page_key = _page_location(page_url)
+            if origin:
+                if page_key != self._last_page_key:
+                    self.pages_observed += 1
+                self.last_page_url = origin
+                self._last_page_key = page_key
         self.touch()
 
     def record_usage(self, usage: dict | None) -> None:

@@ -45,9 +45,9 @@ except ImportError:
     from local_tools_profile import LOCAL_TOOLS_PROFILE
 
 try:
-    from .research_progress import PROGRESS_STORE, RESEARCH_STATE_TOOLS
+    from .research_progress import PROGRESS_STORE, RESEARCH_STATE_TOOLS, ResearchProgress
 except ImportError:
-    from research_progress import PROGRESS_STORE, RESEARCH_STATE_TOOLS
+    from research_progress import PROGRESS_STORE, RESEARCH_STATE_TOOLS, ResearchProgress
 
 OLLAMA_URL = os.environ.get("CYBERNOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MCP_URL = os.environ.get("CYBERNOVA_MCP_URL", "http://127.0.0.1:18792/mcp")
@@ -886,7 +886,8 @@ class Agent:
             profile_instructions: str = "", tool_groups: list[str] | None = None,
             tools_enabled: bool = True, on_usage=None, on_tool_event=None, should_stop=None,
             trusted_user_messages: list[dict] | None = None,
-            session_id: str | None = None) -> dict:
+            session_id: str | None = None,
+            research_progress: ResearchProgress | None = None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT:
             raise ValueError("message_length_invalid")
         selected_groups = normalize_tool_groups(tool_groups or [])
@@ -898,7 +899,7 @@ class Agent:
             raise ValueError("agent_input_token_budget_invalid")
         conversation_key = ("deepseek:" + session_id) if isinstance(session_id, str) and session_id.strip() else None
         progress_key = conversation_key or ("run:" + secrets.token_hex(6))
-        progress = PROGRESS_STORE.get(progress_key)
+        progress = research_progress if research_progress is not None else PROGRESS_STORE.get(progress_key)
         progress.set_goal(text)
         diagnostic_event(
             "research_progress",
@@ -1906,13 +1907,9 @@ class Agent:
                     page_url = ""
                     err = ""
                     if isinstance(safe_result, dict):
-                        page_url = str(safe_result.get("url") or "")[:140]
+                        page_url = safe_result.get("url") or ""
                         if not tool_ok:
-                            err = str(
-                                safe_result.get("error")
-                                or safe_result.get("error_code")
-                                or name
-                            )[:60]
+                            err = _tool_failure_code(safe_result)
                     progress.record_observation(
                         tool=str(name)[:60],
                         ok=tool_ok,

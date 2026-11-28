@@ -56,6 +56,12 @@ ResearchProgress preserves the open root goal and latest user request separately
 ### P0.8 implementation record
 BrowserSession now keeps bounded per-session structural observation memory: observation sequence, generation, state fingerprint, reobserved refs and changed control structures, with navigation/tab invalidation. Only structural properties and refs are retained, not raw text, values, URLs or screenshots. Historical facts never authorize actions and are explicitly marked stale until refreshed. Tests added for memory bounds, changes and invalidation. Runtime execution pending.
 
+#### P0.8 follow-up: progress privacy and freshness
+
+Provider-neutral progress can store URL paths, tool error text and verification from a prior request. Sanitize at the progress boundary so both the UI and model context consume minimized evidence. Scope a verification to the current request and align DeepSeek progress cleanup with session eviction. An independent reviewer implemented the progress changes and regression tests. The coordinator reviewed and integrated them.
+
+Implemented. The existing API field `last_page_url` contains only the HTTP(S) origin. An internal fingerprint preserves page transition counts. Progress uses stable error categories and resets the last verification at the start of a new request while retaining the open goal. TTL, capacity eviction and reset detach the previous conversation's progress. All 86 tests in the progress, agent, conversation UI and profile settings modules passed. Compilation and the repository artifact guard passed.
+
 ### Provider-neutral model profile
 The active local tool profile is expanded with semantics, spatial evidence, ref gestures, schema discovery, effect verification, goal and observation memory. Agent.run injects the shared AGENT_PROFILE with LOCAL_TOOLS_PROFILE when tools are enabled, and appends existing user profile_instructions separately. No user settings overwritten. No new training or provider capability claimed. Full AX/vision and practical DeepSeek acceptance remain outstanding.
 
