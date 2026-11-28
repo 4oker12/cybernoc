@@ -1910,14 +1910,15 @@ class Agent:
                         page_url = safe_result.get("url") or ""
                         if not tool_ok:
                             err = _tool_failure_code(safe_result)
+                    verified = safe_result.get("verified") if name == "browser_verify" else None
                     progress.record_observation(
                         tool=str(name)[:60],
                         ok=tool_ok,
                         error=err,
                         page_url=page_url,
-                        browser_verified=(safe_result.get("verified")
-                                          if name == "browser_verify" and type(safe_result.get("verified")) is bool
-                                          else None),
+                        browser_verified=verified if type(verified) is bool else None,
+                        browser_check_inconclusive=(verified is False and bool(safe_result.get("unknown"))
+                                                    and not safe_result.get("failed")),
                     )
                     if on_tool_event is not None:
                         on_tool_event(safe_event)

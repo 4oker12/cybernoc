@@ -78,6 +78,7 @@ class ResearchProgress:
     current_request: str = ""
     goal_generation: int = 0
     last_browser_check: bool | None = None
+    last_browser_check_inconclusive: bool = False
     # --- model-declared (only via explicit update) ---
     phase: str = "unknown"
     model_summary: str = ""
@@ -115,6 +116,7 @@ class ResearchProgress:
             # A browser check belongs to the turn in which it ran, including
             # when the user repeats the same request.
             self.last_browser_check = None
+            self.last_browser_check_inconclusive = False
             self.current_request = request
         self.touch()
 
@@ -123,6 +125,8 @@ class ResearchProgress:
             return "not_declared_done"
         if self.open_items:
             return "declared_done_with_open_items"
+        if self.last_browser_check_inconclusive:
+            return "declared_done_with_inconclusive_browser_check"
         if self.last_browser_check is False:
             return "declared_done_with_unmet_browser_check"
         if self.last_browser_check is True:
@@ -167,6 +171,7 @@ class ResearchProgress:
         error: str = "",
         page_url: str = "",
         browser_verified: bool | None = None,
+        browser_check_inconclusive: bool = False,
     ) -> None:
         """Record a verifiable tool outcome. Does not set research phase or findings."""
         if tool:
@@ -183,7 +188,10 @@ class ResearchProgress:
             self.recent_errors.append(code)
             self.recent_errors = self.recent_errors[-6:]
         if tool == "browser_verify":
-            self.last_browser_check = browser_verified if ok is True else None
+            self.last_browser_check_inconclusive = ok is True and browser_check_inconclusive
+            self.last_browser_check = (
+                browser_verified if ok is True and not self.last_browser_check_inconclusive else None
+            )
         elif tool.startswith("browser_") and tool not in {
             "browser_snapshot", "browser_find_controls", "browser_find_text",
             "browser_read_page", "browser_read_table", "browser_screenshot",
@@ -191,6 +199,7 @@ class ResearchProgress:
         }:
             # A check describes the previously observed state, not future actions.
             self.last_browser_check = None
+            self.last_browser_check_inconclusive = False
         if isinstance(page_url, str) and page_url:
             origin, page_key = _page_location(page_url)
             if origin:
@@ -270,6 +279,7 @@ class ResearchProgress:
                 "last_tool": self.last_tool,
                 "last_tool_ok": self.last_tool_ok,
                 "last_browser_check": self.last_browser_check,
+                "last_browser_check_inconclusive": self.last_browser_check_inconclusive,
                 "last_error": self.last_error,
                 "recent_errors": list(self.recent_errors[-4:]),
                 "last_page_url": self.last_page_url,

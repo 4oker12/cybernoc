@@ -53,6 +53,12 @@ StrategyTracker now records repeated no-effect actions on the same observed stat
 ### P0.7 implementation record
 ResearchProgress preserves the open root goal and latest user request separately; completed goals may advance to a fresh generation. Model-declared completion, remaining items and latest explicit browser verification remain distinct, with check invalidation on later browser actions. Agent gives one bounded continuation prompt when a model declares active open work yet returns no call; no forced action and no retry on owner approval or blocked phase. Tests added for goal transitions and verification invalidation. Runtime execution pending.
 
+#### P0.7 follow-up: inconclusive verification
+
+An inconclusive browser check can reach progress as `verified=false`, which conflates missing coverage with a failed condition. Carry the explicit check outcome from the browser result into the current-request progress card. Preserve the boolean field for conclusive results. The coordinator owns the implementation and verifies that an inconclusive result never appears as an unmet condition.
+
+Implemented. A result with unknown checks and no failed check now produces an inconclusive status. A failed condition remains unmet even when other checks are unknown. The result expires with the current request or a subsequent browser action. All 71 agent and progress tests passed. Compilation and the repository artifact guard passed.
+
 ### P0.8 implementation record
 BrowserSession now keeps bounded per-session structural observation memory: observation sequence, generation, state fingerprint, reobserved refs and changed control structures, with navigation/tab invalidation. Only structural properties and refs are retained, not raw text, values, URLs or screenshots. Historical facts never authorize actions and are explicitly marked stale until refreshed. Tests added for memory bounds, changes and invalidation. Runtime execution pending.
 

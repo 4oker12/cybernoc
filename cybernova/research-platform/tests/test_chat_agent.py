@@ -15,6 +15,7 @@ from console.agent import (
     _restore_reasoning_history, MAX_CONTEXT_TOOL_CALLS, MAX_CONTEXT_TOOL_CHARS,
 )
 from console.model_providers import OpenAICompatibleClient, ModelConfigError, _normalize_context
+from console.research_progress import ResearchProgress
 
 TOOLS = [
     {"name": "gateway_status", "description": "Status", "inputSchema": {"type": "object", "properties": {}}},
@@ -86,6 +87,30 @@ class FakeLocalToolRuntime:
 
 
 class AgentTests(unittest.TestCase):
+    def test_inconclusive_browser_check_is_not_reported_as_unmet(self):
+        verify = {"name": "browser_verify", "inputSchema": {
+            "type": "object", "properties": {"control": {"type": "string"}},
+        }}
+        for failed, expected in (
+            ([], "declared_done_with_inconclusive_browser_check"),
+            (["url_contains"], "declared_done_with_unmet_browser_check"),
+        ):
+            with self.subTest(failed=failed):
+                mcp = FakeMCP()
+                progress = ResearchProgress(session_key="fixture")
+                model = FakeOllama([calls(("browser_verify", {"control": "Saved"})), {"content": "Checked"}])
+                result = {"ok": True, "verified": False, "unknown": ["control_present"], "failed": failed}
+                with patch.object(mcp, "initialize", return_value=[verify]), patch.object(
+                    mcp, "call", return_value=(result, False)
+                ) as call:
+                    Agent(model, lambda: mcp).run([], "Check the browser for Saved", research_progress=progress)
+                call.assert_called_once_with("browser_verify", {"control": "Saved"})
+                progress.apply_model_update(phase="done")
+                self.assertEqual(progress.completion_status(), expected)
+                self.assertIs(progress.last_browser_check, False if failed else None)
+                progress.set_goal("Check again")
+                self.assertFalse(progress.last_browser_check_inconclusive)
+
     def test_shared_profile_is_provider_neutral_and_contains_project_background(self):
         self.assertIn("ChatGPT в основном проектном чате пользователя", BASE_SYSTEM)
         self.assertIn("локальный исполнитель Cybernova", BASE_SYSTEM)
