@@ -31,3 +31,6 @@ Existing browser_click_button dispatch accepts explicit hover/focus/double_click
 
 ### P0.4 implementation record
 Explicit schema discovery and a rejected-but-registered tool now receive bounded recent priority over group expansion, with the same manual group and deny rules. Candidate exposure is checked after reserving internal meta-tool slots. Browser hover/focus language routes existing interaction tools; no dispatch or authorization bypass. Targeted routing tests added. Execution pending CI/local checkout.
+
+### P0.5 implementation record
+Digest/delta now includes tab, frame count, focus/hit and observed control state; cross-tab comparisons yield no baseline. Partial observation cannot prove no change, and additions/removals are explicitly scoped to observed slices. Action completion is not goal verification. Targeted tests cover focus/frame transitions, incomplete observations and tab switching. Runtime execution pending CI/local checkout.

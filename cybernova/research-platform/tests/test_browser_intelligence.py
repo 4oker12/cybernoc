@@ -41,6 +41,27 @@ class DeltaTests(unittest.TestCase):
         a = page_digest(snap("same"))
         self.assertFalse(snapshot_delta(a, page_digest(snap("same")))["changed"])
 
+    def test_frame_focus_and_partial_state(self):
+        a = dict(snap("same", [{"name": "Search", "ref": "e1",
+                                "spatial": {"focused": False}}]), tab=0)
+        b = dict(snap("same", [{"name": "Search", "ref": "e1",
+                                "spatial": {"focused": True}}]), tab=0, frame_count=2)
+        delta = snapshot_delta(page_digest(a), page_digest(b))
+        self.assertTrue(delta["changed"])
+        self.assertEqual(delta["frame_count_changed"], {"was": 1, "now": 2})
+        self.assertTrue(delta["control_state_changed"][0]["state"]["focused"])
+        partial = dict(a, controls_truncated=True)
+        out, _ = compact_action_result("browser_click_button", partial, page_digest(partial))
+        self.assertIsNone(out["delta"]["changed"])
+        self.assertEqual(out["effect"], "unverified_partial_observation")
+
+    def test_different_tab_never_compares_unrelated_controls(self):
+        a = page_digest(dict(snap("one"), tab=0))
+        b = page_digest(dict(snap("two"), tab=1))
+        d = snapshot_delta(a, b)
+        self.assertFalse(d["baseline"])
+        self.assertIsNone(d["changed"])
+
     def test_delta_is_bounded(self):
         a = page_digest(snap(""))
         b = page_digest(snap("\n".join(f"line {i}" for i in range(200))))

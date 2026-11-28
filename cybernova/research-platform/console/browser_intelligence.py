@@ -66,19 +66,35 @@ def page_digest(snapshot: dict) -> dict:
                          or item.get("placeholder") or "", 120)
             ident = (kind, item.get("frame_index", 0), item.get("ref") or item.get("id") or name,
                      item.get("type") or "")
-            state = {k: item[k] for k in ("expanded", "checked", "selected", "disabled")
-                     if k in item}
+            state = {k: item[k] for k in ("expanded", "checked", "selected", "disabled",
+                                            "readonly", "required", "in_viewport") if k in item}
+            spatial = item.get("spatial")
+            if isinstance(spatial, dict):
+                for key in ("focused", "center_hit"):
+                    if key in spatial:
+                        state[key] = spatial[key]
             controls[ident] = {"kind": kind, "name": name, "id": item.get("id"),
                                "ref": item.get("ref"),
                                "frame_index": item.get("frame_index", 0), "state": state}
+    frames = int(snapshot.get("frame_count") or 0)
+    tab = snapshot.get("tab")
+    coverage = {
+        "text_complete": not snapshot.get("text_truncated") and
+                         (snapshot.get("text_coverage") or {}).get("complete", True),
+        "controls_complete": not snapshot.get("controls_truncated") and
+                             snapshot.get("mode", "full") == "full",
+    }
     material = json.dumps([lines, snapshot.get("url"), snapshot.get("title"),
-                           list(controls.items())], ensure_ascii=False, sort_keys=True)
+                           list(controls.items()), frames, tab, coverage],
+                          ensure_ascii=False, sort_keys=True)
     return {
         "url": snapshot.get("url") or "",
         "title": _clip(snapshot.get("title"), 160),
         "lines": lines,
         "controls": controls,
-        "frame_count": int(snapshot.get("frame_count") or 0),
+        "frame_count": frames,
+        "tab": tab,
+        "coverage": coverage,
         "state_id": hashlib.sha256(material.encode("utf-8", "replace")).hexdigest()[:12],
     }
 
@@ -100,6 +116,12 @@ def snapshot_delta(before: dict | None, after: dict) -> dict:
     """Describe the observable difference between two digests (bounded size)."""
     if before is None:
         return {"baseline": False, "note": "no_previous_state", "changed": None}
+    if before.get("tab") != after.get("tab"):
+        return {"baseline": False, "note": "different_tab", "changed": None,
+                "state_id": after["state_id"]}
+    coverage = {k: bool(before.get("coverage", {}).get(k, True)
+                        and after.get("coverage", {}).get(k, True))
+                for k in ("text_complete", "controls_complete")}
     matcher = difflib.SequenceMatcher(a=before["lines"], b=after["lines"], autojunk=False)
     added: list[str] = []
     removed: list[str] = []
@@ -120,9 +142,15 @@ def snapshot_delta(before: dict | None, after: dict) -> dict:
     ]
     url_changed = before["url"] != after["url"]
     title_changed = before["title"] != after["title"]
+    frame_changed = before["frame_count"] != after["frame_count"]
     changed = bool(added or removed or ctrl_added or ctrl_removed or ctrl_state
-                   or ctrl_renamed or url_changed or title_changed)
-    delta: dict = {"changed": changed, "state_id": after["state_id"]}
+                   or ctrl_renamed or url_changed or title_changed or frame_changed)
+    delta: dict = {"changed": changed if changed or all(coverage.values()) else None,
+                   "state_id": after["state_id"], "coverage": coverage}
+    if not all(coverage.values()):
+        delta["note"] = "partial_observation; additions/removals describe observed slices only"
+    if frame_changed:
+        delta["frame_count_changed"] = {"was": before["frame_count"], "now": after["frame_count"]}
     if url_changed:
         delta["url_changed"] = True
         delta["url"] = after["url"]
@@ -177,12 +205,14 @@ def compact_action_result(tool: str, result: dict, before: dict | None) -> tuple
     compact = {k: v for k, v in result.items() if k not in _BULK_KEYS}
     compact["snapshot_mode"] = "delta"
     compact["delta"] = delta
-    if before is None:
+    if before is None or delta.get("baseline") is False:
         compact["effect"] = "unverified_no_baseline"
-    elif delta.get("changed"):
+    elif delta.get("changed") is True:
         compact["effect"] = "observed"
     elif tool in INPUT_TOOLS:
         compact["effect"] = "input_applied_value_not_echoed"
+    elif delta.get("changed") is None:
+        compact["effect"] = "unverified_partial_observation"
     elif tool in {"browser_wait", "browser_scroll"}:
         compact["effect"] = "none_observed"
     else:
@@ -193,7 +223,7 @@ def compact_action_result(tool: str, result: dict, before: dict | None) -> tuple
         "text_truncated": bool(result.get("text_truncated")),
         "controls_truncated": bool(result.get("controls_truncated"))
     }
-    if delta.get("changed") is False and tool in {"browser_click_button", "browser_press"}:
+    if delta.get("changed") is not True and tool in {"browser_click_button", "browser_press"}:
         compact["recovery"] = recovery_for("no_visible_change", tool)
     compact["hint"] = ("Compact delta: call browser_snapshot for the full page, "
                        "browser_find_controls to locate a control.")
