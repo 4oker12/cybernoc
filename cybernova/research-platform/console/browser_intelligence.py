@@ -324,6 +324,71 @@ def recovery_for(error: str, tool: str = "") -> list[str]:
     return ["Re-run browser_snapshot to refresh the page state, then choose a different locator or tool."]
 
 
+class ObservationMemory:
+    """Bounded in-memory structural observations, scoped to one browser session.
+
+    No raw text, URLs, labels, input values, screenshot or credentials retained.
+    Historical entries never provide a locator or authorize interaction.
+    """
+    def __init__(self, window: int = 12, max_refs: int = 80):
+        self._history = deque(maxlen=window)
+        self._refs = {}
+        self._max_refs = max_refs
+        self._generation = 0
+        self._sequence = 0
+        self._tab = None
+
+    def invalidate(self):
+        self._generation += 1
+        self._refs.clear()
+
+    def observe(self, snapshot: dict, tool: str) -> dict:
+        tab = snapshot.get("tab")
+        if self._tab is not None and tab != self._tab:
+            self.invalidate()
+        self._tab = tab
+        self._sequence += 1
+        sequence = self._sequence
+        seen = set()
+        repeated = []
+        changed = []
+        for key, kind in _CONTROL_LISTS:
+            for row in snapshot.get(key) or ():
+                if not isinstance(row, dict):
+                    continue
+                ref = row.get("ref")
+                if not isinstance(ref, str) or not re.fullmatch(r"e\d{1,12}", ref):
+                    continue
+                seen.add(ref)
+                semantic = row.get("semantic") or {}
+                groups = tuple(group.get("kind") for group in semantic.get("groups", [])
+                               if isinstance(group, dict) and isinstance(group.get("kind"), str))
+                spatial = row.get("spatial") or {}
+                structure = (kind, row.get("frame_index", 0), groups,
+                             tuple((k, row[k]) for k in ("expanded", "selected", "checked", "disabled")
+                                   if k in row and type(row[k]) is bool),
+                             spatial.get("focused") is True)
+                if ref in self._refs:
+                    repeated.append(ref)
+                    if self._refs[ref][0] != structure:
+                        changed.append(ref)
+                self._refs.pop(ref, None)
+                self._refs[ref] = (structure, sequence)
+        while len(self._refs) > self._max_refs:
+            self._refs.pop(next(iter(self._refs)))
+        state = page_digest(snapshot)["state_id"]
+        self._history.append({"observation_id": sequence, "generation": self._generation,
+                              "state_id": state, "tool": tool, "observed_refs": len(seen)})
+        return {
+            "observation_id": sequence, "generation": self._generation,
+            "state_id": state, "current_refs": len(seen),
+            "known_refs": len(self._refs), "reobserved_refs": repeated[:8],
+            "changed_refs": changed[:8],
+            "recent": list(self._history)[-3:],
+            "note": "Historical facts only; a ref absent from the current observation may be stale. Reobserve before acting.",
+        }
+
+
 class StrategyTracker:
     """Detects repeated identical failures and escalates the advice.
 

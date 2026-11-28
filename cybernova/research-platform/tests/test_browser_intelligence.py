@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from console.browser_intelligence import (  # noqa: E402
-    StrategyTracker, compact_action_result, page_digest, recovery_for,
+    StrategyTracker, ObservationMemory, compact_action_result, page_digest, recovery_for,
     response_mode, snapshot_delta, verify_expectations,
 )
 
@@ -134,6 +134,34 @@ class VerifyTests(unittest.TestCase):
             verify_expectations(snap("x"))
         blank = verify_expectations(snap("x"), expect_text=["  "])
         self.assertFalse(blank["verified"])
+
+
+class ObservationMemoryTests(unittest.TestCase):
+    def test_reobserve_structure_without_retaining_page_text(self):
+        mem = ObservationMemory(window=2, max_refs=2)
+        first = dict(snap("private text", [{"name": "secret label", "ref": "e1",
+                                           "expanded": False}]), tab=0)
+        a = mem.observe(first, "browser_snapshot")
+        self.assertEqual(a["current_refs"], 1)
+        second = dict(snap("private text", [{"name": "secret label", "ref": "e1",
+                                            "expanded": True}]), tab=0)
+        b = mem.observe(second, "browser_snapshot")
+        self.assertEqual(b["reobserved_refs"], ["e1"])
+        self.assertEqual(b["changed_refs"], ["e1"])
+        self.assertNotIn("secret label", repr(mem._refs))
+        self.assertNotIn("private text", repr(mem._history))
+        mem.invalidate()
+        c = mem.observe(second, "browser_snapshot")
+        self.assertEqual(c["reobserved_refs"], [])
+        self.assertEqual(len(c["recent"]), 2)
+        self.assertGreater(c["generation"], b["generation"])
+
+    def test_tab_change_invalidates_known_refs(self):
+        mem = ObservationMemory()
+        s = snap("a", [{"name": "A", "ref": "e1"}])
+        mem.observe(dict(s, tab=0), "browser_snapshot")
+        result = mem.observe(dict(s, tab=1), "browser_snapshot")
+        self.assertEqual(result["reobserved_refs"], [])
 
 
 class RecoveryTests(unittest.TestCase):

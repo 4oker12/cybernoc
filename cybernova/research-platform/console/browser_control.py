@@ -29,14 +29,14 @@ try:
     from .diagnostics import event as diagnostic_event
     from .browser_backend import launch_with_backend
     from .browser_intelligence import (
-        ACTION_TOOLS as _INTEL_ACTION_TOOLS, StrategyTracker, compact_action_result,
+        ACTION_TOOLS as _INTEL_ACTION_TOOLS, StrategyTracker, ObservationMemory, compact_action_result,
         page_digest, recovery_for, response_mode, verify_expectations,
     )
 except ImportError:
     from diagnostics import event as diagnostic_event
     from browser_backend import launch_with_backend
     from browser_intelligence import (
-        ACTION_TOOLS as _INTEL_ACTION_TOOLS, StrategyTracker, compact_action_result,
+        ACTION_TOOLS as _INTEL_ACTION_TOOLS, StrategyTracker, ObservationMemory, compact_action_result,
         page_digest, recovery_for, response_mode, verify_expectations,
     )
 
@@ -1005,6 +1005,7 @@ class BrowserSession:
         self._active_action = None
         self._last_digest = None
         self._strategy = StrategyTracker()
+        self._observation_memory = ObservationMemory()
         self._response_mode = response_mode(os.environ.get("CYBERNOVA_BROWSER_RESPONSE_MODE"))
 
     def _dispatch_observed(self, name: str, args: dict) -> dict:
@@ -1076,6 +1077,10 @@ class BrowserSession:
         if not isinstance(result, dict):
             return result
         try:
+            memory = getattr(self, "_observation_memory", None)
+            if (memory is not None and result.get("ok") is True
+                    and any(key in result for key in ("buttons", "links", "form_fields"))):
+                result["observation_memory"] = memory.observe(result, name)
             if (name in _INTEL_ACTION_TOOLS and "visible_text" in result
                     and result.get("ok") is True):
                 compact, self._last_digest = compact_action_result(name, result, self._last_digest)
@@ -1729,6 +1734,9 @@ class BrowserSession:
         # Navigation invalidates snapshot refs and one-shot widget targets.
         self._widget_targets.clear()
         self._element_refs.clear()
+        memory = getattr(self, "_observation_memory", None)
+        if memory is not None:
+            memory.invalidate()
 
     def _action_context(self) -> dict:
         action = self._active_action
@@ -3500,6 +3508,7 @@ class BrowserSession:
         self._widget_targets.clear()
         self._element_refs.clear()
         self._last_digest = None
+        self._observation_memory = ObservationMemory()
         diagnostic_event("browser_shutdown", status="ok")
 
 
