@@ -1456,6 +1456,24 @@ class SemanticContextTests(unittest.TestCase):
 
 
 class SpatialContextTests(unittest.TestCase):
+    def test_screenshot_requests_the_same_units_as_top_bounds(self):
+        session = BrowserSession.__new__(BrowserSession)
+        session._ensure = Mock()
+        session._page = Mock(viewport_size={"width": 320, "height": 240})
+        session._page.screenshot.return_value = b"fixture"
+        session._frame_contexts = Mock(return_value=[])
+        session._snapshot = Mock(return_value={"url": "https://example.test/", "title": "Fixture",
+                                               "tab": 0, "links": [], "buttons": [], "form_fields": []})
+
+        def add_coverage(result, **_):
+            result["accessibility_coverage"] = {"complete": False}
+
+        session._with_ax_evidence = Mock(side_effect=add_coverage)
+        result = session._dispatch("browser_screenshot", {})
+        self.assertEqual(session._page.screenshot.call_args.kwargs["scale"], "css")
+        self.assertEqual(result["correlation"]["coordinate_units"], "css_pixels")
+        self.assertFalse(result["correlation"]["atomic"])
+
     def test_action_baseline_does_not_follow_a_recycled_tab_index(self):
         session = BrowserSession.__new__(BrowserSession)
         session._page = object()
@@ -1527,12 +1545,14 @@ class RefInteractionTests(unittest.TestCase):
 class VisualObjectTests(unittest.TestCase):
     def test_visual_hints_never_expose_source_or_action_target(self):
         from console.browser_control import _visual_object
-        raw = {"kind": "icon", "label": "person@example.com", "label_source": "title",
+        raw = {"kind": "icon", "dom_kind": "svg", "label": "person@example.com", "label_source": "aria-labelledby",
                "owner_ref": "e4", "visual_ref": "v8", "bounds": {"x": 2, "y": 3, "width": 18, "height": 18},
                "src": "private", "action_target": "not-allowed", "small": True}
         result = _visual_object(raw, 2)
         self.assertEqual(result["owner_ref"], "e4")
         self.assertEqual(result["visual_ref"], "v8")
+        self.assertEqual(result["dom_kind"], "svg")
+        self.assertEqual(result["label_source"], "aria-labelledby")
         self.assertEqual(result["label"], "[REDACTED EMAIL]")
         self.assertEqual(result["spatial"]["space"], "frame_viewport")
         self.assertNotIn("src", result)

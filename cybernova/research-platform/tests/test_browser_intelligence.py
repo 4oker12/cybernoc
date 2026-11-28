@@ -250,6 +250,16 @@ WIDGET_PAGE = b"""<!doctype html><title>Widgets</title>
 <div id="out">Nothing opened</div><span tabindex="0">Custom focusable text</span>"""
 
 
+MEDIA_PAGE = b"""<!doctype html><title>Media</title>
+<p id="image-label">Preview graphic</p>
+<button aria-label="Preview">
+ <img width="18" height="18" alt="" aria-labelledby="image-label">
+ <svg aria-hidden="true" width="18" height="18"><circle cx="9" cy="9" r="5"/></svg>
+ <canvas title="Chart surface" width="24" height="20"></canvas>
+ <video title="Video indicator" width="24" height="20"></video>
+</button>"""
+
+
 class _H(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
@@ -257,7 +267,7 @@ class _H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        body = {"/cards": CARD_PAGE, "/widgets": WIDGET_PAGE}.get(self.path, PAGE)
+        body = {"/cards": CARD_PAGE, "/widgets": WIDGET_PAGE, "/media": MEDIA_PAGE}.get(self.path, PAGE)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -290,6 +300,7 @@ class LiveBrowserTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.session.close()
         cls.srv.shutdown()
+        cls.srv.server_close()
 
     def test_live_complex_widget_navigation_and_activation(self):
         c = lambda n, **a: self.call(n, a, self.session)[0]
@@ -328,6 +339,21 @@ class LiveBrowserTests(unittest.TestCase):
         diagram = next(row for row in capture["visual_objects"] if row.get("label") == "Frame diagram")
         self.assertEqual(diagram["frame_index"], 1)
         self.assertIn("top_bounds", diagram["spatial"])
+
+    def test_live_visual_hints_keep_dom_types_and_control_owner(self):
+        c = lambda n, **a: self.call(n, a, self.session)[0]
+        self.assertTrue(c("browser_navigate", url=self.url + "media")["ok"])
+        result = c("browser_find_controls", query="Preview")
+        owner = next(row for row in result["buttons"] if row["name"] == "Preview")
+        media = {row["dom_kind"]: row for row in result["visual_objects"]}
+        self.assertEqual(set(media), {"image", "svg", "canvas", "video"})
+        for dom_kind, kind in (("image", "icon"), ("svg", "icon"), ("canvas", "canvas"), ("video", "video")):
+            self.assertEqual(media[dom_kind]["kind"], kind)
+            self.assertEqual(media[dom_kind]["owner_ref"], owner["ref"])
+        self.assertEqual(media["image"]["label"], "Preview graphic")
+        self.assertEqual(media["image"]["label_source"], "aria-labelledby")
+        self.assertNotIn("decorative", media["image"])
+        self.assertTrue(media["svg"]["decorative"])
 
     def test_live_inferred_card_disambiguates_equal_controls(self):
         c = lambda n, **a: self.call(n, a, self.session)[0]

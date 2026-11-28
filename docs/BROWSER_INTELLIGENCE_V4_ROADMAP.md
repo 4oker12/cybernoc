@@ -98,6 +98,12 @@ Replaced main-document-only selector lookup with bounded CDP search, backend nod
 ### V4 continuation — P0.2 visual object evidence
 The collector reports bounded DOM hints for rendered images, SVGs, canvas/video and small icons owned by controls, including rendered aria-hidden decorative icons. It exposes label provenance, geometry and owner_ref only when the owner was observed, never source URLs or new action targets. Targeted search can find hints by owner/card context; screenshot includes main-viewport hints alongside the masked image. Text-only models receive DOM evidence, not fabricated pixel recognition. Native pixel interpretation depends on model vision support. Unit and Chromium fixture added.
 
+#### P0.2 follow-up: visual types and CSS-pixel correlation
+
+The collector classifies small canvases and videos as icons, discards the DOM type of icons and omits ARIA-referenced visual labels. Preserve type and label provenance in the existing evidence record and keep existing owner references and geometry. Screenshot JPEGs use device pixels by default, while the geometry uses CSS pixels. Capture screenshots in CSS pixels and declare those units. An independent reviewer reproduced the mismatch at DPR 2. The coordinator owns implementation and regression fixtures. Acceptance covers media types, owner relationships and JPEG size at DPR 2.
+
+Implemented. All eight focused tests passed, including real Chromium visual-owner and nested AX fixtures. A separate real Chromium dispatch at DPR 2 returned a 320 × 240 JPEG for a 320 × 240 CSS viewport and mapped the nested SVG into that viewport. `dom_kind` retains the underlying DOM type and referenced labels report their provenance. Capture is still sequential and the mapped rectangle is geometry evidence. Compilation and the repository artifact guard passed.
+
 ### V4 continuation — P0.3 targeted complex widget interactions
 The collector recognizes explicit tree/menu/listbox/grid/toolbar roles and untyped keyboard-focusable text candidates. It reports allowlisted ARIA pressed/current/active-descendant state. Existing click tool accepts ref-scoped non-activating navigation keys, verifies actual focus and records before/after widget state; `activate:ref` is limited to explicit supported widget roles outside forms/nested controls and shares high-impact and network guards. No arbitrary JS, force click, raw keyboard sequences or activation of untyped candidates. Added unit and local Chromium fixtures.
 

@@ -490,11 +490,13 @@ def _visual_object(raw, frame_index: int) -> dict:
         return {}
     result = {"kind": raw["kind"], "frame_index": frame_index, "spatial": spatial,
               "source": "dom_visual_hint", "in_viewport": raw.get("in_viewport") is True}
+    if raw.get("dom_kind") in {"image", "svg", "canvas", "video"}:
+        result["dom_kind"] = raw["dom_kind"]
     if isinstance(raw.get("label"), str):
         label = _redact_text(raw["label"], 90).strip()
         if label:
             result["label"] = label
-    if raw.get("label_source") in {"alt", "aria-label", "title", "svg-title"}:
+    if raw.get("label_source") in {"alt", "aria-label", "aria-labelledby", "title", "svg-title"}:
         result["label_source"] = raw["label_source"]
     ref = raw.get("owner_ref")
     if isinstance(ref, str) and re.fullmatch(r"e\d{1,12}", ref):
@@ -1023,7 +1025,8 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
   const visualRefs = document[visualKey] || (document[visualKey] = new WeakMap());
   const visualMeta = visualCandidates.map(el => {
     const r = el.getBoundingClientRect();
-    const declared = [['alt',el.getAttribute('alt')],['aria-label',el.getAttribute('aria-label')],
+    const declared = [['aria-labelledby',byIds(el,'aria-labelledby')],['aria-label',el.getAttribute('aria-label')],
+      ['alt',el.getAttribute('alt')],
       ['title',el.getAttribute('title')],['svg-title',el.localName === 'svg' ? el.querySelector('title')?.textContent : '']]
       .find(pair => clean(pair[1]));
     let owner = null;
@@ -1033,10 +1036,10 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
     const label = declared ? clean(declared[1]).slice(0,90) : '';
     const tag = el.localName;
     const small = r.width <= 48 && r.height <= 48;
-    const kind = (owner && small) ? 'icon' : tag === 'img' ? 'image' :
-      ['svg','canvas','video'].includes(tag) ? tag : 'image';
-    const matchesVisual = !q || [label,kind,visualRefs.get(el)].some(v => clean(v).toLocaleLowerCase().includes(q));
-    return {el,r,owner,label,declared,small,kind,matchesVisual};
+    const domKind = ['svg','canvas','video'].includes(tag) ? tag : 'image';
+    const kind = owner && small && ['svg','image'].includes(domKind) ? 'icon' : domKind;
+    const matchesVisual = !q || [label,kind,domKind,visualRefs.get(el)].some(v => clean(v).toLocaleLowerCase().includes(q));
+    return {el,r,owner,label,declared,small,kind,domKind,matchesVisual};
   });
   const matchedOwners = new Set(visualMeta.filter(v => v.matchesVisual && v.owner).map(v => v.owner));
   const filtered = q ? collected.filter(({el}) => {
@@ -1139,14 +1142,14 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
   });
   const currentRefs = new Set(rows.map(row => row.ref));
   const visuals = [];
-  for (const {el,r,owner,label,declared,small,kind,matchesVisual} of visualMeta) {
+  for (const {el,r,owner,label,declared,small,kind,domKind,matchesVisual} of visualMeta) {
     if (q && !matchesVisual && ![owner && labelOf(owner),owner && semanticOf(owner).heading,
        ...(owner ? semanticOf(owner).groups.map(g => g.label) : [])]
       .some(v => clean(v).toLocaleLowerCase().includes(q))) continue;
     const ownerRef = owner && refs.get(owner);
-    visuals.push({el,row:{kind,label,label_source:declared ? declared[0] : '',
+    visuals.push({el,row:{kind,dom_kind:domKind,label,label_source:declared ? declared[0] : '',
       owner_ref: currentRefs.has(ownerRef) ? ownerRef : '',
-      decorative: el.getAttribute('aria-hidden') === 'true' || el.getAttribute('alt') === '',
+      decorative: el.getAttribute('aria-hidden') === 'true' || (!label && el.getAttribute('alt') === ''),
       small,in_viewport:inViewport(el),bounds:{x:Math.round(r.x),y:Math.round(r.y),
         width:Math.round(r.width),height:Math.round(r.height)}}});
   }
@@ -3498,7 +3501,7 @@ class BrowserSession:
                 raise ValueError("browser_arguments_invalid")
             mask_selector = "input:not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]),textarea,select,[contenteditable],[role=textbox],[role=searchbox]"
             masks = [frame.locator(mask_selector) for frame in self._frame_contexts(bounded=False)]
-            image = self._page.screenshot(type="jpeg", quality=60, full_page=False,
+            image = self._page.screenshot(type="jpeg", quality=60, full_page=False, scale="css",
                                           mask=masks, mask_color="#808080")
             if len(image) > 1500000:
                 raise ValueError("browser_screenshot_too_large")
@@ -3538,6 +3541,7 @@ class BrowserSession:
                 "masked_editable_fields": True,
                 "viewport": viewport,
                 "correlation": {"coordinate_space": "top_viewport",
+                                "coordinate_units": "css_pixels",
                                 "capture_order": "screenshot_then_dom",
                                 "atomic": False,
                                 "iframe_coordinates": "sampled_top_bounds_not_proof_of_visibility",
