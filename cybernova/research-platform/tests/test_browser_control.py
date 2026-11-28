@@ -1,5 +1,6 @@
 """No-network tests for interactive Chromium controls and request guardrails."""
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import ModuleType
@@ -405,6 +406,91 @@ class BrowserControlTests(unittest.TestCase):
                 self.assertTrue(callable(context.websocket_handler))
             finally:
                 browser._executor.shutdown(wait=False, cancel_futures=True)
+
+    def test_service_worker_network_fetch_remains_routed(self):
+        api_hits = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/":
+                    body = b"""<!doctype html><script>
+                    (async () => {
+                      if (!navigator.serviceWorker.controller) {
+                        await navigator.serviceWorker.register('/sw.js');
+                        await navigator.serviceWorker.ready;
+                        location.reload();
+                        return;
+                      }
+                      const response = await fetch('/api/data');
+                      window.__swResult = await response.text();
+                    })().catch(error => { window.__swError = String(error); });
+                    </script>"""
+                    content_type = "text/html"
+                elif self.path == "/sw.js":
+                    body = b"""self.addEventListener('fetch', event => {
+                      if (new URL(event.request.url).pathname === '/api/data')
+                        event.respondWith(fetch(event.request));
+                    });"""
+                    content_type = "application/javascript"
+                elif self.path == "/api/data":
+                    api_hits.append(self.path)
+                    body = b"service-worker-network-ok"
+                    content_type = "text/plain"
+                else:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        browser = BrowserSession(headless=True)
+        routed_worker_fetches = []
+        original_route = browser._route
+
+        def observe_route(route):
+            if route.request.url.endswith("/api/data"):
+                routed_worker_fetches.append(route.request.url)
+            return original_route(route)
+
+        browser._route = observe_route
+        browser._authorized_hosts = {"127.0.0.1"}
+        try:
+            with patch.dict("os.environ", {
+                "CYBERNOVA_GPT_BROWSER_EPHEMERAL": "1",
+                "CYBERNOVA_GPT_BROWSER_HEADLESS": "1",
+                "CYBERNOVA_BROWSER_BACKEND": "patchright",
+            }):
+                try:
+                    browser._ensure()
+                except ValueError as exc:
+                    if "chromium_not_installed" in str(exc):
+                        self.skipTest("Patchright/Playwright Chromium is not installed")
+                    raise
+            browser._page.goto(
+                "http://127.0.0.1:%s/" % server.server_address[1],
+                wait_until="load",
+            )
+            browser._page.wait_for_function(
+                "() => window.__swResult === 'service-worker-network-ok'",
+                timeout=15000,
+            )
+            self.assertEqual(browser._page.evaluate("window.__swResult"),
+                             "service-worker-network-ok")
+            self.assertTrue(api_hits)
+            self.assertTrue(routed_worker_fetches)
+        finally:
+            browser.close()
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=2)
 
     def test_browser_text_redacts_credentials_and_jwts(self):
         value = "api_key=abc12345 Bearer abcdefghijklmnop eyJabcdefghijk.abcdefghijk.abcdefghijk"
