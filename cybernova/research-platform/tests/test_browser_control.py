@@ -56,6 +56,17 @@ class FakeRoute:
         self.fulfilled = kwargs
 
 
+class FakeWebSocket:
+    def __init__(self, url):
+        self.url = url
+        self.connected = False
+        self.closed = None
+    def connect_to_server(self):
+        self.connected = True
+    def close(self, **kwargs):
+        self.closed = kwargs
+
+
 class BrowserControlTests(unittest.TestCase):
     def test_default_chromium_is_headless_on_windows_unless_opted_out(self):
         with patch.dict("os.environ", {"CYBERNOVA_GPT_BROWSER_HEADLESS": ""}):
@@ -95,6 +106,37 @@ class BrowserControlTests(unittest.TestCase):
         self.assertIn("explicitly requested ordinary POST form", submit["description"])
         follow = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_follow_link")
         self.assertIn("url:<URL>", follow["description"])
+
+    def test_websocket_policy_allows_public_wss_and_scoped_internal_ws_only(self):
+        session = BrowserSession.__new__(BrowserSession)
+        session._authorized_hosts = set()
+        session._blocked = []
+
+        public = FakeWebSocket("wss://example.test/socket")
+        with patch("console.browser_control.validate_public_url",
+                   return_value=("example.test", ["93.184.216.34"])) as validate:
+            session._route_web_socket(public)
+        validate.assert_called_once_with("https://example.test/socket", set())
+        self.assertTrue(public.connected)
+        self.assertIsNone(public.closed)
+
+        insecure_public = FakeWebSocket("ws://example.test/socket")
+        with patch("console.browser_control.validate_public_url") as validate:
+            session._route_web_socket(insecure_public)
+        validate.assert_not_called()
+        self.assertFalse(insecure_public.connected)
+        self.assertEqual(insecure_public.closed["code"], 1008)
+        self.assertEqual(session._blocked[-1]["reason"], "websocket_target_not_allowed")
+
+        session._authorized_hosts = {"router.local"}
+        scoped_internal = FakeWebSocket("ws://router.local:8080/events")
+        with patch("console.browser_control.validate_public_url",
+                   return_value=("router.local", ["192.0.2.10"])) as validate:
+            session._route_web_socket(scoped_internal)
+        validate.assert_called_once_with(
+            "http://router.local:8080/events", {"router.local"},
+        )
+        self.assertTrue(scoped_internal.connected)
 
     def test_payment_submit_tool_is_blocked_without_protected_chat_approval(self):
         session = BrowserSession.__new__(BrowserSession)
@@ -292,12 +334,14 @@ class BrowserControlTests(unittest.TestCase):
             def __init__(self):
                 self.pages = [FakePage(), FakePage()]
                 self.events = []
+                self.websocket_handler = None
 
             def route(self, *_):
                 self.events.append("route")
 
-            def route_web_socket(self, *_):
+            def route_web_socket(self, _pattern, handler):
                 self.events.append("websocket_route")
+                self.websocket_handler = handler
 
             def new_page(self):
                 self.events.append("new_page")
@@ -308,11 +352,17 @@ class BrowserControlTests(unittest.TestCase):
         context = FakeContext()
 
         class FakeChromium:
-            def launch_persistent_context(self, **_):
+            def __init__(self):
+                self.launch_options = None
+
+            def launch_persistent_context(self, **options):
+                self.launch_options = options
                 return context
 
+        fake_chromium = FakeChromium()
+
         class FakePlaywright:
-            chromium = FakeChromium()
+            chromium = fake_chromium
 
         class FakeManager:
             def start(self):
@@ -345,8 +395,14 @@ class BrowserControlTests(unittest.TestCase):
                     browser._ensure()
                 self.assertTrue(all(page.closed for page in context.pages[:2]))
                 self.assertIs(browser._page, context.pages[-1])
+                self.assertEqual(fake_chromium.launch_options["service_workers"], "allow")
+                self.assertTrue(fake_chromium.launch_options["no_viewport"])
+                self.assertNotIn("viewport", fake_chromium.launch_options)
                 self.assertLess(context.events.index("route"),
+                                context.events.index("websocket_route"))
+                self.assertLess(context.events.index("websocket_route"),
                                 context.events.index("new_page"))
+                self.assertTrue(callable(context.websocket_handler))
             finally:
                 browser._executor.shutdown(wait=False, cancel_futures=True)
 
