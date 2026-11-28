@@ -198,6 +198,7 @@ _BULK_KEYS = (
     "links", "buttons", "form_fields", "visible_text", "headings", "landmarks",
     "tables", "content_scopes", "content_stats", "focused_elements", "note",
     "browser", "browser_backend", "controls_truncated", "text_truncated", "page_type",
+    "visual_objects", "visual_coverage",
 )
 
 

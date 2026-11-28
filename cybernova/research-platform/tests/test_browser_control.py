@@ -1507,6 +1507,20 @@ class RefInteractionTests(unittest.TestCase):
         button.dblclick.assert_not_called()
 
 
+class VisualObjectTests(unittest.TestCase):
+    def test_visual_hints_never_expose_source_or_action_target(self):
+        from console.browser_control import _visual_object
+        raw = {"kind": "icon", "label": "person@example.com", "label_source": "title",
+               "owner_ref": "e4", "bounds": {"x": 2, "y": 3, "width": 18, "height": 18},
+               "src": "private", "action_target": "not-allowed", "small": True}
+        result = _visual_object(raw, 2)
+        self.assertEqual(result["owner_ref"], "e4")
+        self.assertEqual(result["label"], "[REDACTED EMAIL]")
+        self.assertEqual(result["spatial"]["space"], "frame_viewport")
+        self.assertNotIn("src", result)
+        self.assertNotIn("action_target", result)
+
+
 class InferredCardTests(unittest.TestCase):
     def test_card_is_explicitly_inferred_and_sanitized(self):
         from console.browser_control import _semantic_context

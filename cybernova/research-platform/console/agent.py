@@ -622,7 +622,7 @@ def _browser_json(result, limit):
         return content
     list_fields = ("form_fields", "buttons", "links", "headings", "blocked_requests",
                    "events", "messages", "tabs", "landmarks", "tables",
-                   "focused_elements", "matches", "rows")
+                   "focused_elements", "matches", "rows", "visual_objects")
     lists = {key: result[key] for key in list_fields if isinstance(result.get(key), list)}
     bounded = {key: value for key, value in result.items()
                if key not in lists and key not in {"visible_text", "visible_text_preview"}}
@@ -676,7 +676,7 @@ def _serialize_tool_result(name, result):
 _BROWSER_PAGE_FIELDS = (
     "visible_text", "visible_text_preview", "links", "buttons", "form_fields",
     "headings", "landmarks", "tables", "focused_elements", "page_type",
-    "content_stats", "mode", "control_offset", "control_next_offset",
+    "content_stats", "mode", "control_offset", "control_next_offset", "visual_objects",
 )
 _BROWSER_EPHEMERAL_FIELDS = (
     "blocked_requests", "note", "browser", "browser_backend", "untrusted_page_content",
