@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from urllib import parse
 
@@ -88,10 +89,10 @@ def discovered_tools(rows: object, *, limit: int = MAX_ADVERTISED) -> list[dict]
         schema = raw.get("inputSchema")
         if not isinstance(name, str) or not NAME_RE.fullmatch(name) or name in seen:
             continue
-        # A callable unreviewed tool must advertise argument shape to enable
-        # even *approved* dispatch. It can still be shown with a fallback.
+        # Discovery and approval revalidation both consume this registry.
+        # Only a declared object contract can make a tool callable.
         if not isinstance(schema, dict) or schema.get("type") != "object":
-            schema = {"type": "object", "properties": {}, "additionalProperties": False}
+            continue
         if len(found) >= limit:
             raise ToolPolicyError("tool_catalog_limit_exceeded")
         found.append({
@@ -137,6 +138,8 @@ def _json_depth(item, depth=0, max_value_length=MAX_VALUE_LENGTH) -> None:
         raise ToolPolicyError("tool_arguments_non_json_value")
     elif isinstance(item, str) and len(item) > max_value_length:
         raise ToolPolicyError("tool_argument_value_too_large")
+    elif isinstance(item, float) and not math.isfinite(item):
+        raise ToolPolicyError("tool_arguments_non_json_value")
 
 
 def validate_dynamic_arguments(raw: object, schema: dict, *,
