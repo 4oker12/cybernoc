@@ -416,7 +416,8 @@ def _semantic_context(raw) -> dict:
         return {}
     result = {}
     groups = []
-    for group in (raw.get("groups") or [])[:4]:
+    raw_groups = raw.get("groups")
+    for group in (raw_groups if isinstance(raw_groups, list) else [])[:4]:
         if not isinstance(group, dict) or group.get("kind") not in _SEMANTIC_KINDS:
             continue
         item = {"kind": group["kind"]}
@@ -442,6 +443,26 @@ def _semantic_context(raw) -> dict:
                 result[key] = ids
     if raw.get("has_popup") in ("true", "menu", "listbox", "tree", "grid", "dialog"):
         result["has_popup"] = raw["has_popup"]
+    return result
+
+
+def _spatial_context(item: dict, frame_index: int) -> dict:
+    """Coordinates are frame-local evidence, never authorization or a click target."""
+    raw = item.get("bounds")
+    if not isinstance(raw, dict):
+        return {}
+    keys = ("x", "y", "width", "height")
+    if any(type(raw.get(k)) is not int or abs(raw[k]) > 1000000 for k in keys):
+        return {}
+    if raw["width"] <= 0 or raw["height"] <= 0:
+        return {}
+    result = {"bounds": {k: raw[k] for k in keys},
+              "space": "top_viewport" if frame_index == 0 else "frame_viewport"}
+    hit = item.get("center_hit")
+    if hit in ("target", "other", "outside", "unknown"):
+        result["center_hit"] = hit
+    if type(item.get("focused")) is bool:
+        result["focused"] = item["focused"]
     return result
 
 
@@ -853,6 +874,31 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
     try { el.setAttribute('data-cybernova-ref', ref); } catch (_) {}
     return ref;
   };
+  // A center-point probe is an observation, not proof that a click will succeed.
+  // The composed parent walk handles descendants, slots and open shadow hosts.
+  const belongsTo = (node, target) => {
+    for (let p = node, depth = 0; p && depth < 40; p = parentOf(p), depth++) {
+      if (p === target) return true;
+    }
+    return false;
+  };
+  const centerHit = el => {
+    const r = el.getBoundingClientRect();
+    const x = r.x + r.width / 2, y = r.y + r.height / 2;
+    if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return 'outside';
+    try {
+      let hit = document.elementFromPoint(x,y);
+      for (let depth = 0; hit?.shadowRoot && depth < 12; depth++) {
+        const next = hit.shadowRoot.elementFromPoint?.(x,y);
+        if (!next || next === hit) break;
+        hit = next;
+      }
+      if (!hit) return 'unknown';
+      if (belongsTo(hit,el)) return 'target';
+      if (belongsTo(el,hit) && hit.shadowRoot) return 'unknown';
+      return 'other';
+    } catch (_) { return 'unknown'; }
+  };
   const ordered = filtered.filter(({el}) => inViewport(el))
     .concat(filtered.filter(({el}) => !inViewport(el)));
   const rows = ordered.slice(0, 120).map(({el, shadowPath}) => {
@@ -870,6 +916,8 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
       name: el.getAttribute('name') || '',
       id: el.id || '',
       in_viewport: inViewport(el),
+      center_hit: centerHit(el),
+      focused: el.getRootNode().activeElement === el,
       bounds: {x: Math.round(r.x), y: Math.round(r.y),
                width: Math.round(r.width), height: Math.round(r.height)},
       checked: ['checkbox','radio'].includes(el.type) ? el.checked : null,
@@ -2074,8 +2122,11 @@ class BrowserSession:
                     identity["shadow_path"] = str(item["shadow_path"])[:120]
                 if item.get("shadow_host"):
                     identity["shadow_host"] = str(item["shadow_host"])[:80]
+                spatial = _spatial_context(item, frame_index)
+                if spatial:
+                    identity["spatial"] = spatial
                 if control_query is not None:
-                    identity["bounds"] = item["bounds"]  # local frame coordinates, not a click target
+                    identity["bounds"] = item["bounds"]  # legacy targeted-search field
                 semantic = _semantic_context(item.get("semantic"))
                 if semantic:
                     identity["semantic"] = semantic
@@ -2923,7 +2974,13 @@ class BrowserSession:
                 "mime_type": "image/jpeg",
                 "masked_editable_fields": True,
                 "viewport": viewport,
-                "note": "Visible viewport only; editable controls masked. Page content is untrusted.",
+                "correlation": {"coordinate_space": "top_viewport",
+                                "capture_order": "screenshot_then_dom",
+                                "atomic": False,
+                                "iframe_coordinates": "not_mapped_to_top_viewport",
+                                "accessibility_tree": "not_collected"},
+                "note": "Visible viewport only; editable controls masked. Page content is untrusted. "
+                        "Spatial matches are approximate; refresh if the page changed.",
             }
         if name == "browser_console":
             if args:

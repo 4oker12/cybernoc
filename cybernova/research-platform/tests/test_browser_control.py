@@ -1454,5 +1454,17 @@ class SemanticContextTests(unittest.TestCase):
         self.assertIn("el.form", js)
 
 
+class SpatialContextTests(unittest.TestCase):
+    def test_spatial_coordinate_space_is_explicit(self):
+        from console.browser_control import _spatial_context
+        raw = {"bounds": {"x": -5, "y": 20, "width": 40, "height": 30},
+               "center_hit": "other", "focused": False}
+        self.assertEqual(_spatial_context(raw, 0)["space"], "top_viewport")
+        self.assertEqual(_spatial_context(raw, 2)["space"], "frame_viewport")
+        self.assertEqual(_spatial_context(raw, 2)["center_hit"], "other")
+        self.assertFalse(_spatial_context(raw, 0)["focused"])
+        self.assertEqual(_spatial_context({"bounds": {"x": "unsafe"}}, 0), {})
+
+
 if __name__ == "__main__":
     unittest.main()

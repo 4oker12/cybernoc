@@ -22,3 +22,6 @@ All stages owned by GPT-6.2 unless a real delegation facility is available. Star
 
 ### P0.1 implementation record
 Existing collector now reports bounded nearest semantic ancestry, native form association, ARIA description, controls/owns and popup evidence. Search includes group context before the existing collector cap. No new tool or authorization route. Direct heading/explicit labels only; generic unmarked cards, closed shadow roots and full accessibility tree remain outside this stage. Focused sanitizer/collector tests added; execution pending CI or local checkout.
+
+### P0.2 partial implementation record
+Frame-local bounds, focus and center-point hit evidence now accompany refs in all snapshot modes; screenshot results declare top viewport coordinate space and non-atomic correlation. No new coordinate action or visibility override. Center hit does not prove interactability or absence of overlay, particularly across frames. Native full AX tree, visual object recognition and screenshot-to-iframe transformation remain pending; explicit correlation coverage is returned. Focused structural tests added; runtime execution pending.
