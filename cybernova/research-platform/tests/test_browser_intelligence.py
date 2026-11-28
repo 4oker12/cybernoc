@@ -285,14 +285,21 @@ class _H(BaseHTTPRequestHandler):
 
 def _chromium_available():
     try:
-        from playwright.sync_api import sync_playwright
+        from importlib import import_module
+        backend = os.environ.get("CYBERNOVA_TEST_BROWSER_BACKEND", "playwright")
+        if backend not in {"patchright", "playwright"}:
+            return False
+        sync_playwright = import_module(backend + ".sync_api").sync_playwright
         with sync_playwright() as p:
             return os.path.exists(p.chromium.executable_path)
     except Exception:
         return False
 
 
-@unittest.skipUnless(_chromium_available(), "Chromium is not installed")
+# Explicit backend selection is an acceptance run: missing/broken Chromium
+# must fail the test, not turn a required live check into a green skip.
+@unittest.skipUnless(os.environ.get("CYBERNOVA_TEST_BROWSER_BACKEND") is not None
+                     or _chromium_available(), "Chromium is not installed")
 class LiveBrowserTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

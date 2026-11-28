@@ -124,3 +124,5 @@ An otherwise unmarked single div or custom element may be recognized as a card c
 
 ### V4 acceptance — independent primary and fallback backend gates
 Owner confirmed Patchright is primary and Playwright is fallback. The live workflow now selects each engine in an independent matrix job, installs and launches its Chromium, and runs the same localhost fixtures with a test-only strict backend selector (no silent fallback). The test environment is restored afterwards. Offline/default test selection remains Playwright for compatibility with the existing quality gate. Production routing remains unchanged. Acceptance requires both jobs to pass at the same revision; Windows and real DeepSeek acceptance remain separate. Status: CI pending at implementation time.
+
+Acceptance gate correction: the first Patchright matrix job launched its Chromium but skipped all five live fixtures because the legacy skip probe checked Playwright. The probe now selects the requested engine, and explicit backend acceptance never skips for missing Chromium. First green Patchright matrix result was therefore insufficient; re-run required.
