@@ -1494,5 +1494,38 @@ class RefInteractionTests(unittest.TestCase):
         button.dblclick.assert_not_called()
 
 
+class NativeAXEvidenceTests(unittest.TestCase):
+    def test_ax_properties_never_echo_name_or_value(self):
+        from console.browser_control import _ax_properties
+        raw = {"role": {"value": "textbox"}, "ignored": False,
+               "name": {"value": "secret name"}, "value": {"value": "secret value"},
+               "properties": [{"name": "focused", "value": {"value": True}},
+                              {"name": "description", "value": {"value": "secret description"}}]}
+        evidence = _ax_properties(raw)
+        self.assertEqual(evidence, {"role": "textbox", "ignored": False, "state": {"focused": True}})
+        self.assertNotIn("secret", repr(evidence))
+
+    def test_native_ax_sample_matches_backend_node_and_detaches(self):
+        session = BrowserSession.__new__(BrowserSession)
+        session._context = Mock()
+        session._page = Mock()
+        session._verify_ref = Mock()
+        cdp = session._context.new_cdp_session.return_value
+        cdp.send.side_effect = [
+            {"root": {"nodeId": 1}}, {"nodeIds": [2]},
+            {"node": {"backendNodeId": 3}},
+            {"nodes": [{"backendDOMNodeId": 99, "role": {"value": "wrong"}},
+                       {"backendDOMNodeId": 3, "role": {"value": "button"}, "ignored": False}]},
+        ]
+        snap = {"buttons": [{"ref": "e1", "frame_index": 0},
+                            {"ref": "e2", "frame_index": 1}]}
+        result = session._with_ax_evidence(snap)
+        self.assertEqual(result["buttons"][0]["accessibility"]["role"], "button")
+        self.assertNotIn("accessibility", result["buttons"][1])
+        self.assertEqual(result["accessibility_coverage"]["observed"], 1)
+        self.assertFalse(result["accessibility_coverage"]["complete"])
+        cdp.detach.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

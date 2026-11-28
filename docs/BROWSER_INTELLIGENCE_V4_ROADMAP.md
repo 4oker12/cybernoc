@@ -46,3 +46,6 @@ BrowserSession now keeps bounded per-session structural observation memory: obse
 
 ### Provider-neutral model profile
 The active local tool profile is expanded with semantics, spatial evidence, ref gestures, schema discovery, effect verification, goal and observation memory. Agent.run injects the shared AGENT_PROFILE with LOCAL_TOOLS_PROFILE when tools are enabled, and appends existing user profile_instructions separately. No user settings overwritten. No new training or provider capability claimed. Full AX/vision and practical DeepSeek acceptance remain outstanding.
+
+### P0.2 refinement: native AX evidence
+Targeted control search and screenshot observations now request up to six native Chromium AX nodes for verified main-document DOM refs, correlate via backendDOMNodeId and expose only role, ignored and allowlisted boolean/enumerated states. No AX names, values, descriptions or raw nodes returned. Coverage explicitly partial; iframe/shadow mapping and full visual recognition remain outstanding. Tests mock CDP node correlation and redaction; live backend verification remains required.

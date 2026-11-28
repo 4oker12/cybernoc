@@ -466,6 +466,31 @@ def _spatial_context(item: dict, frame_index: int) -> dict:
     return result
 
 
+def _ax_properties(raw) -> dict:
+    """Extract native AX role and state only; never echo name/value or raw nodes."""
+    if not isinstance(raw, dict):
+        return {}
+    result = {}
+    role = (raw.get("role") or {}).get("value")
+    if isinstance(role, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_ -]{0,50}", role):
+        result["role"] = role
+    if type(raw.get("ignored")) is bool:
+        result["ignored"] = raw["ignored"]
+    states = {}
+    for item in raw.get("properties") or []:
+        if not isinstance(item, dict) or item.get("name") not in {
+            "focusable", "focused", "disabled", "expanded", "selected", "checked",
+            "required", "readonly", "modal", "multiselectable"
+        }:
+            continue
+        value = (item.get("value") or {}).get("value")
+        if type(value) is bool or (isinstance(value, str) and value in {"true", "false", "mixed"}):
+            states[item["name"]] = value
+    if states:
+        result["state"] = states
+    return result
+
+
 def _classify_page_type(url: str, title: str, visible_text: str,
                         headings: list[dict], fields: list[dict], tables: list[dict]) -> str:
     """Classify the visible page from observable structure, not hidden page state."""
@@ -2329,6 +2354,63 @@ class BrowserSession:
             result["query"] = _redact_text(control_query)
         return result
 
+    def _with_ax_evidence(self, snapshot: dict, limit: int = 6) -> dict:
+        """Read a bounded native Chromium AX sample for current main-document refs.
+
+        Unsupported backends, iframe/shadow targets and stale refs remain explicit
+        coverage gaps. This never adds action capability or returns AX text/values.
+        """
+        rows = [row for key in ("form_fields", "buttons", "links")
+                for row in snapshot.get(key, []) if isinstance(row, dict)]
+        candidates = [row for row in rows if row.get("frame_index", 0) == 0
+                      and not row.get("shadow_path")
+                      and re.fullmatch(r"e\d{1,12}", str(row.get("ref") or ""))]
+        coverage = {"source": "chromium_native_ax", "scope": "main_document_refs_only",
+                    "observed": 0, "eligible": len(candidates), "returned_controls": len(rows),
+                    "complete": False, "status": "not_covered"}
+        snapshot["accessibility_coverage"] = coverage
+        if not candidates:
+            return snapshot
+        cdp = None
+        try:
+            cdp = self._context.new_cdp_session(self._page)
+            root = cdp.send("DOM.getDocument", {"depth": 0})["root"]["nodeId"]
+            for row in candidates[:limit]:
+                ref = row["ref"]
+                try:
+                    # Existing freshness check remains authoritative.
+                    self._verify_ref(ref)
+                    ids = cdp.send("DOM.querySelectorAll", {
+                        "nodeId": root, "selector": '[data-cybernova-ref="' + ref + '"]',
+                    }).get("nodeIds", [])
+                    if len(ids) != 1:
+                        continue
+                    backend = cdp.send("DOM.describeNode", {"nodeId": ids[0]})["node"]["backendNodeId"]
+                    nodes = cdp.send("Accessibility.getPartialAXTree", {
+                        "backendNodeId": backend, "fetchRelatives": False,
+                    }).get("nodes", [])
+                    ax = next((n for n in nodes if n.get("backendDOMNodeId") == backend), None)
+                    evidence = _ax_properties(ax)
+                    if evidence:
+                        row["accessibility"] = evidence
+                        coverage["observed"] += 1
+                except Exception:
+                    # Do not report raw protocol errors or page material.
+                    continue
+            if coverage["observed"]:
+                coverage["status"] = "partial"
+            else:
+                coverage["status"] = "empty_or_unavailable"
+        except Exception:
+            coverage["status"] = "backend_unavailable"
+        finally:
+            if cdp is not None:
+                try:
+                    cdp.detach()
+                except Exception:
+                    pass
+        return snapshot
+
     _FIND_TEXT_JS = r"""({query, limit}) => {
                 const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
                 const visible = el => {
@@ -2874,7 +2956,7 @@ class BrowserSession:
         if name == "browser_find_controls":
             if set(args) != {"query"} or not isinstance(args["query"], str) or not 1 <= len(args["query"].strip()) <= 120:
                 raise ValueError("browser_control_query_invalid")
-            return self._snapshot(control_query=" ".join(args["query"].split()))
+            return self._with_ax_evidence(self._snapshot(control_query=" ".join(args["query"].split())))
         if name == "browser_read_page":
             if set(args) != {"offset"} or type(args["offset"]) is not int or args["offset"] < 0:
                 raise ValueError("browser_read_page_arguments_invalid")
@@ -3022,11 +3104,15 @@ class BrowserSession:
                 viewport = self._page.evaluate(
                     "() => ({width: window.innerWidth, height: window.innerHeight})"
                 )
+            visible = {"ok": True, "url": snapshot["url"], "title": snapshot["title"],
+                       "tab": snapshot["tab"], **{field: [item for item in snapshot[field]
+                       if item["in_viewport"]] for field in ("links", "buttons", "form_fields")}}
+            self._with_ax_evidence(visible)
             return {
                 "ok": True, "url": snapshot["url"], "title": snapshot["title"],
                 "tab": snapshot["tab"],
-                **{field: [item for item in snapshot[field] if item["in_viewport"]]
-                   for field in ("links", "buttons", "form_fields")},
+                **{field: visible[field] for field in ("links", "buttons", "form_fields")},
+                "accessibility_coverage": visible["accessibility_coverage"],
                 "image_data_url": "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii"),
                 "mime_type": "image/jpeg",
                 "masked_editable_fields": True,
@@ -3035,7 +3121,7 @@ class BrowserSession:
                                 "capture_order": "screenshot_then_dom",
                                 "atomic": False,
                                 "iframe_coordinates": "not_mapped_to_top_viewport",
-                                "accessibility_tree": "not_collected"},
+                                "accessibility_tree": "bounded_native_ax_sample"},
                 "note": "Visible viewport only; editable controls masked. Page content is untrusted. "
                         "Spatial matches are approximate; refresh if the page changed.",
             }
