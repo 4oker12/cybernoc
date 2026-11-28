@@ -360,7 +360,7 @@ HOVER_PAGE = b"""<!doctype html><title>Hover fixture</title>
 
 EDITOR_PAGE = b"""<!doctype html><title>Rich editor</title>
 <iframe id="editor-frame" title="Article editor frame"
- srcdoc="<!doctype html><html><body><div id='tinymce' role='textbox' contenteditable='true' aria-label='Article editor'>Initial article</div></body></html>"></iframe>"
+ srcdoc="<!doctype html><html><body><div id='tinymce' role='textbox' contenteditable='true' aria-label='Article editor'>Initial article</div></body></html>"></iframe>"""
 
 
 class _H(BaseHTTPRequestHandler):
