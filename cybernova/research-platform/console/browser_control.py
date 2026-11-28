@@ -131,9 +131,9 @@ BROWSER_CONTROL_TOOLS = [
     _tool("browser_scroll", "Scroll the current page up or down by a bounded number of pixels.",
           {"direction": {"type": "string", "enum": ["up", "down"]},
            "pixels": {"type": "integer", "description": "100 to 1200 pixels"}}, ["direction", "pixels"]),
-    _tool("browser_screenshot", "Capture the visible viewport of the current Chromium tab as an image for a vision-capable model. Text-only models should use browser_snapshot and browser_network instead."),
+    _tool("browser_screenshot", "Capture the visible viewport of the current Chromium tab as an image for a vision-capable model. Text-only models should use browser_snapshot and browser_network_session instead."),
     _tool("browser_console", "Read recent sanitized browser console messages and page errors; no cookies or headers. Patchright disables Console API capture; set CYBERNOVA_BROWSER_BACKEND=playwright before starting a new session when full console messages are required."),
-    _tool("browser_network", "Read recent network metadata: URL path, method, resource type, HTTP status, duration and a small allowlist of safe response headers. Request/response bodies, cookies and authorization headers are never returned."),
+    _tool("browser_network_session", "Read recent network metadata from the current Chromium session without navigation or URL argument. Request/response bodies, cookies and authorization headers are never returned."),
     _tool("browser_submit",
           "Submit one visible native form after Cybernova asks the owner to approve the exact method and target in the chat. Supports the form's declared HTTP method. Payment-card entry must use the protected payment-card flow; purchase, deletion and account changes are permitted only after the owner confirms the specific request.",
           {"name": {**STRING, "description": "Exact accessible name of the visible form submit button"}}, ["name"]),
@@ -2416,7 +2416,7 @@ class BrowserSession:
                 "browser_backend": self._backend,
                 "untrusted_page_content": True,
             }
-        if name == "browser_network":
+        if name == "browser_network_session":
             if args:
                 raise ValueError("browser_arguments_invalid")
             return {"ok": True, "events": self._network_events[-60:],

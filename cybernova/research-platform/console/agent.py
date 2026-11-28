@@ -301,6 +301,21 @@ def _diagnostic_tool_args(name: str, args: dict) -> dict:
     return preview
 
 
+def _tool_failure_code(result: dict) -> str:
+    """Classify a failed dispatch without treating an empty result as failure."""
+    error = str(result.get("error") or result.get("reason") or result.get("status") or "")
+    if error in {"tool_not_registered", "tool_not_exposed_in_this_round"}:
+        return error
+    if error in {"tool_group_not_enabled", "task_intent_required"} or (
+            "denied" in error or "scope" in error or "approval" in error):
+        return "tool_denied_by_policy"
+    if "unsupported" in error or "not_implemented" in error:
+        return "tool_backend_unsupported"
+    if "unavailable" in error or "not_available" in error:
+        return "tool_unavailable"
+    return "tool_execution_failed"
+
+
 _DSML_BAR = r"(?:[|｜]\s*){1,2}"
 _DSML_OPEN = r"<\s*" + _DSML_BAR + r"DSML\s*" + _DSML_BAR
 _DSML_CLOSE = r"</\s*" + _DSML_BAR + r"DSML\s*" + _DSML_BAR
@@ -593,7 +608,7 @@ def _browser_json(result, limit):
     content = encode(bounded)
     if len(content) <= limit:
         return content
-    # Non-page tools may return their own large arrays (e.g. browser_network).
+    # Non-page tools may return their own large arrays (e.g. browser_network_session).
     return encode({"ok": result.get("ok"), "observation_truncated": True,
                    "preview": content[:limit // 3]})
 
@@ -985,7 +1000,7 @@ class Agent:
                 "Владелец выбрал объект(ы) этой задачи: " +
                 ", ".join(scope_hosts[:20]) +
                 ". Это применимо к пассивной навигации browser_navigate, browser_snapshot, " +
-                "browser_follow_link и browser_network. " +
+                "browser_follow_link и browser_network_session. " +
                 "Если пользователь упомянул сайт без URL, можно читать " +
                 "https://" + scope_hosts[0] + "/. " +
                 "Уровень доказательств Network: " +
@@ -1053,10 +1068,20 @@ class Agent:
                 diagnostic_event("tool_catalog_mcp_failure", status="failed",
                                  error_type=type(exc).__name__)
             remote_count = len(remote_rows)
+            global_names = {
+                row["name"] for row in remote_rows
+                if isinstance(row, dict) and isinstance(row.get("name"), str)
+            }
+            if self.local_tool_runtime is not None and selected_groups:
+                global_names.update(
+                    row["name"] for row in self.local_tool_runtime.mcp_tools()
+                    if isinstance(row, dict) and isinstance(row.get("name"), str)
+                )
             local_rows = (
                 self.local_tool_runtime.mcp_tools(selected_groups)
                 if self.local_tool_runtime is not None else []
             )
+            global_names.update(row["name"] for row in local_rows)
             if selected_groups:
                 remote_rows = filter_tool_rows(remote_rows, selected_groups)
             local_names = {row["name"] for row in local_rows}
@@ -1323,12 +1348,12 @@ class Agent:
                         text))
                     if selected_url and browser_intent and round_no == 0:
                         # Prefer the shared Playwright navigator when present.
-                        # Legacy MCP-only agents retain their browser_network/open
+                        # Legacy MCP-only agents retain their browser_network_capture/open
                         # fallback and its existing URL argument contract.
                         if self.local_tool_runtime is not None and "browser_navigate" in descriptors:
                             chosen, chosen_args = "browser_navigate", {"url": selected_url}
-                        elif "browser_network" in descriptors:
-                            chosen, chosen_args = "browser_network", {"url": selected_url}
+                        elif "browser_network_capture" in descriptors:
+                            chosen, chosen_args = "browser_network_capture", {"url": selected_url}
                         else:
                             chosen, chosen_args = "browser_open", {"url": selected_url}
                         if chosen in descriptors:
@@ -1468,8 +1493,17 @@ class Agent:
                     try:
                         if name not in allowed_names:
                             if name in {row["name"] for row in registered}:
+                                candidate = route_model_tool_rows(
+                                    registered, route_text, limit=MAX_ADVERTISED,
+                                    selected_groups=selected_groups,
+                                    additional_names=(name,),
+                                )
+                                if name not in {row["name"] for row in candidate}:
+                                    raise BackendError("tool_denied_by_policy")
                                 requested_expansion.add(name)
                                 raise BackendError("tool_not_exposed_in_this_round")
+                            if name in global_names:
+                                raise BackendError("tool_denied_by_policy")
                             raise BackendError("tool_not_registered")
                         if name in {"gateway_status", "python_static_review",
                                     "http_header_review", "ip_network_summary",
@@ -1597,6 +1631,8 @@ class Agent:
                         )
                         outcome["protected_input"] = safe_result
                         return outcome
+                    if failed or safe_result.get("ok") is False:
+                        safe_result.setdefault("error_code", _tool_failure_code(safe_result))
                     serialized = _serialize_tool_result(name, safe_result)
                     if name.startswith("browser_"):
                         event_result = json.loads(serialized)

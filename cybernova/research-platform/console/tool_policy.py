@@ -40,7 +40,7 @@ REVIEWED_OFFLINE = frozenset({
 })
 REVIEWED_SCOPED = frozenset({
     "http_get", "scoped_dns_resolve", "scoped_tls_inspect",
-    "browser_open", "browser_network",
+    "browser_open", "browser_network_capture",
     # Public read-only web research: Google SERP and one public HTTPS source page.
     "google_search", "research_source_open",
 })

@@ -159,7 +159,7 @@ class DynamicToolPolicyTests(unittest.TestCase):
     def test_browser_phrasings_expose_control_search_and_diagnostics(self):
         rows = [{"name": name} for name in (
             "browser_snapshot", "browser_find_controls", "browser_console",
-            "browser_network", "browser_click_button", "terminal_run",
+            "browser_network_session", "browser_network_capture", "browser_click_button", "terminal_run",
         )]
         for task in ("Исследуй сайт самостоятельно", "Разберись, как устроена страница",
                      "Проверь интерфейс"):
@@ -168,7 +168,8 @@ class DynamicToolPolicyTests(unittest.TestCase):
             self.assertNotIn("browser_click_button", names, task)
         names = {row["name"] for row in route_model_tool_rows(
             rows, "Выясни причину зависания", limit=64)}
-        self.assertTrue({"browser_console", "browser_network"} <= names)
+        self.assertTrue({"browser_console", "browser_network_session",
+                         "browser_network_capture"} <= names)
 
     def test_unexposed_tool_is_identified_and_offered_next_round(self):
         rows = [{"name": name, "description": "Fixture", "inputSchema": {

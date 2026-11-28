@@ -326,7 +326,7 @@ def route_model_tool_rows(
             if re.search(r"клик|нажм|заполни|форм|выбер|войд|логин|регистрац|вход|submit|click|fill|login|register|interact", task):
                 add(_BROWSER_INTERACT)
             if re.search(r"devtools|console|network|консол|сетев|трафик|завис|ошиб|не работает|stuck|hang|fail|error", task):
-                add(("browser_console", "browser_network"))
+                add(("browser_console", "browser_network_session", "browser_network_capture"))
         elif group == "computer":
             add(_COMPUTER_BASE)
             for pattern, names in _COMPUTER_CAPABILITIES:

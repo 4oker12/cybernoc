@@ -62,7 +62,7 @@ def run():
         "computer_file_hash", "computer_list_directory",
         "computer_search_files", "computer_search_everywhere", "computer_ui_windows",
         "browser_navigate", "browser_snapshot", "browser_find_text", "browser_follow_link",
-        "browser_network", "google_search", "research_source_open",
+        "browser_network_session", "google_search", "research_source_open",
     }
     assert required.issubset(catalog), sorted(required - catalog)
     assert "terminal_run" in catalog, "terminal_run must be available in automatic mode"
@@ -186,7 +186,7 @@ def run():
             })
             if found.get("ok") and not found.get("matches"):
                 failures.append("browser_find_text_expected_phrase_missing")
-            call("browser_network", detail=lambda x: {
+            call("browser_network_session", detail=lambda x: {
                 "events_recorded": len(x.get("events", x.get("network_events", []))),
             })
             links = snapshot.get("links", [])

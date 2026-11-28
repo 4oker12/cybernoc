@@ -101,7 +101,7 @@ class BrowserControlTests(unittest.TestCase):
             "browser_forward", "browser_reload", "browser_tabs",
             "browser_new_tab", "browser_switch_tab", "browser_close_tab",
             "browser_press", "browser_scroll", "browser_screenshot",
-            "browser_console", "browser_network", "browser_submit_payment",
+            "browser_console", "browser_network_session", "browser_submit_payment",
         }.issubset(names))
         submit = next(x for x in BROWSER_CONTROL_TOOLS if x["name"] == "browser_submit")
         self.assertIn("explicitly requested ordinary POST form", submit["description"])
@@ -219,7 +219,7 @@ class BrowserControlTests(unittest.TestCase):
         self.assertEqual(len(model.tool_history), 1)  # No redundant review pass without tool activity.
         gpt_names = {item["name"] for item in runtime.tools}
         for name in ("browser_navigate", "browser_snapshot", "browser_find_text",
-                     "browser_follow_link", "browser_tabs", "browser_network",
+                     "browser_follow_link", "browser_tabs", "browser_network_session",
                      "browser_read_page", "browser_read_table", "browser_find_controls",
                      "browser_set_checked", "browser_register", "browser_login"):
             self.assertIn(name, gpt_names)
@@ -678,7 +678,7 @@ class BrowserControlTests(unittest.TestCase):
         browser = BrowserSession()
         try:
             with patch.object(browser, "_ensure"):
-                result = browser._dispatch("browser_network", {})
+                result = browser._dispatch("browser_network_session", {})
             self.assertFalse(result["request_response_bodies_captured"])
             self.assertFalse(result["sensitive_headers_captured"])
             self.assertTrue(result["safe_response_headers_captured"])
@@ -694,7 +694,7 @@ class BrowserControlTests(unittest.TestCase):
             )
             browser._on_request(request)
             with patch.object(browser, "_ensure"):
-                result = browser._dispatch("browser_network", {})
+                result = browser._dispatch("browser_network_session", {})
             self.assertEqual(len(result["events"]), 1)
             event = result["events"][0]
             self.assertEqual(event["state"], "pending")
@@ -775,7 +775,7 @@ class BrowserControlTests(unittest.TestCase):
         self.assertTrue({
             "browser_tabs", "browser_new_tab", "browser_switch_tab",
             "browser_close_tab", "browser_forward", "browser_reload",
-            "browser_press", "browser_scroll", "browser_console", "browser_network",
+            "browser_press", "browser_scroll", "browser_console", "browser_network_session",
         }.issubset(names))
 
     def test_high_impact_labels_require_manual_user_action(self):

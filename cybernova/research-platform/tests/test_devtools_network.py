@@ -26,6 +26,20 @@ class Gateway:
 
 
 class NetworkTests(unittest.TestCase):
+    def test_session_and_capture_have_distinct_names_and_schemas(self):
+        from console.browser_control import BROWSER_CONTROL_TOOLS
+        session = next(row for row in BROWSER_CONTROL_TOOLS
+                       if row["name"] == "browser_network_session")
+        capture = devtools_network.NETWORK_TOOLS[0]
+        self.assertEqual(capture["name"], "browser_network_capture")
+        self.assertEqual(session["inputSchema"].get("required", []), [])
+        self.assertEqual(session["inputSchema"]["properties"], {})
+        self.assertEqual(capture["inputSchema"]["required"], ["url"])
+        self.assertEqual(set(capture["inputSchema"]["properties"]), {"url"})
+        self.assertNotIn("browser_network", {
+            row["name"] for row in BROWSER_CONTROL_TOOLS + devtools_network.NETWORK_TOOLS
+        })
+
     def test_host_method_scheme_port_and_external_hosts_are_blocked(self):
         approve = {"simnet.ua"}
         good = "https://simnet.ua/support?token=SECRET"
@@ -63,7 +77,7 @@ class NetworkTests(unittest.TestCase):
             return {"network_events":[{"method":"GET","status":200}]}
         with patch.object(devtools_network,"_public_v4",return_value="93.184.215.14"), \
              patch.dict("os.environ",{"CYBERNOVA_BROWSER_HOSTS":"simnet.ua"}):
-            result=devtools_network.network_call("browser_network",{
+            result=devtools_network.network_call("browser_network_capture",{
                 "url":"https://simnet.ua/support"
             },Gateway(scope=[]),runner=fake)
             self.assertTrue(result["ok"])
@@ -72,7 +86,7 @@ class NetworkTests(unittest.TestCase):
         with patch.object(devtools_network,"_public_v4") as resolver:
             with patch.dict("os.environ",{"CYBERNOVA_BROWSER_HOSTS":"simnet.ua"}):
                 with self.assertRaisesRegex(ValueError,"browser_host_not_allowed"):
-                    devtools_network.network_call("browser_network",{
+                    devtools_network.network_call("browser_network_capture",{
                         "url":"https://localhost:443/"
                     },Gateway(),runner=fake)
                 resolver.assert_not_called()
@@ -81,7 +95,7 @@ class NetworkTests(unittest.TestCase):
         with patch.object(devtools_network,"_public_v4") as resolver:
             with patch.dict("os.environ",{"CYBERNOVA_BROWSER_HOSTS":""}):
                 with self.assertRaisesRegex(ValueError,"browser_host_not_allowed"):
-                    devtools_network.network_call("browser_network",{
+                    devtools_network.network_call("browser_network_capture",{
                         "url":"https://different-site.test/"
                     },Gateway(),runner=lambda *_: {})
                 resolver.assert_not_called()
@@ -93,7 +107,7 @@ class NetworkTests(unittest.TestCase):
             def call(self, *args):return Gateway().call(*args)
         names={x["name"] for x in TrafficToolClient(Remote(),{}).initialize()}
         self.assertIn("browser_open",names)
-        self.assertIn("browser_network",names)
+        self.assertIn("browser_network_capture",names)
 
     def test_agent_forces_one_real_browser_result_when_model_ignores_tools(self):
         class Model:
@@ -103,7 +117,7 @@ class NetworkTests(unittest.TestCase):
                 self.messages.append(messages)
                 if kwargs.get("json_mode"):
                     return {"role":"assistant","content":'{"calls":[]}'}
-                if any(m.get("role")=="tool" and m.get("tool_name")=="browser_network"
+                if any(m.get("role")=="tool" and m.get("tool_name")=="browser_network_capture"
                        for m in messages):
                     return {"role":"assistant","content":"Network получен: HTTP 200"}
                 return {"role":"assistant","content":"Могу объяснить как открыть Network"}
@@ -119,9 +133,9 @@ class NetworkTests(unittest.TestCase):
             "Проверь Network DevTools https://simnet.ua/",force_tools=True)
         self.assertEqual(outcome["tool_calls"],1)
         self.assertEqual(outcome["selected_by"],"evidence_first_fallback")
-        self.assertEqual(mcp.calls[0][0],"browser_network")
+        self.assertEqual(mcp.calls[0][0],"browser_network_capture")
         self.assertIn("Network получен",outcome["answer"])
-        self.assertTrue(any(x["name"]=="browser_network" for x in outcome["events"]))
+        self.assertTrue(any(x["name"]=="browser_network_capture" for x in outcome["events"]))
 
 
 if __name__ == "__main__":

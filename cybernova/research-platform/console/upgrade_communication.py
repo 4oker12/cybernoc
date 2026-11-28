@@ -160,7 +160,7 @@ def check_health():
     if status.get("upload_limit_bytes") != MAX_UPLOAD_FILE_BYTES:
         raise RuntimeError("upload_size_not_deployed")
     tools = status.get("tools") or []
-    if "browser_network" not in tools or "browser_network" not in status.get("auto_executable", []):
+    if "browser_network_capture" not in tools or "browser_network_capture" not in status.get("auto_executable", []):
         raise RuntimeError("qwen_devtools_network_not_executable")
     development_tools = {"dev_workspace", "dev_list", "dev_read", "dev_search",
                          "dev_edit", "dev_delete", "dev_move", "dev_diff",

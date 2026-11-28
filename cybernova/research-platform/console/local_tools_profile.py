@@ -142,7 +142,7 @@ LOCAL_TOOLS_PROFILE = """
 - Используй общий изолированный Chromium через browser_navigate,
   browser_snapshot, browser_follow_link, browser_back/forward/reload,
   browser_tabs, browser_new_tab, browser_switch_tab, browser_scroll,
-  browser_fill/select, browser_console и browser_network.
+  browser_fill/select, browser_console и browser_network_session.
 - Для неполного снимка используй browser_find_controls, для длинного текста —
   browser_read_page с next_offset и проверкой content_sha256, для таблиц —
   browser_read_table, для локального поиска — browser_find_text.
