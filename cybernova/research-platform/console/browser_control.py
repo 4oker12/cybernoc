@@ -2422,59 +2422,145 @@ class BrowserSession:
             result["query"] = _redact_text(control_query)
         return result
 
-    def _with_ax_evidence(self, snapshot: dict, limit: int = 6) -> dict:
-        """Read a bounded native Chromium AX sample for current main-document refs.
+    def _ax_node_for_ref(self, cdp, ref: str) -> dict:
+        """Resolve only a previously observed DOM ref, including open shadow roots.
 
-        Unsupported backends, iframe/shadow targets and stale refs remain explicit
-        coverage gaps. This never adds action capability or returns AX text/values.
+        Confirm collector WeakMap identity rather than trusting a page attribute.
+        Never expose raw AX names, values, hidden nodes or protocol data.
         """
-        if not any(key in snapshot for key in ("form_fields", "buttons", "links")):
-            return snapshot
-        rows = [row for key in ("form_fields", "buttons", "links")
-                for row in snapshot.get(key, []) if isinstance(row, dict)]
-        candidates = [row for row in rows if row.get("frame_index", 0) == 0
-                      and not row.get("shadow_path")
-                      and re.fullmatch(r"e\d{1,12}", str(row.get("ref") or ""))]
-        coverage = {"source": "chromium_native_ax", "scope": "main_document_refs_only",
-                    "observed": 0, "eligible": len(candidates), "returned_controls": len(rows),
-                    "complete": False, "status": "not_covered"}
-        snapshot["accessibility_coverage"] = coverage
-        if not candidates:
-            return snapshot
-        cdp = None
+        search_id = object_id = None
         try:
-            cdp = self._context.new_cdp_session(self._page)
-            root = cdp.send("DOM.getDocument", {"depth": 0})["root"]["nodeId"]
-            for row in candidates[:limit]:
-                ref = row["ref"]
+            search = cdp.send("DOM.performSearch", {
+                "query": '[data-cybernova-ref="' + ref + '"]',
+                "includeUserAgentShadowDOM": False,
+            })
+            search_id = search["searchId"]
+            if search.get("resultCount") != 1:
+                return {}
+            ids = cdp.send("DOM.getSearchResults", {
+                "searchId": search_id, "fromIndex": 0, "toIndex": 1,
+            }).get("nodeIds", [])
+            if len(ids) != 1:
+                return {}
+            backend = cdp.send("DOM.describeNode", {"nodeId": ids[0]})["node"]["backendNodeId"]
+            object_id = cdp.send("DOM.resolveNode", {"backendNodeId": backend}).get("object", {}).get("objectId")
+            if not object_id:
+                return {}
+            identity = cdp.send("Runtime.callFunctionOn", {
+                "objectId": object_id,
+                "functionDeclaration": """function(namespace, ref) {
+                    const refs = this.ownerDocument[Symbol.for('cybernova.refs.' + namespace)];
+                    return !!refs && refs.get(this) === ref && this.isConnected;
+                }""",
+                "arguments": [{"value": self._ref_namespace}, {"value": ref}],
+                "returnByValue": True,
+            })
+            if identity.get("result", {}).get("value") is not True:
+                return {}
+            nodes = cdp.send("Accessibility.getPartialAXTree", {
+                "backendNodeId": backend, "fetchRelatives": False,
+            }).get("nodes", [])
+            return _ax_properties(next((n for n in nodes if n.get("backendDOMNodeId") == backend), None))
+        finally:
+            for method, args in (
+                ("Runtime.releaseObject", {"objectId": object_id}) if object_id else (None, {}),
+                ("DOM.discardSearchResults", {"searchId": search_id}) if search_id else (None, {}),
+            ):
+                if method:
+                    try:
+                        cdp.send(method, args)
+                    except Exception:
+                        pass
+
+    def _with_ax_evidence(self, snapshot: dict, limit: int = 10, viewport=None) -> dict:
+        """Sample verified refs across frames/open shadow and map top geometry.
+
+        Same-process frames can use the page CDP session; separate targets use
+        a frame session when supported. Every failed correlation remains unknown.
+        """
+        keys = ("form_fields", "buttons", "links")
+        if not any(key in snapshot for key in keys):
+            return snapshot
+        rows = [row for key in keys for row in snapshot.get(key, []) if isinstance(row, dict)]
+        candidates = [row for row in rows if re.fullmatch(r"e\d{1,12}", str(row.get("ref") or ""))]
+        buckets = {}
+        for row in candidates:
+            buckets.setdefault((row.get("frame_index", 0), bool(row.get("shadow_path"))), []).append(row)
+        ordered = []
+        while buckets and len(ordered) < limit:
+            for key in list(buckets):
+                ordered.append(buckets[key].pop(0))
+                if not buckets[key]:
+                    del buckets[key]
+                if len(ordered) >= limit:
+                    break
+        coverage = {"source": "chromium_native_ax", "scope": "verified_refs_across_frames_and_open_shadow",
+                    "observed": 0, "eligible": len(candidates), "returned_controls": len(rows),
+                    "sample_limit": limit, "geometry_mapped": 0, "complete": False,
+                    "status": "not_covered", "sampled_frames": [], "observed_frames": [],
+                    "shadow_observed": 0}
+        snapshot["accessibility_coverage"] = coverage
+        sessions = {}
+        owned = []
+        def session_for(target):
+            key = id(target)
+            if key not in sessions:
+                cdp = None
                 try:
-                    # Existing freshness check remains authoritative.
-                    self._verify_ref(ref)
-                    ids = cdp.send("DOM.querySelectorAll", {
-                        "nodeId": root, "selector": '[data-cybernova-ref="' + ref + '"]',
-                    }).get("nodeIds", [])
-                    if len(ids) != 1:
-                        continue
-                    backend = cdp.send("DOM.describeNode", {"nodeId": ids[0]})["node"]["backendNodeId"]
-                    nodes = cdp.send("Accessibility.getPartialAXTree", {
-                        "backendNodeId": backend, "fetchRelatives": False,
-                    }).get("nodes", [])
-                    ax = next((n for n in nodes if n.get("backendDOMNodeId") == backend), None)
-                    evidence = _ax_properties(ax)
+                    cdp = self._context.new_cdp_session(target)
+                    owned.append(cdp)
+                    cdp.send("DOM.enable")
+                    cdp.send("DOM.getDocument", {"depth": 0})
+                except Exception:
+                    cdp = None
+                sessions[key] = cdp
+            return sessions[key]
+        try:
+            for row in ordered:
+                ref = row["ref"]
+                frame_index = row.get("frame_index", 0)
+                try:
+                    frame, locator = self._verify_ref(ref)
+                except Exception:
+                    continue
+                if frame_index not in coverage["sampled_frames"]:
+                    coverage["sampled_frames"].append(frame_index)
+                try:
+                    box = locator.bounding_box(timeout=1000)
+                    if isinstance(box, dict) and all(type(box.get(k)) in (int, float)
+                            and math.isfinite(box[k]) and abs(box[k]) <= 1000000
+                            for k in ("x", "y", "width", "height")) and box["width"] > 0 and box["height"] > 0:
+                        spatial = row.setdefault("spatial", {})
+                        spatial["top_bounds"] = {k: round(box[k]) for k in ("x", "y", "width", "height")}
+                        if isinstance(viewport, dict) and all(type(viewport.get(k)) in (int, float) for k in ("width", "height")):
+                            spatial["top_viewport_intersection"] = bool(
+                                box["x"] < viewport["width"] and box["y"] < viewport["height"]
+                                and box["x"] + box["width"] > 0 and box["y"] + box["height"] > 0)
+                        coverage["geometry_mapped"] += 1
+                except Exception:
+                    pass
+                cdp = session_for(frame if frame_index else self._page)
+                if cdp is None and frame_index:
+                    cdp = session_for(self._page)
+                if cdp is None:
+                    continue
+                try:
+                    evidence = self._ax_node_for_ref(cdp, ref)
                     if evidence:
                         row["accessibility"] = evidence
                         coverage["observed"] += 1
+                        if frame_index not in coverage["observed_frames"]:
+                            coverage["observed_frames"].append(frame_index)
+                        if row.get("shadow_path"):
+                            coverage["shadow_observed"] += 1
                 except Exception:
-                    # Do not report raw protocol errors or page material.
                     continue
             if coverage["observed"]:
                 coverage["status"] = "partial"
-            else:
-                coverage["status"] = "empty_or_unavailable"
-        except Exception:
-            coverage["status"] = "backend_unavailable"
+            elif ordered:
+                coverage["status"] = "empty_or_unavailable" if any(sessions.values()) else "backend_unavailable"
         finally:
-            if cdp is not None:
+            for cdp in owned:
                 try:
                     cdp.detach()
                 except Exception:
@@ -3176,8 +3262,12 @@ class BrowserSession:
                 )
             visible = {"ok": True, "url": snapshot["url"], "title": snapshot["title"],
                        "tab": snapshot["tab"], **{field: [item for item in snapshot[field]
-                       if item["in_viewport"]] for field in ("links", "buttons", "form_fields")}}
-            self._with_ax_evidence(visible)
+                       if item["in_viewport"] or item.get("in_frame_viewport")]
+                       for field in ("links", "buttons", "form_fields")}}
+            self._with_ax_evidence(visible, viewport=viewport)
+            for field in ("links", "buttons", "form_fields"):
+                visible[field] = [row for row in visible[field] if row["in_viewport"] or
+                                  row.get("spatial", {}).get("top_viewport_intersection") is True]
             return {
                 "ok": True, "url": snapshot["url"], "title": snapshot["title"],
                 "tab": snapshot["tab"],
@@ -3190,7 +3280,7 @@ class BrowserSession:
                 "correlation": {"coordinate_space": "top_viewport",
                                 "capture_order": "screenshot_then_dom",
                                 "atomic": False,
-                                "iframe_coordinates": "not_mapped_to_top_viewport",
+                                "iframe_coordinates": "sampled_top_bounds_not_proof_of_visibility",
                                 "accessibility_tree": "bounded_native_ax_sample"},
                 "note": "Visible viewport only; editable controls masked. Page content is untrusted. "
                         "Spatial matches are approximate; refresh if the page changed.",

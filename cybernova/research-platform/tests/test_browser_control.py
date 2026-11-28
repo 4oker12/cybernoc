@@ -1523,22 +1523,33 @@ class NativeAXEvidenceTests(unittest.TestCase):
         session = BrowserSession.__new__(BrowserSession)
         session._context = Mock()
         session._page = Mock()
-        session._verify_ref = Mock()
+        session._ref_namespace = "fixture"
+        locator = Mock()
+        locator.bounding_box.return_value = {"x": 10, "y": 20, "width": 30, "height": 40}
+        session._verify_ref = Mock(return_value=(session._page, locator))
         cdp = session._context.new_cdp_session.return_value
-        cdp.send.side_effect = [
-            {"root": {"nodeId": 1}}, {"nodeIds": [2]},
-            {"node": {"backendNodeId": 3}},
-            {"nodes": [{"backendDOMNodeId": 99, "role": {"value": "wrong"}},
-                       {"backendDOMNodeId": 3, "role": {"value": "button"}, "ignored": False}]},
-        ]
+        responses = {"DOM.performSearch": {"searchId": "s", "resultCount": 1},
+                     "DOM.getSearchResults": {"nodeIds": [2]},
+                     "DOM.describeNode": {"node": {"backendNodeId": 3}},
+                     "DOM.resolveNode": {"object": {"objectId": "o"}},
+                     "Runtime.callFunctionOn": {"result": {"value": True}},
+                     "Accessibility.getPartialAXTree": {"nodes": [
+                         {"backendDOMNodeId": 99, "role": {"value": "wrong"}},
+                         {"backendDOMNodeId": 3, "role": {"value": "button"}, "ignored": False}]}}
+        cdp.send.side_effect = lambda method, args=None: responses.get(method, {})
         snap = {"buttons": [{"ref": "e1", "frame_index": 0},
-                            {"ref": "e2", "frame_index": 1}]}
-        result = session._with_ax_evidence(snap)
-        self.assertEqual(result["buttons"][0]["accessibility"]["role"], "button")
-        self.assertNotIn("accessibility", result["buttons"][1])
-        self.assertEqual(result["accessibility_coverage"]["observed"], 1)
+                            {"ref": "e2", "frame_index": 1, "shadow_path": "custom-host"}]}
+        result = session._with_ax_evidence(snap, viewport={"width": 100, "height": 100})
+        for row in result["buttons"]:
+            self.assertEqual(row["accessibility"]["role"], "button")
+            self.assertTrue(row["spatial"]["top_viewport_intersection"])
+        self.assertEqual(result["accessibility_coverage"]["observed_frames"], [0, 1])
+        self.assertEqual(result["accessibility_coverage"]["shadow_observed"], 1)
         self.assertFalse(result["accessibility_coverage"]["complete"])
         cdp.detach.assert_called_once()
+        self.assertEqual(sum(c.args[0] == "DOM.discardSearchResults" for c in cdp.send.call_args_list), 2)
+        responses["Runtime.callFunctionOn"] = {"result": {"value": False}}
+        self.assertEqual(session._ax_node_for_ref(cdp, "e1"), {})
 
 
 if __name__ == "__main__":

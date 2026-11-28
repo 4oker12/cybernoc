@@ -252,6 +252,19 @@ class LiveBrowserTests(unittest.TestCase):
         cls.session.close()
         cls.srv.shutdown()
 
+    def test_live_ax_shadow_and_frame_correlation(self):
+        c = lambda n, **a: self.call(n, a, self.session)[0]
+        self.assertTrue(c("browser_navigate", url=self.url)["ok"])
+        for name in ("Shadow action", "Frame button"):
+            result = c("browser_find_controls", query=name)
+            row = next(row for row in result["buttons"] if row["name"] == name)
+            self.assertEqual(row.get("accessibility", {}).get("role"), "button", result)
+            self.assertIn("top_bounds", row["spatial"])
+        capture = c("browser_screenshot")
+        self.assertTrue(capture["ok"])
+        frame = next(row for row in capture["buttons"] if row["name"] == "Frame button")
+        self.assertTrue(frame["spatial"]["top_viewport_intersection"])
+
     def test_live_inferred_card_disambiguates_equal_controls(self):
         c = lambda n, **a: self.call(n, a, self.session)[0]
         self.assertTrue(c("browser_navigate", url=self.url + "cards")["ok"])
