@@ -734,7 +734,8 @@ function chatActivityRows(job){
         if(e.effect==="unverified_partial_observation")row.detail+=" · Недостаточно данных для проверки";
         else if(e.effect==="none_observed")row.detail+=" · Изменение не наблюдалось";
         if(e.change_strategy===true)row.detail+=" · Требуется смена стратегии";
-        if(e.attempts_on_state>1)row.detail+=" · Попыток в этом состоянии: "+e.attempts_on_state;
+        if(e.attempts_on_state>1)row.detail+=" · "+(e.effect==="unverified_partial_observation"?
+          "Неполных наблюдений в этом состоянии: ":"Попыток в этом состоянии: ")+e.attempts_on_state;
         break;
       }
       case "agent_tool_selection_failure":{

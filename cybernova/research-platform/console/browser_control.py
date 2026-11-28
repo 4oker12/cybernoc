@@ -125,7 +125,7 @@ BROWSER_CONTROL_TOOLS = [
           {"label": {**STRING, "description": "Exact select label"},
            "value": {**STRING, "description": "Option label or value"}}, ["label", "value"]),
     _tool("browser_click_button",
-          "Click one visible button by exact accessible name. Fresh ref gestures: hover:ref:eN, focus:ref:eN, double_click:ref:eN (ordinary non-form buttons only), key:ArrowDown:ref:eN (navigation keys only), activate:ref:eN (supported explicit widget roles only). High-impact clicks require owner confirmation; unsafe requests remain guarded.",
+          "Click one visible button by exact accessible name. Fresh ref gestures: hover:ref:eN, focus:ref:eN, double_click:ref:eN (ordinary non-form buttons only), key:ArrowDown:ref:eN (navigation keys only; focus is verified before dispatch and observed after), activate:ref:eN (supported explicit widget roles only). High-impact clicks require owner confirmation; unsafe requests remain guarded.",
           {"name": {**STRING, "description": "Exact button name, ref:eN, widget action_target, hover/focus/double_click:ref:eN, key:ArrowDown:ref:eN or activate:ref:eN from latest observation"}}, ["name"]),
     _tool("browser_back",
           "Navigate back one page in the isolated Chromium session."),
@@ -828,9 +828,7 @@ _RADIO_CONTEXT_JS = r"""el => {
 }"""
 
 
-_COLLECT_ELEMENTS_JS_TEMPLATE = r"""
-({query, startRef, namespace}) => {
-  const radioContext = __RADIO_CONTEXT__;
+_REF_LABEL_HELPERS_JS = r"""
   const clean = v => String(v || '').replace(/\s+/g, ' ').trim();
   const sensitiveContent = 'input,textarea,select,[contenteditable],[role="textbox"],[role="searchbox"]';
   const structuralText = node => node && !node.isContentEditable &&
@@ -846,10 +844,17 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
     Array.from(el.labels || []).map(x => x.innerText || x.textContent).join(' ') ||
     el.getAttribute('title') || el.getAttribute('placeholder') ||
     (['submit','button','reset'].includes(el.type) ? el.value : '') ||
-    (!editable(el) && !el.querySelector('input,textarea,select,[contenteditable],[role="textbox"],[role="searchbox"]') ? el.innerText : '') ||
+    (!editable(el) && !el.querySelector(sensitiveContent) ? el.innerText : '') ||
     el.getAttribute('alt') ||
     el.querySelector?.('img[alt]')?.getAttribute('alt') ||
     el.querySelector?.('svg title')?.textContent);
+"""
+
+
+_COLLECT_ELEMENTS_JS_TEMPLATE = r"""
+({query, startRef, namespace}) => {
+  const radioContext = __RADIO_CONTEXT__;
+  __REF_LABEL_HELPERS__
   const inViewport = el => {
     const r = el.getBoundingClientRect();
     return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
@@ -1176,7 +1181,9 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
 
 def _collect_elements_js() -> str:
     """Build the in-page collector with radio-context helper embedded."""
-    return _COLLECT_ELEMENTS_JS_TEMPLATE.replace("__RADIO_CONTEXT__", _RADIO_CONTEXT_JS)
+    return (_COLLECT_ELEMENTS_JS_TEMPLATE
+            .replace("__RADIO_CONTEXT__", _RADIO_CONTEXT_JS)
+            .replace("__REF_LABEL_HELPERS__", _REF_LABEL_HELPERS_JS))
 
 
 class BrowserSession:
@@ -2978,22 +2985,7 @@ class BrowserSession:
                 current = locator.evaluate(r"""(el, info) => {
                     const refs = el.ownerDocument[Symbol.for('cybernova.refs.' + info.namespace)];
                     if (!refs || refs.get(el) !== info.ref) return null;
-                    const clean = v => String(v || '').replace(/\s+/g, ' ').trim();
-                    const byIds = (node, attr) => (node.getAttribute(attr) || '').split(/\s+/)
-                        .filter(Boolean).map(id => {
-                            const found = node.getRootNode().getElementById?.(id);
-                            return found ? clean(found.innerText || found.textContent) : '';
-                        }).filter(Boolean).join(' ');
-                    const editable = el.isContentEditable ||
-                        ['textbox','searchbox'].includes(el.getAttribute('role'));
-                    const label = clean(el.getAttribute('aria-label') ||
-                        byIds(el, 'aria-labelledby') ||
-                        Array.from(el.labels || []).map(x => x.innerText || x.textContent).join(' ') ||
-                        el.getAttribute('title') || el.getAttribute('placeholder') ||
-                        (['submit','button','reset'].includes(el.type) ? el.value : '') ||
-                        (!editable && !el.querySelector('input,textarea,select,[contenteditable],[role="textbox"],[role="searchbox"]') ? el.innerText : '') || el.getAttribute('alt') ||
-                        el.querySelector?.('img[alt]')?.getAttribute('alt') ||
-                        el.querySelector?.('svg title')?.textContent);
+                    __REF_LABEL_HELPERS__
                     let shadowPath = '';
                     let node = el.getRootNode();
                     const parts = [];
@@ -3007,10 +2999,11 @@ class BrowserSession:
                         el.getAttribute('role') || '',
                         el.id || '',
                         el.getAttribute('name') || '',
-                        label.slice(0, 80),
+                        labelOf(el).slice(0, 80),
                         shadowPath,
                     ].join('|');
-                }""", {"namespace": self._ref_namespace, "ref": ref})
+                }""".replace("__REF_LABEL_HELPERS__", _REF_LABEL_HELPERS_JS),
+                {"namespace": self._ref_namespace, "ref": ref})
             except Exception:
                 raise ValueError("browser_target_stale") from None
             if current != expected:
@@ -3063,11 +3056,16 @@ class BrowserSession:
             if key not in {"ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight",
                            "Home", "End", "Escape", "PageUp", "PageDown"}:
                 raise ValueError("browser_widget_navigation_key_not_allowed")
+            locator.focus(timeout=8000)
             try:
                 state_before = self._read_widget_state(locator)
             except Exception:
-                pass
-            locator.press(key, timeout=8000)
+                raise ValueError("browser_target_focus_not_confirmed") from None
+            if state_before.get("focused") is not True:
+                raise ValueError("browser_target_focus_not_confirmed")
+            # Dispatch only after the exact ref is observed as the active element.
+            # Page.keyboard sends to the focused target without an implicit locator refocus.
+            frame.page.keyboard.press(key)
         elif interaction == "double_click":
             button = self._unique(locator.and_(frame.get_by_role("button")))
             if button is None:
@@ -3103,6 +3101,11 @@ class BrowserSession:
             result["widget_state_after"] = state_after
             result["widget_state_changed"] = (state_before != state_after
                                                if state_before and state_after else None)
+            result["focus_before_dispatch"] = state_before.get("focused") if state_before else None
+            result["focus_after_dispatch"] = state_after.get("focused") if state_after else None
+            result["focus_after_dispatch_observed"] = (
+                type(state_after.get("focused")) is bool if state_after else False
+            )
         return result
 
     def _by_id(self, element_id, frame=None):

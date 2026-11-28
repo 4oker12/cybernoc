@@ -251,6 +251,26 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(tracker.record_no_effect("browser_click_button", args, "state1")["attempts_on_state"], 1)
         self.assertNotIn("never retain", repr(tracker._no_effect))
 
+    def test_repeated_inconclusive_observations_require_new_evidence_not_no_effect(self):
+        tracker = StrategyTracker()
+        args = {"name": "Open", "value": "private marker"}
+        first = tracker.record_inconclusive("browser_click_button", args, "partial-state")
+        self.assertNotIn("change_strategy", first)
+        second = tracker.record_inconclusive("browser_click_button", args, "partial-state")
+        self.assertTrue(second["change_strategy"])
+        self.assertEqual(second["attempts_on_state"], 2)
+        self.assertNotIn("no effect", " ".join(second["recovery"]).lower())
+        self.assertEqual(
+            tracker.record_inconclusive("browser_click_button", args, "new-state")["attempts_on_state"],
+            1,
+        )
+        tracker.record_success("browser_click_button", args)
+        self.assertEqual(
+            tracker.record_inconclusive("browser_click_button", args, "partial-state")["attempts_on_state"],
+            1,
+        )
+        self.assertNotIn("private marker", repr(tracker._inconclusive))
+
     def test_escalation_and_reset_and_no_value_retention(self):
         t = StrategyTracker()
         args = {"name": "Buy", "value": "SECRET-123"}
@@ -309,6 +329,39 @@ MEDIA_PAGE = b"""<!doctype html><title>Media</title>
  <video title="Video indicator" width="24" height="20"></video>
 </button>"""
 
+ARIA_REF_PAGE = b"""<!doctype html><title>ARIA refs</title>
+<span id="label-one">Open editor</span>
+<div id="editable-label" contenteditable="true">Editable reference text</div>
+<span id="label-three">Editor toolbar</span><span id="label-four">Fourth label</span>
+<span id="label-five">Fifth label</span><span id="label-six">Sixth label</span>
+<span id="label-seven">Seventh label</span><span id="label-eight">Eighth label</span>
+<span id="label-nine">Ninth label outside the collector bound</span>
+<button id="aria-ref-button"
+ aria-labelledby="label-one editable-label label-three label-four label-five label-six label-seven label-eight label-nine"
+ tabindex="0">Open</button>"""
+
+
+FOCUS_PAGE = b"""<!doctype html><title>Focus routing</title>
+<div id="redirect" tabindex="0">Redirect target</div>
+<div id="before-widget" role="listbox" aria-label="Before focus redirect" tabindex="0"
+ onfocus="document.getElementById('redirect').focus()"
+ onkeydown="document.getElementById('out').textContent='Wrong target received key'">
+ <div role="option">One</div></div>
+<div id="after-widget" role="listbox" aria-label="After focus redirect" tabindex="0"
+ onkeydown="document.getElementById('out').textContent='Key reached widget';document.getElementById('redirect').focus()">
+ <div role="option">One</div></div>
+<p id="out">Untouched</p>"""
+
+
+HOVER_PAGE = b"""<!doctype html><title>Hover fixture</title>
+<style>#hint{display:none}#hover-target:hover + #hint{display:block}</style>
+<button id="hover-target">Reveal hover details</button><span id="hint">Hover details visible</span>"""
+
+
+EDITOR_PAGE = b"""<!doctype html><title>Rich editor</title>
+<iframe id="editor-frame" title="Article editor frame"
+ srcdoc="<!doctype html><html><body><div id='tinymce' role='textbox' contenteditable='true' aria-label='Article editor'>Initial article</div></body></html>"></iframe>"
+
 
 class _H(BaseHTTPRequestHandler):
     def log_message(self, *_):
@@ -317,7 +370,9 @@ class _H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        body = {"/cards": CARD_PAGE, "/widgets": WIDGET_PAGE, "/media": MEDIA_PAGE}.get(self.path, PAGE)
+        body = {"/cards": CARD_PAGE, "/widgets": WIDGET_PAGE, "/media": MEDIA_PAGE,
+                "/aria-refs": ARIA_REF_PAGE, "/focus": FOCUS_PAGE,
+                "/hover": HOVER_PAGE, "/editor": EDITOR_PAGE}.get(self.path, PAGE)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -393,6 +448,56 @@ class LiveBrowserTests(unittest.TestCase):
         found = c("browser_find_controls", query="Custom focusable text")
         custom = next(row for row in found["buttons"] if row["type"] == "focus_candidate")
         self.assertTrue(c("browser_click_button", name="focus:ref:" + custom["ref"])["focus_verified"])
+
+    def test_live_aria_ref_fingerprint_uses_safe_bounded_label(self):
+        c = lambda n, **a: self.call(n, a, self.session)[0]
+        self.assertTrue(c("browser_navigate", url=self.url + "/aria-refs")["ok"])
+        found = c("browser_find_controls", query="Open editor")
+        button = next(row for row in found["buttons"] if row.get("id") == "aria-ref-button")
+        focused = c("browser_click_button", name="focus:ref:" + button["ref"])
+        self.assertTrue(focused.get("focus_verified"), focused)
+
+    def test_live_keyboard_dispatch_requires_target_focus_and_reports_after_focus(self):
+        c = lambda n, **a: self.call(n, a, self.session)[0]
+        self.assertTrue(c("browser_navigate", url=self.url + "/focus")["ok"])
+        before = c("browser_find_controls", query="Before focus redirect")
+        before_widget = next(row for row in before["buttons"] if row.get("id") == "before-widget")
+        blocked = c("browser_click_button", name="key:ArrowDown:ref:" + before_widget["ref"])
+        self.assertEqual(blocked.get("error"), "browser_target_focus_not_confirmed", blocked)
+        self.assertEqual(self.session._page.locator("#out").inner_text(), "Untouched")
+        after = c("browser_find_controls", query="After focus redirect")
+        after_widget = next(row for row in after["buttons"] if row.get("id") == "after-widget")
+        dispatched = c("browser_click_button", name="key:ArrowDown:ref:" + after_widget["ref"])
+        self.assertTrue(dispatched.get("ok"), dispatched)
+        self.assertTrue(dispatched.get("focus_before_dispatch"), dispatched)
+        self.assertFalse(dispatched.get("focus_after_dispatch"), dispatched)
+        self.assertTrue(dispatched.get("focus_after_dispatch_observed"), dispatched)
+        self.assertFalse(dispatched["widget_state_after"]["focused"])
+        self.assertEqual(self.session._page.locator("#out").inner_text(), "Key reached widget")
+
+    def test_live_hover_reveals_dynamic_page_content(self):
+        c = lambda n, **a: self.call(n, a, self.session)[0]
+        self.assertTrue(c("browser_navigate", url=self.url + "/hover")["ok"])
+        found = c("browser_find_controls", query="Reveal hover details")
+        button = next(row for row in found["buttons"] if row.get("id") == "hover-target")
+        hovered = c("browser_click_button", name="hover:ref:" + button["ref"])
+        self.assertTrue(hovered.get("ok"), hovered)
+        self.assertTrue(c("browser_verify", expect_text=["Hover details visible"])["verified"])
+
+    def test_live_iframe_rich_text_editor_fill_is_read_back(self):
+        c = lambda n, **a: self.call(n, a, self.session)[0]
+        self.assertTrue(c("browser_navigate", url=self.url + "/editor")["ok"])
+        found = c("browser_find_controls", query="Article editor")
+        editor = next(row for row in found["form_fields"] if row.get("id") == "tinymce")
+        filled, failed = self.call("browser_fill", {
+            "label": None, "target": "ref:" + editor["ref"],
+            "value": "Revised article body", "coords": None,
+            "clear": True, "human_like": False,
+        }, self.session)
+        self.assertFalse(failed, filled)
+        editor_frame = next(frame for frame in self.session._page.frames
+                            if frame != self.session._page.main_frame)
+        self.assertEqual(editor_frame.locator("#tinymce").inner_text(), "Revised article body")
 
     def test_live_ax_shadow_and_frame_correlation(self):
         c = lambda n, **a: self.call(n, a, self.session)[0]

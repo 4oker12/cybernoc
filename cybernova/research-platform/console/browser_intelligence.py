@@ -309,6 +309,11 @@ _RECOVERY = (
     ("no_visible_change", ["Verify with browser_verify instead of repeating the same click.",
                            "Wait 500-1500 ms (browser_wait) in case the update is asynchronous.",
                            "Check browser_network_session for a pending/failed request, then change strategy."]),
+    ("inconclusive_observation", [
+        "Refresh with browser_snapshot and inspect the relevant page scope.",
+        "Use browser_find_controls or paginated reads to obtain complete evidence.",
+        "Do not infer action success or failure from a partial observation.",
+    ]),
     ("timeout", ["Page may still be loading: browser_wait, then browser_snapshot.",
                  "Check browser_network_session for pending or failed requests."]),
     ("access_limited", ["Do not retry the same URL unchanged; report the status code.",
@@ -321,6 +326,8 @@ def recovery_for(error: str, tool: str = "") -> list[str]:
     code = str(error or "").lower()
     if re.search(r"not_unique:0\b", code):
         return list(dict(_RECOVERY)["not_found"])
+    if "inconclusive_observation" in code:
+        return list(dict(_RECOVERY)["inconclusive_observation"])
     if "no_visible_change" in code:
         return list(dict(_RECOVERY)["no_visible_change"])
     if "not_unique" in code or "ambiguous" in code or "multiple" in code:
@@ -415,6 +422,7 @@ class StrategyTracker:
     def __init__(self, window: int = 12):
         self._recent: deque[tuple[str, str, str]] = deque(maxlen=window)
         self._no_effect: deque[tuple[str, str, str]] = deque(maxlen=window)
+        self._inconclusive: deque[tuple[str, str, str]] = deque(maxlen=window)
 
     @staticmethod
     def _target_hash(args: dict) -> str:
@@ -428,6 +436,8 @@ class StrategyTracker:
         self._recent = deque((e for e in self._recent if e[:2] != key), maxlen=self._recent.maxlen)
         self._no_effect = deque((e for e in self._no_effect if e[:2] != key),
                                 maxlen=self._no_effect.maxlen)
+        self._inconclusive = deque((e for e in self._inconclusive if e[:2] != key),
+                                   maxlen=self._inconclusive.maxlen)
 
     def record_no_effect(self, tool: str, args: dict, state_id: str) -> dict:
         """Repeated successful dispatch without observed effect is not success."""
@@ -440,6 +450,22 @@ class StrategyTracker:
             result.update(change_strategy=True, escalation=(
                 "Same action on the same observed state had no effect. Verify the goal, "
                 "inspect state/network or choose a different authorized target; do not loop."
+            ))
+        return result
+
+    def record_inconclusive(self, tool: str, args: dict, state_id: str) -> dict:
+        """Track incomplete observations separately from confirmed no-effect."""
+        entry = (tool, self._target_hash(args), str(state_id or "")[:32])
+        self._inconclusive.append(entry)
+        repeats = self._inconclusive.count(entry)
+        result = {
+            "attempts_on_state": repeats,
+            "recovery": recovery_for("inconclusive_observation", tool),
+        }
+        if repeats >= 2:
+            result.update(change_strategy=True, escalation=(
+                "Repeated observations of this target remain incomplete. Refresh the page "
+                "snapshot or use targeted/paginated reads; do not infer success or failure."
             ))
         return result
 

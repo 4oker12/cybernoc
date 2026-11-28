@@ -98,7 +98,12 @@ class ResearchProgress:
     updated_at: str = field(default_factory=_now)
 
     def set_goal(self, goal: str) -> None:
-        """Retain an open root goal; track the latest user request separately."""
+        """Record the latest request without guessing a task boundary.
+
+        Within a session, a different request remains a continuation while the
+        root goal is open. A completed root goal advances on the next distinct
+        request; an explicit new chat uses /api/reset and fresh session state.
+        """
         request = _clip(goal)
         if request and (not self.goal or (self.phase == "done" and not self.open_items
                                           and request != self.current_request)):
