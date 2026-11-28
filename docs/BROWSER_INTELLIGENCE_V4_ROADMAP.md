@@ -37,3 +37,6 @@ Digest/delta now includes tab, frame count, focus/hit and observed control state
 
 ### P0.6 implementation record
 StrategyTracker now records repeated no-effect actions on the same observed state separately from exceptions. Observed change resets attempts; incomplete coverage is not treated as proven failure. Advice requests verification or changed authorized strategy. Full response mode retains observations while exposing effect; no automatic alternate actions or bypass. Focused tracker tests added; runtime execution pending.
+
+### P0.7 implementation record
+ResearchProgress preserves the open root goal and latest user request separately; completed goals may advance to a fresh generation. Model-declared completion, remaining items and latest explicit browser verification remain distinct, with check invalidation on later browser actions. Agent gives one bounded continuation prompt when a model declares active open work yet returns no call; no forced action and no retry on owner approval or blocked phase. Tests added for goal transitions and verification invalidation. Runtime execution pending.

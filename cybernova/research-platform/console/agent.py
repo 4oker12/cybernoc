@@ -1347,6 +1347,7 @@ class Agent:
             return outcome
 
         checkpoint = None
+        continuation_prompted = False
         try:
             for round_no in range(MAX_ROUNDS):
                 diagnostic_event("agent_round_start", round=round_no, status="started")
@@ -1628,6 +1629,16 @@ class Agent:
                                  advertised_count=len(tools),
                                  status="selected" if calls else "no_call" if tools else "unavailable")
                 if not calls:
+                    if (not continuation_prompted and executed and tools and not pending_requests
+                            and progress.open_items and progress.phase in {"explore", "act", "verify"}
+                            and round_no < MAX_ROUNDS - 2):
+                        continuation_prompted = True
+                        context.append({"role": "system", "content":
+                            "У тебя остались явно заявленные незавершённые пункты: " +
+                            "; ".join(progress.open_items[:4]) +
+                            ". Если в рамках разрешений есть полезный следующий шаг, продолжи "
+                            "реальным инструментом. Иначе назови блокер; не повторяй действия."})
+                        continue
                     answer = _clean_model_answer(result.get("content"))
                     if not answer:
                         answer = finalize_answer()
@@ -1907,6 +1918,9 @@ class Agent:
                         ok=tool_ok,
                         error=err,
                         page_url=page_url,
+                        browser_verified=(safe_result.get("verified")
+                                          if name == "browser_verify" and type(safe_result.get("verified")) is bool
+                                          else None),
                     )
                     if on_tool_event is not None:
                         on_tool_event(safe_event)

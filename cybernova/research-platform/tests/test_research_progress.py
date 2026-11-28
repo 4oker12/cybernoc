@@ -55,6 +55,31 @@ class ResearchProgressTests(unittest.TestCase):
         self.assertIn("observed{", note)
         self.assertIn("last_tool=browser_snapshot", note)
 
+    def test_open_goal_survives_followup_and_completed_goal_can_advance(self):
+        p = ResearchProgress(session_key="s")
+        p.set_goal("Find products")
+        p.apply_model_update(phase="act", open_items=["check price"])
+        p.set_goal("Only show available products")
+        self.assertEqual(p.goal, "Find products")
+        self.assertEqual(p.current_request, "Only show available products")
+        p.apply_model_update(phase="done")
+        self.assertEqual(p.completion_status(), "declared_done_with_open_items")
+        p.apply_model_update(resolve_open=["check price"])
+        p.set_goal("Find another category")
+        self.assertEqual(p.goal_generation, 2)
+        self.assertEqual(p.goal, "Find another category")
+        self.assertEqual(p.phase, "unknown")
+
+    def test_browser_check_is_evidence_not_completion_and_invalidates_on_action(self):
+        p = ResearchProgress(session_key="s")
+        p.set_goal("Find result")
+        p.record_observation(tool="browser_verify", ok=True, browser_verified=True)
+        self.assertEqual(p.completion_status(), "not_declared_done")
+        p.apply_model_update(phase="done")
+        self.assertEqual(p.completion_status(), "declared_done_with_observed_browser_check")
+        p.record_observation(tool="browser_click_button", ok=True)
+        self.assertEqual(p.completion_status(), "declared_done_without_browser_check")
+
     def test_invalid_phase_rejected(self):
         progress = ResearchProgress(session_key="s4")
         with self.assertRaises(ValueError):

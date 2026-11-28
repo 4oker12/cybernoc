@@ -51,6 +51,9 @@ class ResearchProgress:
     session_key: str
     # User task text (trusted input), not inferred from tools.
     goal: str = ""
+    current_request: str = ""
+    goal_generation: int = 0
+    last_browser_check: bool | None = None
     # --- model-declared (only via explicit update) ---
     phase: str = "unknown"
     model_summary: str = ""
@@ -71,10 +74,32 @@ class ResearchProgress:
     updated_at: str = field(default_factory=_now)
 
     def set_goal(self, goal: str) -> None:
-        """Record the user task once; does not interpret research stage."""
-        if goal and not self.goal:
-            self.goal = _clip(goal, 160)
+        """Retain an open root goal; track the latest user request separately."""
+        request = _clip(goal, 160)
+        if request and (not self.goal or (self.phase == "done" and not self.open_items
+                                          and request != self.current_request)):
+            self.goal = request
+            self.goal_generation += 1
+            self.phase = "unknown"
+            self.model_summary = ""
+            self.open_items.clear()
+            self.findings.clear()
+            self.hypotheses.clear()
+            self.last_browser_check = None
+        if request:
+            self.current_request = request
         self.touch()
+
+    def completion_status(self) -> str:
+        if self.phase != "done":
+            return "not_declared_done"
+        if self.open_items:
+            return "declared_done_with_open_items"
+        if self.last_browser_check is False:
+            return "declared_done_with_unmet_browser_check"
+        if self.last_browser_check is True:
+            return "declared_done_with_observed_browser_check"
+        return "declared_done_without_browser_check"
 
     def apply_model_update(
         self,
@@ -113,6 +138,7 @@ class ResearchProgress:
         ok: bool | None = None,
         error: str = "",
         page_url: str = "",
+        browser_verified: bool | None = None,
     ) -> None:
         """Record a verifiable tool outcome. Does not set research phase or findings."""
         if tool:
@@ -128,6 +154,15 @@ class ResearchProgress:
                 self.last_error = code
                 self.recent_errors.append(code)
                 self.recent_errors = self.recent_errors[-6:]
+        if tool == "browser_verify":
+            self.last_browser_check = browser_verified if ok is True else None
+        elif tool.startswith("browser_") and tool not in {
+            "browser_snapshot", "browser_find_controls", "browser_find_text",
+            "browser_read_page", "browser_read_table", "browser_screenshot",
+            "browser_network_session", "browser_console", "browser_tabs",
+        }:
+            # A check describes the previously observed state, not future actions.
+            self.last_browser_check = None
         if page_url:
             url = _clip(page_url, 140)
             if url and url != self.last_page_url:
@@ -158,6 +193,8 @@ class ResearchProgress:
         if self.goal:
             parts.append("goal=" + self.goal)
         # Model-declared block
+        if self.current_request and self.current_request != self.goal:
+            parts.append("current_request=" + self.current_request)
         parts.append("model_phase=" + (self.phase or "unknown"))
         if self.model_summary:
             parts.append("model_summary=" + self.model_summary)
@@ -189,6 +226,9 @@ class ResearchProgress:
         """Facts for UI/API — not a simulated chain-of-thought."""
         return {
             "goal": self.goal,
+            "current_request": self.current_request,
+            "goal_generation": self.goal_generation,
+            "completion_status": self.completion_status(),
             "model": {
                 "phase": self.phase,
                 "summary": self.model_summary,
@@ -199,6 +239,7 @@ class ResearchProgress:
             "observed": {
                 "last_tool": self.last_tool,
                 "last_tool_ok": self.last_tool_ok,
+                "last_browser_check": self.last_browser_check,
                 "last_error": self.last_error,
                 "recent_errors": list(self.recent_errors[-4:]),
                 "last_page_url": self.last_page_url,
