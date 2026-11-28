@@ -1398,6 +1398,7 @@ class BrowserControlTests(unittest.TestCase):
         self.assertEqual(session._parse_ref("ref:e3"), "e3")
         self.assertEqual(session._parse_ref("data-cybernova-ref:e9"), "e9")
         self.assertIsNone(session._parse_ref("Submit"))
+        self.assertIsNone(session._parse_ref("v12"))
         self.assertIsNone(session._parse_ref("id:foo"))
         # No stored meta -> stale
         with self.assertRaisesRegex(ValueError, "browser_target_stale"):
@@ -1527,10 +1528,11 @@ class VisualObjectTests(unittest.TestCase):
     def test_visual_hints_never_expose_source_or_action_target(self):
         from console.browser_control import _visual_object
         raw = {"kind": "icon", "label": "person@example.com", "label_source": "title",
-               "owner_ref": "e4", "bounds": {"x": 2, "y": 3, "width": 18, "height": 18},
+               "owner_ref": "e4", "visual_ref": "v8", "bounds": {"x": 2, "y": 3, "width": 18, "height": 18},
                "src": "private", "action_target": "not-allowed", "small": True}
         result = _visual_object(raw, 2)
         self.assertEqual(result["owner_ref"], "e4")
+        self.assertEqual(result["visual_ref"], "v8")
         self.assertEqual(result["label"], "[REDACTED EMAIL]")
         self.assertEqual(result["spatial"]["space"], "frame_viewport")
         self.assertNotIn("src", result)

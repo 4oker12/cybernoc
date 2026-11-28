@@ -228,7 +228,7 @@ document.getElementById('h').attachShadow({mode:'open'}).innerHTML=
 '<button id=sb onclick="this.textContent=\\'Shadow clicked\\'">Shadow action</button>';</script>
 <div id=items></div><button onclick="more()">Load more</button>
 <script>let k=0;function more(){for(let i=0;i<10;i++){k++;const d=document.createElement('div');d.textContent='Item '+k;items.appendChild(d)}}more()</script>
-<iframe srcdoc="<p>Inside frame marker</p><button id='frame-action'>Frame button</button>"></iframe>"""
+<iframe srcdoc="<p>Inside frame marker</p><button id='frame-action'>Frame button<svg aria-hidden='true' width='18' height='18'><title>Frame symbol</title><circle cx='9' cy='9' r='4'/></svg></button><svg role='img' aria-label='Frame diagram' width='32' height='32'><rect width='30' height='30'/></svg>"></iframe>"""
 
 
 CARD_PAGE = b"""<!doctype html><title>Cards</title><main>
@@ -316,6 +316,15 @@ class LiveBrowserTests(unittest.TestCase):
         self.assertTrue(capture["ok"])
         frame = next(row for row in capture["buttons"] if row["name"] == "Frame button")
         self.assertTrue(frame["spatial"]["top_viewport_intersection"])
+        icon_search = c("browser_find_controls", query="Frame symbol")
+        icon = next(row for row in icon_search["visual_objects"] if row["kind"] == "icon")
+        owner = next(row for row in icon_search["buttons"] if row["name"] == "Frame button")
+        self.assertEqual(icon["owner_ref"], owner["ref"])
+        self.assertTrue(icon["visual_ref"].startswith("v"))
+        self.assertIn("top_bounds", icon["spatial"])
+        diagram = next(row for row in capture["visual_objects"] if row.get("label") == "Frame diagram")
+        self.assertEqual(diagram["frame_index"], 1)
+        self.assertIn("top_bounds", diagram["spatial"])
 
     def test_live_inferred_card_disambiguates_equal_controls(self):
         c = lambda n, **a: self.call(n, a, self.session)[0]

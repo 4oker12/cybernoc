@@ -498,6 +498,9 @@ def _visual_object(raw, frame_index: int) -> dict:
     ref = raw.get("owner_ref")
     if isinstance(ref, str) and re.fullmatch(r"e\d{1,12}", ref):
         result["owner_ref"] = ref
+    visual_ref = raw.get("visual_ref")
+    if isinstance(visual_ref, str) and re.fullmatch(r"v\d{1,12}", visual_ref):
+        result["visual_ref"] = visual_ref
     for key in ("decorative", "small"):
         if raw.get(key) is True:
             result[key] = True
@@ -994,15 +997,34 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
   };
   walk(document, '');
   const q = clean(query || '').toLocaleLowerCase();
+  const visualKey = Symbol.for('cybernova.visual.refs.' + namespace);
+  const visualRefs = document[visualKey] || (document[visualKey] = new WeakMap());
+  const visualMeta = visualCandidates.map(el => {
+    const r = el.getBoundingClientRect();
+    const declared = [['alt',el.getAttribute('alt')],['aria-label',el.getAttribute('aria-label')],
+      ['title',el.getAttribute('title')],['svg-title',el.localName === 'svg' ? el.querySelector('title')?.textContent : '']]
+      .find(pair => clean(pair[1]));
+    let owner = null;
+    for (let p = parentOf(el), depth = 0; p && depth < 12; p = parentOf(p), depth++) {
+      if (MATCH(p) && visible(p)) { owner = p; break; }
+    }
+    const label = declared ? clean(declared[1]).slice(0,90) : '';
+    const tag = el.localName;
+    const small = r.width <= 48 && r.height <= 48;
+    const kind = (owner && small) ? 'icon' : tag === 'img' ? 'image' :
+      ['svg','canvas','video'].includes(tag) ? tag : 'image';
+    const matchesVisual = !q || [label,kind,visualRefs.get(el)].some(v => clean(v).toLocaleLowerCase().includes(q));
+    return {el,r,owner,label,declared,small,kind,matchesVisual};
+  });
+  const matchedOwners = new Set(visualMeta.filter(v => v.matchesVisual && v.owner).map(v => v.owner));
   const filtered = q ? collected.filter(({el}) => {
-    return [labelOf(el), el.id, el.getAttribute('name'), el.getAttribute('placeholder'),
+    return matchedOwners.has(el) || [labelOf(el), el.id, el.getAttribute('name'), el.getAttribute('placeholder'),
       el.getAttribute('role'), el.getAttribute('data-cybernova-ref'),
       radioContext(el), semanticOf(el).heading, semanticOf(el).description,
       ...semanticOf(el).groups.flatMap(g => [g.kind,g.label])
     ].some(v => clean(v).toLocaleLowerCase().includes(q));
   }) : collected;
-  // A document-local node map plus a session-wide counter prevents collisions
-  // across frames, filtered searches, pagination and replacement DOM nodes.
+  // Separate visual and action namespaces, one monotonically increasing counter.
   const key = Symbol.for('cybernova.refs.' + namespace);
   const refs = document[key] || (document[key] = new WeakMap());
   let nextRef = startRef;
@@ -1095,33 +1117,26 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
   });
   const currentRefs = new Set(rows.map(row => row.ref));
   const visuals = [];
-  for (const el of visualCandidates) {
-    const r = el.getBoundingClientRect();
-    const declared = [['alt',el.getAttribute('alt')],['aria-label',el.getAttribute('aria-label')],
-      ['title',el.getAttribute('title')],['svg-title',el.localName === 'svg' ? el.querySelector('title')?.textContent : '']]
-      .find(pair => clean(pair[1]));
-    let owner = null;
-    for (let p = parentOf(el), depth = 0; p && depth < 12; p = parentOf(p), depth++) {
-      if (MATCH(p) && visible(p)) { owner = p; break; }
-    }
-    const label = declared ? clean(declared[1]).slice(0,90) : '';
-    const tag = el.localName;
-    const small = r.width <= 48 && r.height <= 48;
-    const kind = (owner && small) ? 'icon' : tag === 'img' ? 'image' :
-      ['svg','canvas','video'].includes(tag) ? tag : 'image';
-    if (q && ![label,kind,owner && labelOf(owner),owner && semanticOf(owner).heading,
+  for (const {el,r,owner,label,declared,small,kind,matchesVisual} of visualMeta) {
+    if (q && !matchesVisual && ![owner && labelOf(owner),owner && semanticOf(owner).heading,
        ...(owner ? semanticOf(owner).groups.map(g => g.label) : [])]
       .some(v => clean(v).toLocaleLowerCase().includes(q))) continue;
     const ownerRef = owner && refs.get(owner);
-    visuals.push({kind,label,label_source:declared ? declared[0] : '',
+    visuals.push({el,row:{kind,label,label_source:declared ? declared[0] : '',
       owner_ref: currentRefs.has(ownerRef) ? ownerRef : '',
       decorative: el.getAttribute('aria-hidden') === 'true' || el.getAttribute('alt') === '',
       small,in_viewport:inViewport(el),bounds:{x:Math.round(r.x),y:Math.round(r.y),
-        width:Math.round(r.width),height:Math.round(r.height)}});
+        width:Math.round(r.width),height:Math.round(r.height)}}});
   }
-  visuals.sort((a,b) => Number(b.in_viewport) - Number(a.in_viewport));
+  visuals.sort((a,b) => Number(b.row.in_viewport) - Number(a.row.in_viewport));
+  const visualRows = visuals.slice(0,16).map(({el,row}) => {
+    let ref = visualRefs.get(el);
+    if (!ref) { ref = 'v' + nextRef++; visualRefs.set(el,ref); }
+    try { el.setAttribute('data-cybernova-visual-ref',ref); } catch (_) {}
+    return {...row,visual_ref:ref};
+  });
   return {total: filtered.length, rows, next_ref: nextRef,
-    visual_objects:visuals.slice(0,16),visual_total:visuals.length,
+    visual_objects:visualRows,visual_total:visuals.length,
     visual_scan_limited:visualTotal > visualCandidates.length};
 }
 """
@@ -2262,8 +2277,33 @@ class BrowserSession:
                 "complete": end >= result["total_rows"], "cells_clipped": clipped,
                 "untrusted_page_content": True}
 
+    def _map_visual_bounds(self, frame, row: dict) -> bool:
+        """Resolve only a read-only visual observation ID in its original frame."""
+        ref = row.get("visual_ref")
+        if not isinstance(ref, str) or not re.fullmatch(r"v\d{1,12}", ref):
+            return False
+        try:
+            locator = frame.locator('[data-cybernova-visual-ref="' + ref + '"]')
+            if locator.count() != 1:
+                return False
+            if locator.evaluate("""(el, info) => {
+                const refs = el.ownerDocument[Symbol.for('cybernova.visual.refs.' + info.namespace)];
+                return !!refs && refs.get(el) === info.ref && el.isConnected;
+            }""", {"namespace": self._ref_namespace, "ref": ref}, timeout=1000) is not True:
+                return False
+            box = locator.bounding_box(timeout=1000)
+            if not isinstance(box, dict) or not all(type(box.get(k)) in (int, float)
+                    and math.isfinite(box[k]) and abs(box[k]) <= 1000000
+                    for k in ("x", "y", "width", "height")) or box["width"] <= 0 or box["height"] <= 0:
+                return False
+            row["spatial"]["top_bounds"] = {k: round(box[k]) for k in ("x", "y", "width", "height")}
+            return True
+        except Exception:
+            return False
+
     def _snapshot(self, control_query: str | None = None, *, mode: str = "full",
-                  control_offset: int = 0, control_limit: int | None = None) -> dict:
+                  control_offset: int = 0, control_limit: int | None = None,
+                  map_visuals: bool = False) -> dict:
         if self._page is None or self._page.is_closed():
             raise ValueError("browser_no_open_page")
         page = self._page
@@ -2473,13 +2513,24 @@ class BrowserSession:
         }
         if mode != "orientation":
             visuals.sort(key=lambda row: not (row["frame_index"] == 0 and row["in_viewport"]))
-            result["visual_objects"] = visuals[:12]
+            selected_visuals = visuals[:12]
+            mapped = attempted_nested = 0
+            for row in selected_visuals:
+                if row["frame_index"] == 0:
+                    row["spatial"]["top_bounds"] = dict(row["spatial"]["bounds"])
+                    mapped += 1
+                elif (control_query is not None or map_visuals) and attempted_nested < 8:
+                    attempted_nested += 1
+                    if self._map_visual_bounds(frames[row["frame_index"]], row):
+                        mapped += 1
+            result["visual_objects"] = selected_visuals
             result["visual_coverage"] = {
                 "source": "dom_declared_not_pixel_recognition",
-                "observed_candidates": visual_total, "returned": min(len(visuals), 12),
+                "observed_candidates": visual_total, "returned": len(selected_visuals),
                 "complete": False,
-                "truncated": visual_limited or visual_total > min(len(visuals), 12),
-                "frame_coordinates": "local_for_nested_frames",
+                "truncated": visual_limited or visual_total > len(selected_visuals),
+                "geometry_mapped": mapped,
+                "frame_coordinates": "local_and_sampled_top_bounds",
             }
         # Always expose prioritised control slices (or empty for orientation)
         if mode == "orientation":
@@ -3429,7 +3480,7 @@ class BrowserSession:
                                           mask=masks, mask_color="#808080")
             if len(image) > 1500000:
                 raise ValueError("browser_screenshot_too_large")
-            snapshot = self._snapshot()
+            snapshot = self._snapshot(map_visuals=True)
             viewport = self._page.viewport_size
             if viewport is None:
                 viewport = self._page.evaluate(
@@ -3443,15 +3494,23 @@ class BrowserSession:
             for field in ("links", "buttons", "form_fields"):
                 visible[field] = [row for row in visible[field] if row["in_viewport"] or
                                   row.get("spatial", {}).get("top_viewport_intersection") is True]
+            visual_rows = []
+            for row in snapshot.get("visual_objects", []):
+                box = row.get("spatial", {}).get("top_bounds")
+                if not row.get("in_viewport") or not box:
+                    continue
+                if (box["x"] < viewport["width"] and box["y"] < viewport["height"]
+                        and box["x"] + box["width"] > 0 and box["y"] + box["height"] > 0):
+                    visual_rows.append(row)
             return {
                 "ok": True, "url": snapshot["url"], "title": snapshot["title"],
                 "tab": snapshot["tab"],
                 **{field: visible[field] for field in ("links", "buttons", "form_fields")},
                 "accessibility_coverage": visible["accessibility_coverage"],
-                "visual_objects": [row for row in snapshot.get("visual_objects", [])
-                                   if row["frame_index"] == 0 and row["in_viewport"]],
+                "visual_objects": visual_rows,
                 "visual_coverage": {**snapshot.get("visual_coverage", {}),
-                                    "scope": "main_viewport_dom_hints"},
+                                    "returned": len(visual_rows),
+                                    "scope": "top_viewport_intersecting_dom_hints"},
                 "image_data_url": "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii"),
                 "mime_type": "image/jpeg",
                 "masked_editable_fields": True,

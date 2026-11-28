@@ -97,3 +97,6 @@ The collector recognizes explicit tree/menu/listbox/grid/toolbar roles and untyp
 
 ### V4 continuation — live fixture gate
 A dedicated PR workflow installs actual Playwright Chromium and runs the browser intelligence unit + localhost integration fixtures. No public target access, account operations or secrets in tests. It is limited to PRs changing the browser runtime/test files and this workflow. Existing full quality gate remains unchanged. Profile updated for widget navigation, semantic activation and read-only visual owner refs.
+
+### V4 continuation — visual observations across frame boundaries
+Visual nodes have separate read-only vN IDs and a document WeakMap; IDs cannot resolve via the action ref parser. Searching a declared icon/image label also finds its observed owner. Targeted search and screenshots map sampled nested visual boxes using a verified frame locator; screenshot returns top-viewport intersecting DOM hints, with explicit non-atomic/partial coverage. Pixels still require a vision-capable model. Local fixture covers iframe icon-owner association and standalone diagram geometry.
