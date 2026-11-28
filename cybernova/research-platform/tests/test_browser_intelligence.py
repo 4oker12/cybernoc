@@ -5,6 +5,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from console.browser_intelligence import (  # noqa: E402
@@ -295,8 +296,20 @@ def _chromium_available():
 class LiveBrowserTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        os.environ["CYBERNOVA_GPT_BROWSER_EPHEMERAL"] = "1"
-        os.environ["CYBERNOVA_BROWSER_BACKEND"] = "playwright"
+        backend = os.environ.get("CYBERNOVA_TEST_BROWSER_BACKEND", "playwright")
+        if backend not in {"patchright", "playwright"}:
+            raise ValueError("invalid test browser backend")
+        env = patch.dict(os.environ, {
+            "CYBERNOVA_GPT_BROWSER_EPHEMERAL": "1",
+            "CYBERNOVA_BROWSER_BACKEND": backend,
+        })
+        env.start()
+        cls.addClassCleanup(env.stop)
+        # Test each engine independently; a successful fallback must not mask
+        # a broken primary backend. This changes no production routing policy.
+        strict = patch("console.browser_backend.backend_order", return_value=(backend,))
+        strict.start()
+        cls.addClassCleanup(strict.stop)
         from console.browser_control import BrowserSession, browser_control_call
         cls.call = staticmethod(browser_control_call)
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), _H)

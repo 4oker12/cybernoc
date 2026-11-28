@@ -121,3 +121,6 @@ Visual nodes have separate read-only vN IDs and a document WeakMap; IDs cannot r
 
 ### V4 continuation — P0.1 singleton card hypotheses
 An otherwise unmarked single div or custom element may be recognized as a card candidate when it has a visible title and local control plus a bounded visual border/background/shadow-and-padding signal. Repeated structural peers remain a separate evidence path. The inference has no action authority and an ordinal is only present for repeated peers. Local Chromium fixture verifies the single-card context; unknown layouts remain unclassified rather than invented.
+
+### V4 acceptance — independent primary and fallback backend gates
+Owner confirmed Patchright is primary and Playwright is fallback. The live workflow now selects each engine in an independent matrix job, installs and launches its Chromium, and runs the same localhost fixtures with a test-only strict backend selector (no silent fallback). The test environment is restored afterwards. Offline/default test selection remains Playwright for compatibility with the existing quality gate. Production routing remains unchanged. Acceptance requires both jobs to pass at the same revision; Windows and real DeepSeek acceptance remain separate. Status: CI pending at implementation time.
