@@ -1494,6 +1494,20 @@ class RefInteractionTests(unittest.TestCase):
         button.dblclick.assert_not_called()
 
 
+class InferredCardTests(unittest.TestCase):
+    def test_card_is_explicitly_inferred_and_sanitized(self):
+        from console.browser_control import _semantic_context
+        data = {"groups": [{"kind": "card_candidate", "label": "Example card",
+                            "inferred": True, "ordinal": 2,
+                            "evidence": ["repeated_sibling_structure", "local_control", "untrusted"]},
+                           {"kind": "card_candidate", "label": "Unmarked"}]}
+        groups = _semantic_context(data)["groups"]
+        self.assertEqual(len(groups), 1)
+        self.assertTrue(groups[0]["inferred"])
+        self.assertEqual(groups[0]["ordinal"], 2)
+        self.assertEqual(groups[0]["evidence"], ["repeated_sibling_structure", "local_control"])
+
+
 class NativeAXEvidenceTests(unittest.TestCase):
     def test_ax_properties_never_echo_name_or_value(self):
         from console.browser_control import _ax_properties

@@ -204,6 +204,13 @@ document.getElementById('h').attachShadow({mode:'open'}).innerHTML=
 <iframe srcdoc="<p>Inside frame marker</p><button id='frame-action'>Frame button</button>"></iframe>"""
 
 
+CARD_PAGE = b"""<!doctype html><title>Cards</title><main>
+<div style="display:flex;gap:20px">
+  <div><h2>Alpha</h2><p>First item</p><button>Details</button></div>
+  <div><h2>Beta</h2><p>Second item</p><button>Details</button></div>
+</div></main>"""
+
+
 class _H(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
@@ -211,9 +218,10 @@ class _H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(PAGE)))
+        body = CARD_PAGE if self.path == "/cards" else PAGE
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(PAGE)
+        self.wfile.write(body)
 
 
 def _chromium_available():
@@ -243,6 +251,18 @@ class LiveBrowserTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.session.close()
         cls.srv.shutdown()
+
+    def test_live_inferred_card_disambiguates_equal_controls(self):
+        c = lambda n, **a: self.call(n, a, self.session)[0]
+        self.assertTrue(c("browser_navigate", url=self.url + "cards")["ok"])
+        result = c("browser_find_controls", query="Beta")
+        buttons = [row for row in result["buttons"] if row["name"] == "Details"]
+        self.assertEqual(len(buttons), 1, result)
+        groups = buttons[0]["semantic"]["groups"]
+        card = next(group for group in groups if group["kind"] == "card_candidate")
+        self.assertEqual(card["label"], "Beta")
+        self.assertTrue(card["inferred"])
+        self.assertEqual(card["ordinal"], 2)
 
     def test_live_delta_verify_find_text_and_recovery(self):
         c = lambda n, **a: self.call(n, a, self.session)[0]  # noqa: E731

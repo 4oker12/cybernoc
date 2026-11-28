@@ -52,3 +52,6 @@ Targeted control search and screenshot observations now request up to six native
 
 ### CI baseline correction
 The v3 HEAD quality gate (run 46128600459) already failed test_large_catalog_routes_exact_tool_without_exceeding_provider_budget: expected 158 omitted vs actual 159. Production correctly excludes both internal meta-tools from discovered/omitted external counts. The test now excludes both rather than changing routing or weakening its assertions. V4 run 46136671085: Python compilation and repo guard passed; 661 tests run, one inherited assertion failure, three skipped. New HEAD must be checked independently.
+
+### V4 continuation — P0.1 inferred repeated content containers
+A bounded structural heuristic recognizes repeated sibling div containers with similar immediate-child shapes, a local visible control and a visible title/media signal. Returned `card_candidate` groups are explicitly inferred, include ordinal and evidence, and participate in the existing targeted search. No new actionable refs or website-specific selectors. One-off or differently shaped cards may remain unclassified. Sanitizer unit test and local Chromium fixture added.

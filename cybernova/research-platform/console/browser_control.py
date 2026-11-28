@@ -406,7 +406,7 @@ def _redact_text(value: str, limit: int = MAX_TEXT) -> str:
 _SEMANTIC_KINDS = frozenset({
     "form", "search", "dialog", "alertdialog", "article", "list", "listitem",
     "table", "row", "cell", "grid", "group", "navigation", "main",
-    "region", "fieldset", "section", "menu", "tablist", "tabpanel",
+    "region", "fieldset", "section", "menu", "tablist", "tabpanel", "card_candidate",
 })
 
 
@@ -425,6 +425,19 @@ def _semantic_context(raw) -> dict:
             label = _redact_text(group["label"], 90).strip()
             if label:
                 item["label"] = label
+        if group["kind"] == "card_candidate":
+            # This is explicitly an inference, not a native semantic role.
+            if group.get("inferred") is not True:
+                continue
+            item["inferred"] = True
+            ordinal = group.get("ordinal")
+            if type(ordinal) is int and 1 <= ordinal <= 1000:
+                item["ordinal"] = ordinal
+            evidence = group.get("evidence")
+            if isinstance(evidence, list):
+                item["evidence"] = [x for x in evidence[:4] if x in (
+                    "repeated_sibling_structure", "visible_title", "media", "local_control"
+                )]
         groups.append(item)
     if groups:
         result["groups"] = groups
@@ -829,6 +842,54 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
       child.matches('legend,caption,h1,h2,h3,h4,h5,h6,[role="heading"]') && visible(child));
     return direct ? clean(direct.innerText).slice(0,90) : '';
   };
+  // Infer repeated, unmarked content containers without site-specific class names.
+  // This is only a structural hypothesis; never promotes a container to a control.
+  const cardCache = new WeakMap();
+  const titleSelector = 'h1,h2,h3,h4,h5,h6,[role="heading"]';
+  const sensitiveContent = 'input,textarea,select,[contenteditable],[role="textbox"],[role="searchbox"]';
+  const safeTitle = node => {
+    const candidates = [...node.children].slice(0,12);
+    for (const child of candidates) {
+      const title = child.matches(titleSelector) ? child : child.querySelector(titleSelector);
+      if (title && visible(title) && !title.matches(sensitiveContent) && !title.querySelector(sensitiveContent)) {
+        const text = clean(title.innerText).slice(0,90);
+        if (text) return text;
+      }
+    }
+    for (const child of candidates) {
+      if (!visible(child) || child.matches(sensitiveContent + ',button,a,[role="button"],[role="link"]') ||
+          child.children.length || child.isContentEditable) continue;
+      const text = clean(child.innerText).slice(0,90);
+      if (text) return text;
+    }
+    return '';
+  };
+  const shapeOf = node => node.tagName + ':' + [...node.children].slice(0,8)
+    .map(child => child.tagName + '/' + (child.getAttribute('role') || '')).join(',');
+  const inferredCard = node => {
+    if (cardCache.has(node)) return cardCache.get(node);
+    let result = null;
+    if (node.matches('div') && node.parentElement && visible(node) &&
+        node.children.length >= 2 && node.children.length <= 16) {
+      const siblings = [...node.parentElement.children].slice(0,48);
+      const shape = shapeOf(node);
+      const peers = siblings.filter(sibling => sibling.matches('div') && shapeOf(sibling) === shape && visible(sibling));
+      const ordinal = peers.indexOf(node) + 1;
+      const localControl = node.querySelector('button,a[href],input,select,[role="button"],[role="link"]');
+      if (ordinal && peers.length >= 2 && localControl && visible(localControl)) {
+        const label = safeTitle(node);
+        const media = node.querySelector('img,svg,[role="img"]');
+        if (label || (media && visible(media))) {
+          const evidence = ['repeated_sibling_structure','local_control'];
+          if (label) evidence.push('visible_title');
+          if (media && visible(media)) evidence.push('media');
+          result = {kind:'card_candidate',label,inferred:true,ordinal,evidence};
+        }
+      }
+    }
+    cardCache.set(node,result);
+    return result;
+  };
   const semanticOf = el => {
     if (semanticCache.has(el)) return semanticCache.get(el);
     const groups = [];
@@ -837,7 +898,14 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
          p = parentOf(p), depth++) {
       const role = (p.getAttribute('role') || '').split(/\s+/)[0];
       const kind = groupKinds.has(role) ? role : nativeKind[p.tagName];
-      if (!kind || !visible(p)) continue;
+      if (!visible(p)) continue;
+      if (!kind) {
+        if (!groups.some(g => g.kind === 'card_candidate')) {
+          const candidate = inferredCard(p);
+          if (candidate) groups.push(candidate);
+        }
+        continue;
+      }
       const label = groupLabel(p);
       groups.push({kind, label});
       if (!heading && label && ['article','section','region','dialog','form'].includes(kind)) heading = label;
