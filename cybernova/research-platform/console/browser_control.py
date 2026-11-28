@@ -358,7 +358,7 @@ def _safe_url(url: str) -> str:
         path = re.sub(r"(?i)(?:[0-9a-f]{16,}|\d{5,})", "{id}", path)
         path = re.sub(r"/[^/]{65,}", "/{long-segment}", path)
         host = parsed.hostname or ""
-        return parsed.scheme + "://" + host + path
+        return parsed.scheme + "://" + host + _redact_text(path)
     except ValueError:
         return "[invalid-url]"
 
@@ -698,7 +698,8 @@ class BrowserSession:
         self._payment_filled_fields: list[tuple[str, str]] = []
         self._console_events: list[dict] = []
         self._network_events: list[dict] = []
-        self._request_started: dict[int, float] = {}
+        self._request_started: dict[int, tuple[float, dict]] = {}
+        self._network_session_id = secrets.token_hex(8)
         self._attached_pages: set[int] = set()
         self._write_approval_handler = None
         self._active_action = None
@@ -1371,15 +1372,39 @@ class BrowserSession:
         }) if len(self._console_events) < 200 else None)
         page.on("request", self._on_request)
         page.on("response", self._on_response)
+        page.on("requestfinished", self._on_request_finished)
         page.on("requestfailed", self._on_request_failed)
 
     def _on_request(self, req):
-        self._request_started[id(req)] = time.monotonic()
+        if id(req) in self._request_started:
+            return
+        now = time.time()
+        event = {
+            "request_id": secrets.token_hex(8),
+            "session_id": self._network_session_id,
+            "url": _safe_url(req.url), "method": req.method,
+            "resource_type": req.resource_type, "status": None,
+            "ok": None, "duration_ms": 0.0,
+            "timestamp_started": now, "timestamp_updated": now,
+            "state": "pending", "state_history": ["started", "pending"],
+        }
+        self._request_started[id(req)] = (time.monotonic(), event)
+        self._network_events.append(event)
+        self._network_events = self._network_events[-200:]
+
+    def _update_request(self, req, state):
+        if id(req) not in self._request_started:
+            self._on_request(req)
+        started, event = self._request_started[id(req)]
+        event["state"] = state
+        event["state_history"].append(state)
+        event["timestamp_updated"] = time.time()
+        event["duration_ms"] = round((time.monotonic() - started) * 1000, 1)
+        return event
 
     def _on_response(self, response):
         req = response.request
-        started = self._request_started.pop(id(req), None)
-        elapsed = round((time.monotonic() - started) * 1000, 1) if started else None
+        event = self._update_request(req, "response_received")
         headers = response.headers
         safe_headers = {
             key: _redact_text(str(headers[key]))[:240]
@@ -1391,13 +1416,8 @@ class BrowserSession:
                 "etag",
             ) if key in headers
         }
-        self._network_events.append({
-            "url": _safe_url(response.url), "method": req.method,
-            "resource_type": req.resource_type, "status": int(response.status),
-            "ok": bool(response.ok), "duration_ms": elapsed,
-            "safe_response_headers": safe_headers,
-        })
-        self._network_events = self._network_events[-200:]
+        event.update(status=int(response.status), ok=bool(response.ok),
+                     safe_response_headers=safe_headers)
         if int(response.status) >= 400:
             try:
                 host = (urlsplit(response.url).hostname or "").lower()
@@ -1409,16 +1429,23 @@ class BrowserSession:
                 http_status=int(response.status), status="failed",
             )
 
+    def _on_request_finished(self, req):
+        event = self._update_request(req, "completed")
+        self._request_started.pop(id(req), None)
+
     def _on_request_failed(self, req):
-        started = self._request_started.pop(id(req), None)
-        elapsed = round((time.monotonic() - started) * 1000, 1) if started else None
-        self._network_events.append({
-            "url": _safe_url(req.url), "method": req.method,
-            "resource_type": req.resource_type, "status": None,
-            "ok": False, "duration_ms": elapsed,
-            "failure": _redact_text(req.failure or "request_failed"),
-        })
-        self._network_events = self._network_events[-200:]
+        failure = str(req.failure or "").upper()
+        if "ERR_BLOCKED_BY_CLIENT" in failure:
+            state, reason = "blocked", "blocked_by_client"
+        elif "ERR_ABORTED" in failure:
+            state, reason = "cancelled", "request_aborted"
+        elif "ERR_TIMED_OUT" in failure:
+            state, reason = "timed_out", "network_timeout"
+        else:
+            state, reason = "failed", "request_failed"
+        event = self._update_request(req, state)
+        event.update(ok=False, failure=reason)
+        self._request_started.pop(id(req), None)
         try:
             host = (urlsplit(req.url).hostname or "").lower()
         except ValueError:
@@ -1426,7 +1453,7 @@ class BrowserSession:
         diagnostic_event(
             "browser_request_failed", kind="error", source="browser",
             target_host=host, method=req.method, resource_type=req.resource_type,
-            status="failed",
+            status=state,
         )
 
     def _host_is_public(self, host: str) -> bool:

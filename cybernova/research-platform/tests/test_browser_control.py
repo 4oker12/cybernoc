@@ -3,7 +3,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 import sys
 import threading
@@ -682,6 +682,91 @@ class BrowserControlTests(unittest.TestCase):
             self.assertFalse(result["request_response_bodies_captured"])
             self.assertFalse(result["sensitive_headers_captured"])
             self.assertTrue(result["safe_response_headers_captured"])
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+
+    def test_network_request_is_visible_while_response_is_delayed(self):
+        browser = BrowserSession()
+        try:
+            request = SimpleNamespace(
+                url="https://example.test/api/data?access_token=private-value",
+                method="GET", resource_type="fetch",
+            )
+            browser._on_request(request)
+            with patch.object(browser, "_ensure"):
+                result = browser._dispatch("browser_network", {})
+            self.assertEqual(len(result["events"]), 1)
+            event = result["events"][0]
+            self.assertEqual(event["state"], "pending")
+            self.assertEqual(event["state_history"], ["started", "pending"])
+            self.assertEqual(event["url"], "https://example.test/api/data")
+            self.assertNotIn("private-value", str(result))
+            self.assertNotIn("path-secret", _safe_url(
+                "https://example.test/password=path-secret?access_token=private-value"
+            ))
+            self.assertEqual(event["session_id"], browser._network_session_id)
+            self.assertTrue(event["request_id"])
+            self.assertLessEqual(event["timestamp_started"], event["timestamp_updated"])
+            self.assertIn(id(request), browser._request_started)
+
+            response = SimpleNamespace(
+                request=request, url=request.url, status=200, ok=True,
+                headers={"content-type": "application/json",
+                         "set-cookie": "session=secret"},
+            )
+            browser._on_response(response)
+            self.assertIs(result["events"][0], event)
+            self.assertEqual(event["state"], "response_received")
+            self.assertEqual(event["status"], 200)
+            self.assertEqual(event["safe_response_headers"],
+                             {"content-type": "application/json"})
+            browser._on_request_finished(request)
+            self.assertEqual(event["state"], "completed")
+            self.assertEqual(event["state_history"],
+                             ["started", "pending", "response_received", "completed"])
+            self.assertNotIn(id(request), browser._request_started)
+            self.assertEqual(len(browser._network_events), 1)
+            self.assertNotIn("session=secret", str(event))
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+
+    def test_network_http_error_completes_and_transport_failures_are_classified(self):
+        browser = BrowserSession()
+        try:
+            http_error = SimpleNamespace(url="https://example.test/missing",
+                                         method="GET", resource_type="fetch")
+            browser._on_request(http_error)
+            browser._on_response(SimpleNamespace(
+                request=http_error, url=http_error.url, status=503,
+                ok=False, headers={},
+            ))
+            browser._on_request_finished(http_error)
+            self.assertEqual(browser._network_events[-1]["state"], "completed")
+            self.assertEqual(browser._network_events[-1]["status"], 503)
+            self.assertFalse(browser._network_events[-1]["ok"])
+
+            cases = (
+                ("net::ERR_BLOCKED_BY_CLIENT", "blocked", "blocked_by_client"),
+                ("net::ERR_ABORTED", "cancelled", "request_aborted"),
+                ("net::ERR_TIMED_OUT", "timed_out", "network_timeout"),
+                ("net::ERR_CONNECTION_RESET password=private-value",
+                 "failed", "request_failed"),
+            )
+            for failure, state, safe_reason in cases:
+                with self.subTest(state=state):
+                    request = SimpleNamespace(
+                        url="https://example.test/api?secret=private-value",
+                        method="GET", resource_type="fetch", failure=failure,
+                    )
+                    browser._on_request(request)
+                    browser._on_request_failed(request)
+                    event = browser._network_events[-1]
+                    self.assertEqual(event["state"], state)
+                    self.assertEqual(event["state_history"],
+                                     ["started", "pending", state])
+                    self.assertEqual(event["failure"], safe_reason)
+                    self.assertNotIn("private-value", str(event))
+                    self.assertNotIn(id(request), browser._request_started)
         finally:
             browser._executor.shutdown(wait=False, cancel_futures=True)
 
