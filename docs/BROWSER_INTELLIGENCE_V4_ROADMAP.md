@@ -19,3 +19,6 @@ Browser DOM/frame/open shadow + available accessibility/visual evidence -> sanit
 
 ## Implementation order and record
 All stages owned by GPT-6.2 unless a real delegation facility is available. Start P0.1, then integrate P0.2/3 and P0.5/6, audit P0.4 and P0.7/8; update provider-neutral profile without overriding custom profiles. Record per-stage commits, focused checks, limitations. Live DeepSeek/Chromium acceptance remains local. Initial status: all stages pending.
+
+### P0.1 implementation record
+Existing collector now reports bounded nearest semantic ancestry, native form association, ARIA description, controls/owns and popup evidence. Search includes group context before the existing collector cap. No new tool or authorization route. Direct heading/explicit labels only; generic unmarked cards, closed shadow roots and full accessibility tree remain outside this stage. Focused sanitizer/collector tests added; execution pending CI or local checkout.

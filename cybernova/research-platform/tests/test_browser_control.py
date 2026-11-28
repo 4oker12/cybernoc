@@ -1426,5 +1426,33 @@ class BrowserControlTests(unittest.TestCase):
         self.assertIn("fingerprint", js)
 
 
+class SemanticContextTests(unittest.TestCase):
+    def test_semantic_context_is_bounded_and_redacted(self):
+        from console.browser_control import _semantic_context
+        result = _semantic_context({
+            "groups": [{"kind": "form", "label": "Search products"},
+                       {"kind": "invalid", "label": "do not expose"},
+                       {"kind": "article", "label": "person@example.com"}],
+            "description": "password=example-secret",
+            "controls": ["results", "not a valid id"],
+            "has_popup": "listbox",
+            "value": "do not expose",
+        })
+        self.assertEqual(result["groups"][0], {"kind": "form", "label": "Search products"})
+        self.assertEqual(result["groups"][1]["label"], "[REDACTED EMAIL]")
+        self.assertEqual(result["description"], "[REDACTED SECRET]")
+        self.assertEqual(result["controls"], ["results"])
+        self.assertEqual(result["has_popup"], "listbox")
+        self.assertNotIn("value", result)
+
+    def test_collector_searches_group_context(self):
+        from console.browser_control import _collect_elements_js
+        js = _collect_elements_js()
+        self.assertIn("semanticOf(el).groups", js)
+        self.assertIn("semantic: semanticOf(el)", js)
+        self.assertIn("aria-controls", js)
+        self.assertIn("el.form", js)
+
+
 if __name__ == "__main__":
     unittest.main()

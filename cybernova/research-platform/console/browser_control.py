@@ -172,7 +172,7 @@ BROWSER_CONTROL_TOOLS = [
            "control": {"type": ["string", "null"], "description": "Control name or id:<id> that must exist"}},
           ["expect_text", "absent_text", "url_contains", "control"]),
     _tool("browser_find_controls",
-          "Find visible links, buttons, native disclosures or form controls by a literal name, label, placeholder or id across page frames, before the normal snapshot control limit. Use after an ambiguous or missing target. Read-only.",
+          "Find visible links, buttons, native disclosures or form controls by a literal name, label, placeholder, id or semantic group context across page frames, before the normal snapshot control limit. Use after an ambiguous or missing target. Read-only.",
           {"query": STRING}, ["query"]),
     _tool("browser_set_checked",
           "Set a visible native checkbox or radio by label or snapshot id. For a radio with a "
@@ -401,6 +401,48 @@ def _redact_text(value: str, limit: int = MAX_TEXT) -> str:
     value = re.sub(r"(?<!\d)(?:\d[ -]*?){13,19}(?!\d)", "[REDACTED NUMBER]", value)
     return value[:limit]
 
+
+
+_SEMANTIC_KINDS = frozenset({
+    "form", "search", "dialog", "alertdialog", "article", "list", "listitem",
+    "table", "row", "cell", "grid", "group", "navigation", "main",
+    "region", "fieldset", "section", "menu", "tablist", "tabpanel",
+})
+
+
+def _semantic_context(raw) -> dict:
+    """Expose only bounded, redacted structural evidence; never input values."""
+    if not isinstance(raw, dict):
+        return {}
+    result = {}
+    groups = []
+    for group in (raw.get("groups") or [])[:4]:
+        if not isinstance(group, dict) or group.get("kind") not in _SEMANTIC_KINDS:
+            continue
+        item = {"kind": group["kind"]}
+        if isinstance(group.get("label"), str):
+            label = _redact_text(group["label"], 90).strip()
+            if label:
+                item["label"] = label
+        groups.append(item)
+    if groups:
+        result["groups"] = groups
+    for key in ("description", "heading"):
+        value = raw.get(key)
+        if isinstance(value, str):
+            value = _redact_text(value, 120).strip()
+            if value:
+                result[key] = value
+    for key in ("controls", "owns"):
+        values = raw.get(key)
+        if isinstance(values, list):
+            ids = [v for v in values[:4] if isinstance(v, str) and
+                   re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.:-]{0,79}", v)]
+            if ids:
+                result[key] = ids
+    if raw.get("has_popup") in ("true", "menu", "listbox", "tree", "grid", "dialog"):
+        result["has_popup"] = raw["has_popup"]
+    return result
 
 
 def _classify_page_type(url: str, title: str, visible_text: str,
@@ -724,6 +766,48 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
       !el.closest('[hidden],[aria-hidden="true"]') &&
       el.getAttribute('type') !== 'hidden';
   };
+  // Semantic context is structural evidence, not a prediction of user intent.
+  // Walk composed ancestry so open-shadow controls retain their host context.
+  const semanticCache = new WeakMap();
+  const groupKinds = new Set(['form','search','dialog','alertdialog','article',
+    'list','listitem','table','row','cell','grid','group','navigation','main',
+    'region','fieldset','section','menu','tablist','tabpanel']);
+  const nativeKind = {FORM:'form',DIALOG:'dialog',ARTICLE:'article',UL:'list',
+    OL:'list',LI:'listitem',TABLE:'table',TR:'row',TD:'cell',TH:'cell',
+    FIELDSET:'fieldset',NAV:'navigation',MAIN:'main',SECTION:'section'};
+  const parentOf = node => node.assignedSlot || node.parentElement || node.getRootNode()?.host || null;
+  const groupLabel = node => {
+    const named = clean(node.getAttribute('aria-label') || byIds(node,'aria-labelledby'));
+    if (named) return named.slice(0,90);
+    const direct = [...node.children].find(child =>
+      child.matches('legend,caption,h1,h2,h3,h4,h5,h6,[role="heading"]') && visible(child));
+    return direct ? clean(direct.innerText).slice(0,90) : '';
+  };
+  const semanticOf = el => {
+    if (semanticCache.has(el)) return semanticCache.get(el);
+    const groups = [];
+    let heading = '';
+    for (let p = parentOf(el), depth = 0; p && depth < 24 && groups.length < 4;
+         p = parentOf(p), depth++) {
+      const role = (p.getAttribute('role') || '').split(/\s+/)[0];
+      const kind = groupKinds.has(role) ? role : nativeKind[p.tagName];
+      if (!kind || !visible(p)) continue;
+      const label = groupLabel(p);
+      groups.push({kind, label});
+      if (!heading && label && ['article','section','region','dialog','form'].includes(kind)) heading = label;
+    }
+    // Native form association may point outside the ancestry (form=...).
+    if (el.form && !groups.some(g => g.kind === 'form') && groups.length < 4 && visible(el.form)) {
+      groups.push({kind:'form',label:groupLabel(el.form)});
+    }
+    const ids = attr => (el.getAttribute(attr) || '').trim().split(/\s+/).filter(Boolean).slice(0,4);
+    const info = {groups, heading,
+      description: clean(byIds(el,'aria-describedby')).slice(0,120),
+      controls: ids('aria-controls'), owns: ids('aria-owns'),
+      has_popup: el.getAttribute('aria-haspopup') || ''};
+    semanticCache.set(el,info);
+    return info;
+  };
   const SELECTOR = 'a,button,input,textarea,select,[role="link"],[role="button"],' +
     '[role="combobox"],[role="option"],[role="checkbox"],[role="radio"],' +
     '[role="textbox"],[role="searchbox"],[contenteditable="true"],' +
@@ -751,7 +835,9 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
   const filtered = q ? collected.filter(({el}) => {
     return [labelOf(el), el.id, el.getAttribute('name'), el.getAttribute('placeholder'),
       el.getAttribute('role'), el.getAttribute('data-cybernova-ref'),
-      radioContext(el)].some(v => clean(v).toLocaleLowerCase().includes(q));
+      radioContext(el), semanticOf(el).heading, semanticOf(el).description,
+      ...semanticOf(el).groups.flatMap(g => [g.kind,g.label])
+    ].some(v => clean(v).toLocaleLowerCase().includes(q));
   }) : collected;
   // A document-local node map plus a session-wide counter prevents collisions
   // across frames, filtered searches, pagination and replacement DOM nodes.
@@ -792,6 +878,7 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
       readonly: !!el.readOnly || el.getAttribute('aria-readonly') === 'true',
       required: !!el.required || el.getAttribute('aria-required') === 'true',
       choice_context: radioContext(el),
+      semantic: semanticOf(el),
       expanded: el.matches('details > summary:first-of-type')
         ? String(el.parentElement && el.parentElement.open) : el.getAttribute('aria-expanded'),
       selected: el.getAttribute('aria-selected'),
@@ -1989,6 +2076,9 @@ class BrowserSession:
                     identity["shadow_host"] = str(item["shadow_host"])[:80]
                 if control_query is not None:
                     identity["bounds"] = item["bounds"]  # local frame coordinates, not a click target
+                semantic = _semantic_context(item.get("semantic"))
+                if semantic:
+                    identity["semantic"] = semantic
                 if item["disabled"]:
                     identity["disabled"] = True
                 role = item["role"]
