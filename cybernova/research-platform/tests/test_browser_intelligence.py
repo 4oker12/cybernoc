@@ -464,7 +464,7 @@ class LiveBrowserTests(unittest.TestCase):
         before_widget = next(row for row in before["buttons"] if row.get("id") == "before-widget")
         blocked = c("browser_click_button", name="key:ArrowDown:ref:" + before_widget["ref"])
         self.assertEqual(blocked.get("error"), "browser_target_focus_not_confirmed", blocked)
-        self.assertEqual(self.session._page.locator("#out").inner_text(), "Untouched")
+        self.assertTrue(c("browser_verify", expect_text=["Untouched"])["verified"])
         after = c("browser_find_controls", query="After focus redirect")
         after_widget = next(row for row in after["buttons"] if row.get("id") == "after-widget")
         dispatched = c("browser_click_button", name="key:ArrowDown:ref:" + after_widget["ref"])
@@ -473,7 +473,7 @@ class LiveBrowserTests(unittest.TestCase):
         self.assertFalse(dispatched.get("focus_after_dispatch"), dispatched)
         self.assertTrue(dispatched.get("focus_after_dispatch_observed"), dispatched)
         self.assertFalse(dispatched["widget_state_after"]["focused"])
-        self.assertEqual(self.session._page.locator("#out").inner_text(), "Key reached widget")
+        self.assertTrue(c("browser_verify", expect_text=["Key reached widget"])["verified"])
 
     def test_live_hover_reveals_dynamic_page_content(self):
         c = lambda n, **a: self.call(n, a, self.session)[0]
@@ -495,9 +495,12 @@ class LiveBrowserTests(unittest.TestCase):
             "clear": True, "human_like": False,
         }, self.session)
         self.assertFalse(failed, filled)
-        editor_frame = next(frame for frame in self.session._page.frames
-                            if frame != self.session._page.main_frame)
-        self.assertEqual(editor_frame.locator("#tinymce").inner_text(), "Revised article body")
+        def read_editor_text():
+            editor_frame = next(frame for frame in self.session._page.frames
+                                if frame != self.session._page.main_frame)
+            return editor_frame.locator("#tinymce").inner_text()
+        editor_text = self.session._executor.submit(read_editor_text).result(timeout=10)
+        self.assertEqual(editor_text, "Revised article body")
 
     def test_live_ax_shadow_and_frame_correlation(self):
         c = lambda n, **a: self.call(n, a, self.session)[0]
