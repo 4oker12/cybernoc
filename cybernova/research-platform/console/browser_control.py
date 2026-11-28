@@ -827,11 +827,13 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
 ({query, startRef, namespace}) => {
   const radioContext = __RADIO_CONTEXT__;
   const clean = v => String(v || '').replace(/\s+/g, ' ').trim();
-  const byIds = (el, attr) => (el.getAttribute(attr) || '').split(/\s+/)
-    .filter(Boolean).map(id => {
-      const node = el.getRootNode().getElementById?.(id);
-      return node ? clean(node.innerText || node.textContent) : '';
-    }).filter(Boolean).join(' ');
+  const sensitiveContent = 'input,textarea,select,[contenteditable],[role="textbox"],[role="searchbox"]';
+  const structuralText = node => node && !node.isContentEditable &&
+    !node.closest(sensitiveContent) && !node.querySelector(sensitiveContent)
+    ? clean(node.innerText || node.textContent) : '';
+  const byIds = (el, attr) => (el.getAttribute(attr) || '').trim().split(/\s+/)
+    .filter(Boolean).slice(0,8).map(id => structuralText(el.getRootNode().getElementById?.(id)))
+    .filter(Boolean).join(' ');
   const editable = el => el.isContentEditable ||
     ['textbox','searchbox'].includes(el.getAttribute('role'));
   const labelOf = el => clean(el.getAttribute('aria-label') ||
@@ -869,26 +871,25 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
     if (named) return named.slice(0,90);
     const direct = [...node.children].find(child =>
       child.matches('legend,caption,h1,h2,h3,h4,h5,h6,[role="heading"]') && visible(child));
-    return direct ? clean(direct.innerText).slice(0,90) : '';
+    return structuralText(direct).slice(0,90);
   };
   // Infer repeated, unmarked content containers without site-specific class names.
   // This is only a structural hypothesis; never promotes a container to a control.
   const cardCache = new WeakMap();
   const titleSelector = 'h1,h2,h3,h4,h5,h6,[role="heading"]';
-  const sensitiveContent = 'input,textarea,select,[contenteditable],[role="textbox"],[role="searchbox"]';
   const safeTitle = node => {
     const candidates = [...node.children].slice(0,12);
     for (const child of candidates) {
       const title = child.matches(titleSelector) ? child : child.querySelector(titleSelector);
-      if (title && visible(title) && !title.matches(sensitiveContent) && !title.querySelector(sensitiveContent)) {
-        const text = clean(title.innerText).slice(0,90);
+      if (title && visible(title)) {
+        const text = structuralText(title).slice(0,90);
         if (text) return text;
       }
     }
     for (const child of candidates) {
       if (!visible(child) || child.matches(sensitiveContent + ',button,a,[role="button"],[role="link"]') ||
           child.children.length || child.isContentEditable) continue;
-      const text = clean(child.innerText).slice(0,90);
+      const text = structuralText(child).slice(0,90);
       if (text) return text;
     }
     return '';
@@ -923,7 +924,7 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
         .slice(0,16).find(visible);
       if (localControl) {
         const label = safeTitle(node);
-        const media = [...node.querySelectorAll('img,svg,[role="img"]')].slice(0,12).find(visible);
+        const media = [...node.querySelectorAll('img,svg,canvas,video,[role="img"]')].slice(0,12).find(visible);
         // A single card needs a visible title plus a visual boundary. Do not
         // infer grouping from a class name, isolated button or large wrapper.
         const single = !repeated && label && visualBoundary(node);

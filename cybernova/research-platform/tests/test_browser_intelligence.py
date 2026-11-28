@@ -233,12 +233,12 @@ document.getElementById('h').attachShadow({mode:'open'}).innerHTML=
 
 CARD_PAGE = b"""<!doctype html><title>Cards</title><main>
 <div style="display:flex;gap:20px">
-  <div><h2>Alpha</h2><p>First item</p><button>Details</button></div>
-  <div><h2>Beta</h2><p>Second item</p><button>Details<svg aria-hidden="true" width="18" height="18"><circle cx="9" cy="9" r="5"/></svg></button></div>
+  <div><h2>Alpha</h2><p>First item</p><button hidden>Placeholder</button><button>Details</button></div>
+  <div><h2>Beta</h2><p>Second item</p><button hidden>Placeholder</button><button aria-describedby="editor">Details<svg aria-hidden="true" width="18" height="18"><circle cx="9" cy="9" r="5"/></svg></button></div>
 </div>
 <div style="border:1px solid #555;padding:12px;max-width:280px">
  <h2>Unique card</h2><p>Single content group</p><button>Details</button>
-</div></main>"""
+</div><div role="textbox"><span id="editor">Editable fixture text</span></div></main>"""
 
 
 WIDGET_PAGE = b"""<!doctype html><title>Widgets</title>
@@ -340,6 +340,8 @@ class LiveBrowserTests(unittest.TestCase):
         self.assertEqual(card["label"], "Beta")
         self.assertTrue(card["inferred"])
         self.assertEqual(card["ordinal"], 2)
+        self.assertNotIn("description", buttons[0]["semantic"])
+        self.assertNotIn("Editable fixture text", repr(result))
         icon = next(row for row in result["visual_objects"] if row["kind"] == "icon")
         self.assertEqual(icon["owner_ref"], buttons[0]["ref"])
         self.assertTrue(icon["decorative"])

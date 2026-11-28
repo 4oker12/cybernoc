@@ -86,6 +86,12 @@ The v3 HEAD quality gate (run 46128600459) already failed test_large_catalog_rou
 ### V4 continuation — P0.1 inferred repeated content containers
 A bounded structural heuristic recognizes repeated sibling div containers with similar immediate-child shapes, a local visible control and a visible title/media signal. Returned `card_candidate` groups are explicitly inferred, include ordinal and evidence, and participate in the existing targeted search. No new actionable refs or website-specific selectors. One-off or differently shaped cards may remain unclassified. Sanitizer unit test and local Chromium fixture added.
 
+#### P0.1 follow-up: reliable local card evidence
+
+Card recognition currently tests only the first local control and the first media node, so a hidden placeholder can suppress evidence from its visible siblings. Check bounded visible candidates and keep editable content out of semantic labels. The coordinator owns the collector change. A local Chromium fixture must distinguish equal controls even with hidden placeholders and must keep editable text out of the result.
+
+Integrated with the singleton-card change, which added bounded scanning for visible controls. The regression fixture covers hidden placeholders and suppressed editable ARIA descriptions. Canvas and video now count as local media evidence. ARIA references and structural titles exclude editable text. The repository artifact guard and syntax checks passed.
+
 ### V4 continuation — P0.2 cross-frame and open-shadow AX correlation
 Replaced main-document-only selector lookup with bounded CDP search, backend node resolution and collector WeakMap identity verification. Sample prioritizes distinct frame/shadow scopes; uses frame CDP targets where available and page target for same-process frames. Maps verified ref bounding boxes into top viewport through Playwright, and includes sampled nested controls in screenshot metadata when their box intersects the viewport. Coverage remains partial; intersection is not proof of visibility or atomic capture. Mock and local Chromium fixtures added; no raw AX values or names exposed.
 
