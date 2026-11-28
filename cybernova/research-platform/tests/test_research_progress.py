@@ -159,6 +159,24 @@ class ResearchProgressTests(unittest.TestCase):
 
 
 class ChatSessionProgressTests(unittest.TestCase):
+    def test_new_chat_starts_empty_without_erasing_other_chat(self):
+        from console import server
+
+        with patch.object(server, "sessions", OrderedDict()):
+            old_id, old = server._session(None)
+            old["history"].append({"role": "user", "content": "Previous task"})
+            old["research_progress"].set_goal("Previous task")
+            old["research_progress"].apply_model_update(findings=["Previous observation"])
+            old["task_id"] = "old-task"
+            new_id, new = server._session(None)
+            self.assertNotEqual(old_id, new_id)
+            self.assertEqual(new["history"], [])
+            self.assertIsNone(new["task_id"])
+            self.assertEqual(new["research_progress"].goal, "")
+            self.assertEqual(new["research_progress"].findings, [])
+            self.assertEqual(server._session(old_id)[1]["history"][0]["content"], "Previous task")
+            self.assertEqual(old["research_progress"].findings, ["Previous observation"])
+
     def test_expired_session_cannot_share_progress_with_reused_id(self):
         from console import server
 
