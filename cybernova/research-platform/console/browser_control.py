@@ -1535,15 +1535,20 @@ class BrowserSession:
                     self._fulfill_approved_write(route, raw)
                     return
                 action = getattr(self, "_active_action", None)
-                if action and self._request_write_approval(
+                action_label = (
+                    action.get("label", action.get("tool", "browser action"))
+                    if action else "background page request"
+                )
+                has_owner_handler = callable(getattr(self, "_write_approval_handler", None))
+                if self._request_write_approval(
                     method, raw, getattr(req, "resource_type", "other"),
-                    action.get("label", action.get("tool", "browser action")),
+                    action_label,
                 ):
                     self._fulfill_approved_write(route, raw)
                     return
                 self._blocked.append({
                     "url": _safe_url(raw), "method": method,
-                    "reason": ("owner_declined_or_expired" if action
+                    "reason": ("owner_declined_or_expired" if has_owner_handler
                                else "write_request_requires_owner_confirmation"),
                 })
                 route.abort("blockedbyclient")
