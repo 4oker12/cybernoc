@@ -12,7 +12,7 @@ from console.agent import (
     Agent, _arguments, _allowed_http, _safe_args, _tool_schema,
     BackendError, MCPClient, OllamaClient, BASE_SYSTEM,
     _extract_dsml_calls, _clean_model_answer, _compact_context,
-    _restore_reasoning_history,
+    _restore_reasoning_history, MAX_CONTEXT_TOOL_CALLS, MAX_CONTEXT_TOOL_CHARS,
 )
 from console.model_providers import OpenAICompatibleClient, ModelConfigError, _normalize_context
 
@@ -975,7 +975,8 @@ class AgentTests(unittest.TestCase):
         first, second = [json.loads(item["content"]) for item in _compact_context(messages)
                          if item["role"] == "tool"]
         self.assertLess(len(first["links"]), len(links))
-        self.assertEqual(second["links"], links)
+        self.assertEqual(second["previously_delivered_control_counts"]["links"], len(first["links"]))
+        self.assertEqual(first["links"] + second["links"], links)
         self.assertNotIn("links", second.get("unchanged_page_fields", []))
 
     def test_compact_context_keeps_recent_tool_pairs_and_bounds_payloads(self):
@@ -985,12 +986,12 @@ class AgentTests(unittest.TestCase):
             messages.append({"role": "assistant", "content": "", "tool_calls": [call]})
             messages.append({"role": "tool", "tool_name": "tool_" + str(index), "content": "x" * 6000})
         compact = _compact_context(messages)
-        self.assertEqual(sum(len(item.get("tool_calls", [])) for item in compact), 8)
+        self.assertEqual(sum(len(item.get("tool_calls", [])) for item in compact), MAX_CONTEXT_TOOL_CALLS)
         tool_results = [item for item in compact if item.get("role") == "tool"]
-        self.assertEqual(len(tool_results), 8)
-        self.assertTrue(all(len(item["content"]) <= 3500 for item in tool_results))
+        self.assertEqual(len(tool_results), MAX_CONTEXT_TOOL_CALLS)
+        self.assertTrue(all(len(item["content"]) <= MAX_CONTEXT_TOOL_CHARS for item in tool_results))
         normalized = _normalize_context(compact)
-        self.assertEqual(sum(item.get("role") == "tool" for item in normalized), 8)
+        self.assertEqual(sum(item.get("role") == "tool" for item in normalized), MAX_CONTEXT_TOOL_CALLS)
         self.assertTrue(any("tool_0" in item.get("content", "") for item in compact if item.get("role") == "assistant"))
         self.assertTrue(any("tool_11" in call["function"]["name"]
                             for item in compact for call in item.get("tool_calls", [])))

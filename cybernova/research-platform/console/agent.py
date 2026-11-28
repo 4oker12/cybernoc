@@ -589,6 +589,22 @@ def _compact_context(messages):
     return compact
 
 
+def _append_agent_meta_tools(advertised, registered, selected_groups):
+    """Keep internal helpers in auto mode without widening manual tool bundles."""
+    if selected_groups:
+        return advertised
+    meta_names = {"tool_capabilities", "research_state_update"}
+    regular = [row for row in advertised if row["name"] not in meta_names]
+    names = {row["name"] for row in regular}
+    available = {row["name"]: row for row in registered}
+    meta = []
+    if set(available) - meta_names - names and "tool_capabilities" in available:
+        meta.append(available["tool_capabilities"])
+    if "research_state_update" in available:
+        meta.append(available["research_state_update"])
+    return regular[:max(0, MAX_ADVERTISED - len(meta))] + meta
+
+
 def _browser_json(result, limit):
     """Bound a browser observation without cutting through a control or JSON string."""
     def encode(value):
@@ -712,6 +728,17 @@ def _compact_tool_output(output, seen_pages):
             else "unchanged_from_earlier_tool_result"
         )
         result["unchanged_page_fields"] = unchanged
+    # A clipped prefix was delivered in an earlier observation. Send the remaining
+    # controls first, rather than repeatedly exhausting the budget on the same rows.
+    prefixes = {}
+    for field in ("links", "buttons", "form_fields"):
+        rows, prior = result.get(field), previous.get(field)
+        if (isinstance(rows, list) and isinstance(prior, list) and prior
+                and len(prior) < len(rows) and rows[:len(prior)] == prior):
+            prefixes[field] = len(prior)
+            result[field] = rows[len(prior):]
+    if prefixes:
+        result["previously_delivered_control_counts"] = prefixes
     if "visible_text" in result and "visible_text_preview" in result:
         result.pop("visible_text", None)
     content = _browser_json(result, MAX_CONTEXT_TOOL_CHARS)
@@ -721,7 +748,10 @@ def _compact_tool_output(output, seen_pages):
         delivered = result
     if result.get("url"):
         seen_pages[key] = {
-            field: delivered[field] if field in delivered else previous.get(field)
+            field: ((previous[field] + delivered[field])
+                    if field in prefixes and isinstance(delivered.get(field), list)
+                    and delivered.get("previously_delivered_control_counts", {}).get(field) == prefixes[field]
+                    else delivered[field]) if field in delivered else previous.get(field)
             for field in _BROWSER_PAGE_FIELDS
             if field in delivered or (
                 field in unchanged and "unchanged_page_fields" in delivered
@@ -1223,31 +1253,19 @@ class Agent:
                     if row["name"] in seen_names:
                         collisions.add(row["name"])
                     seen_names.add(row["name"])
-                if "tool_capabilities" in seen_names:
-                    collisions.add("tool_capabilities")
+                reserved_names = {"tool_capabilities", "research_state_update"}
+                collisions.update(seen_names & reserved_names)
                 if collisions:
                     raise ToolPolicyError("tool_name_collision:" + ",".join(sorted(collisions)[:8]))
                 registered = discovered_tools(merged_rows, limit=MAX_DISCOVERED)
                 discovered_count = len(registered)
-                registered.append(TOOL_CAPABILITIES)
-                for row in RESEARCH_STATE_TOOLS:
-                    if row["name"] not in {item.get("name") for item in registered}:
-                        registered.append(row)
+                if not selected_groups:
+                    registered.append(TOOL_CAPABILITIES)
+                    registered.extend(RESEARCH_STATE_TOOLS)
                 advertised = route_model_tool_rows(
                     registered, route_text, limit=MAX_ADVERTISED, selected_groups=selected_groups
                 )
-                advertised_names = {row["name"] for row in advertised}
-                if (len({row["name"] for row in registered if row["name"] != "tool_capabilities"}
-                        - advertised_names) and "tool_capabilities" not in advertised_names):
-                    advertised = advertised[:MAX_ADVERTISED - 1] + [TOOL_CAPABILITIES]
-                # Always expose model-declared research state tool when registered.
-                if "research_state_update" not in {row["name"] for row in advertised}:
-                    state_row = next(
-                        (row for row in registered if row.get("name") == "research_state_update"),
-                        None,
-                    )
-                    if state_row is not None:
-                        advertised = advertised[: max(0, MAX_ADVERTISED - 1)] + [state_row]
+                advertised = _append_agent_meta_tools(advertised, registered, selected_groups)
                 descriptors = {t["name"]: t for t in advertised}
                 tools = _tool_schema(advertised)
             except ToolPolicyError as exc:
@@ -1260,7 +1278,7 @@ class Agent:
                 outcome.update(error_code="tool_catalog_invalid", error_type=type(exc).__name__)
                 return outcome
             omitted = discovered_count - sum(
-                row["name"] != "tool_capabilities" for row in advertised
+                row["name"] not in {"tool_capabilities", "research_state_update"} for row in advertised
             )
             diagnostic_event("tool_catalog_ready", **catalog_counts,
                              discovered_count=discovered_count, advertised_count=len(tools),
@@ -1329,10 +1347,7 @@ class Agent:
                         selected_groups=selected_groups,
                         additional_names=sorted(requested_expansion),
                     )
-                    advertised_names = {row["name"] for row in advertised}
-                    if (len({row["name"] for row in registered if row["name"] != "tool_capabilities"}
-                            - advertised_names) and "tool_capabilities" not in advertised_names):
-                        advertised = advertised[:MAX_ADVERTISED - 1] + [TOOL_CAPABILITIES]
+                    advertised = _append_agent_meta_tools(advertised, registered, selected_groups)
                     descriptors = {row["name"]: row for row in advertised}
                     tools = _tool_schema(advertised)
                 if stop_requested():
