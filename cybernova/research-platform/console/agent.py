@@ -53,6 +53,16 @@ MAX_HTTP_GETS = 3
 MAX_PROMPT = 10000
 MAX_RESULT = 12000
 MAX_INPUT_TOKENS = 0  # No cumulative local token ceiling by default.
+TOOL_CAPABILITIES = {
+    "name": "tool_capabilities",
+    "description": "Inspect the schema of one registered tool omitted from this model round. This does not execute the tool or grant permission.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+        "additionalProperties": False,
+    },
+}
 PLAN_CHECKPOINT_INTERVAL = 6
 MAX_CONTEXT_HISTORY_MESSAGES = 8
 MAX_CONTEXT_HISTORY_CHARS = 2500
@@ -1103,12 +1113,20 @@ class Agent:
                     if row["name"] in seen_names:
                         collisions.add(row["name"])
                     seen_names.add(row["name"])
+                if "tool_capabilities" in seen_names:
+                    collisions.add("tool_capabilities")
                 if collisions:
                     raise ToolPolicyError("tool_name_collision:" + ",".join(sorted(collisions)[:8]))
                 registered = discovered_tools(combined_rows, limit=MAX_DISCOVERED)
+                discovered_count = len(registered)
+                registered.append(TOOL_CAPABILITIES)
                 advertised = route_model_tool_rows(
                     registered, route_text, limit=MAX_ADVERTISED, selected_groups=selected_groups
                 )
+                advertised_names = {row["name"] for row in advertised}
+                if (len({row["name"] for row in registered if row["name"] != "tool_capabilities"}
+                        - advertised_names) and "tool_capabilities" not in advertised_names):
+                    advertised = advertised[:MAX_ADVERTISED - 1] + [TOOL_CAPABILITIES]
                 descriptors = {t["name"]: t for t in advertised}
                 tools = _tool_schema(advertised)
             except ToolPolicyError as exc:
@@ -1118,9 +1136,11 @@ class Agent:
                 return result_payload("Не удалось сформировать каталог инструментов. "
                                       "Модель не вызывалась. Подробности в журнале.",
                                       review_tools=False)
-            omitted = len(registered) - len(advertised)
+            omitted = discovered_count - sum(
+                row["name"] != "tool_capabilities" for row in advertised
+            )
             diagnostic_event("tool_catalog_ready", **catalog_counts,
-                             discovered_count=len(registered), advertised_count=len(tools),
+                             discovered_count=discovered_count, advertised_count=len(tools),
                              omitted_count=omitted,
                              groups=".".join(dict.fromkeys(tool_group_for_name(t["name"]) for t in advertised)) or "none",
                              decision="manual_groups" if selected_groups else "task_capabilities",
@@ -1186,6 +1206,10 @@ class Agent:
                         selected_groups=selected_groups,
                         additional_names=sorted(requested_expansion),
                     )
+                    advertised_names = {row["name"] for row in advertised}
+                    if (len({row["name"] for row in registered if row["name"] != "tool_capabilities"}
+                            - advertised_names) and "tool_capabilities" not in advertised_names):
+                        advertised = advertised[:MAX_ADVERTISED - 1] + [TOOL_CAPABILITIES]
                     descriptors = {row["name"]: row for row in advertised}
                     tools = _tool_schema(advertised)
                 if stop_requested():
@@ -1518,7 +1542,28 @@ class Agent:
                                 max_argument_bytes=1_100_000 if name in GITHUB_WRITE_NAMES else 8192,
                                 max_value_length=250_000 if name in GITHUB_WRITE_NAMES else 4096,
                             )
-                        if name == "http_get":
+                        if name == "tool_capabilities":
+                            target = args["name"]
+                            available = {row["name"]: row for row in registered}
+                            if target not in available or target == name:
+                                raise BackendError("tool_not_registered")
+                            candidate = route_model_tool_rows(
+                                registered, route_text, limit=MAX_ADVERTISED,
+                                selected_groups=selected_groups,
+                                additional_names=(target,),
+                            )
+                            if target not in {row["name"] for row in candidate}:
+                                raise BackendError("tool_denied_by_policy")
+                            requested_expansion.add(target)
+                            dispatched = True
+                            executed += 1
+                            safe_result = {
+                                "ok": True, "status": "success", "name": target,
+                                "description": available[target].get("description", ""),
+                                "inputSchema": available[target].get("inputSchema", {}),
+                                "note": "Schema discovery does not authorize execution.",
+                            }
+                        elif name == "http_get":
                             if not public_get:
                                 raise BackendError("public_http_not_enabled")
                             if gets >= MAX_HTTP_GETS:

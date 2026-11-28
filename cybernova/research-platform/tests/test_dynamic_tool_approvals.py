@@ -105,7 +105,9 @@ class DynamicToolPolicyTests(unittest.TestCase):
         self.assertEqual(result["tool_calls"], 1)
         ready = [call.kwargs for call in log.call_args_list if call.args == ("tool_catalog_ready",)]
         self.assertEqual(ready[0]["discovered_count"], 160)
-        self.assertEqual(ready[0]["omitted_count"], 160 - len(offered))
+        self.assertEqual(ready[0]["omitted_count"], 160 - len([
+            item for item in offered if item["function"]["name"] != "tool_capabilities"
+        ]))
 
     def test_weather_task_does_not_advertise_terminal_or_computer_tools(self):
         rows = [
@@ -183,6 +185,21 @@ class DynamicToolPolicyTests(unittest.TestCase):
                          "tool_not_exposed_in_this_round")
         self.assertIn("browser_click_button", [row["function"]["name"]
                                               for row in model.inputs[1]["tools"]])
+        self.assertEqual(mcp.calls, [("browser_click_button", {})])
+
+    def test_model_can_request_omitted_schema_without_executing_tool(self):
+        rows = [{"name": name, "description": "Fixture", "inputSchema": {
+            "type": "object", "properties": {}, "additionalProperties": False,
+        }} for name in ("browser_snapshot", "browser_click_button")]
+        mcp = FakeMCP(rows)
+        model = FakeQwen([tool_call("tool_capabilities", {"name": "browser_click_button"}),
+                          tool_call("browser_click_button", {}), {"content": "Готово"}])
+        result = Agent(model, lambda: mcp).run([], "Исследуй сайт самостоятельно")
+        self.assertIn("tool_capabilities", [row["function"]["name"]
+                                            for row in model.inputs[0]["tools"]])
+        self.assertEqual(result["events"][0]["result"]["name"], "browser_click_button")
+        self.assertEqual(result["events"][0]["result"]["inputSchema"],
+                         rows[1]["inputSchema"])
         self.assertEqual(mcp.calls, [("browser_click_button", {})])
 
     def test_duplicate_local_and_remote_name_fails_catalog(self):
