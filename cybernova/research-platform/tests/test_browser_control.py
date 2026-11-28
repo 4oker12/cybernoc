@@ -1494,6 +1494,22 @@ class RefInteractionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "browser_interaction_requires_ref"):
             session._interact_ref("hover", "arbitrary CSS")
 
+    def test_widget_navigation_keys_are_targeted_and_activation_keys_rejected(self):
+        session = BrowserSession.__new__(BrowserSession)
+        locator = Mock()
+        locator.evaluate.side_effect = [{"focused": True, "active_descendant": "first"},
+                                        {"focused": True, "active_descendant": "second"}]
+        session._verify_ref = Mock(return_value=(Mock(), locator))
+        session._snapshot = Mock(return_value={"ok": True})
+        result = session._interact_ref("key:ArrowDown", "ref:e12")
+        self.assertTrue(result["widget_state_changed"])
+        self.assertEqual(result["widget_state_after"]["active_descendant"], "second")
+        locator.press.assert_called_once_with("ArrowDown", timeout=8000)
+        for key in ("Enter", "Space", "Control+A"):
+            with self.assertRaisesRegex(ValueError, "browser_widget_navigation_key_not_allowed"):
+                session._interact_ref("key:" + key, "ref:e12")
+        locator.press.assert_called_once()
+
     def test_double_click_rejects_form_controls(self):
         session = BrowserSession.__new__(BrowserSession)
         session._page = Mock(url="https://example.test/")

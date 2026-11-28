@@ -77,7 +77,7 @@ def page_digest(snapshot: dict) -> dict:
             ident = (kind, item.get("frame_index", 0), item.get("ref") or item.get("id") or name,
                      item.get("type") or "")
             state = {k: item[k] for k in ("expanded", "checked", "selected", "disabled",
-                                            "readonly", "required", "in_viewport") if k in item}
+                                            "readonly", "required", "in_viewport", "widget_state") if k in item}
             spatial = item.get("spatial")
             if isinstance(spatial, dict):
                 for key in ("focused", "center_hit"):

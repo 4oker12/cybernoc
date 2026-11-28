@@ -125,8 +125,8 @@ BROWSER_CONTROL_TOOLS = [
           {"label": {**STRING, "description": "Exact select label"},
            "value": {**STRING, "description": "Option label or value"}}, ["label", "value"]),
     _tool("browser_click_button",
-          "Click one visible button by exact accessible name. For a fresh snapshot ref, use hover:ref:eN or focus:ref:eN; double_click:ref:eN is restricted to ordinary non-form buttons. High-impact clicks require owner confirmation; unsafe HTTP requests remain guarded.",
-          {"name": {**STRING, "description": "Exact button name, ref:eN, widget action_target, or hover:ref:eN / focus:ref:eN / double_click:ref:eN from latest observation"}}, ["name"]),
+          "Click one visible button by exact accessible name. Fresh ref gestures: hover:ref:eN, focus:ref:eN, double_click:ref:eN (ordinary non-form buttons only), key:ArrowDown:ref:eN (navigation keys only), activate:ref:eN (supported explicit widget roles only). High-impact clicks require owner confirmation; unsafe requests remain guarded.",
+          {"name": {**STRING, "description": "Exact button name, ref:eN, widget action_target, hover/focus/double_click:ref:eN, key:ArrowDown:ref:eN or activate:ref:eN from latest observation"}}, ["name"]),
     _tool("browser_back",
           "Navigate back one page in the isolated Chromium session."),
     _tool("browser_wait",
@@ -407,6 +407,7 @@ _SEMANTIC_KINDS = frozenset({
     "form", "search", "dialog", "alertdialog", "article", "list", "listitem",
     "table", "row", "cell", "grid", "group", "navigation", "main",
     "region", "fieldset", "section", "menu", "tablist", "tabpanel", "card_candidate",
+    "listbox", "tree", "treeitem", "toolbar", "radiogroup",
 })
 
 
@@ -834,7 +835,7 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
     Array.from(el.labels || []).map(x => x.innerText || x.textContent).join(' ') ||
     el.getAttribute('title') || el.getAttribute('placeholder') ||
     (['submit','button','reset'].includes(el.type) ? el.value : '') ||
-    (!editable(el) ? el.innerText : '') ||
+    (!editable(el) && !el.querySelector('input,textarea,select,[contenteditable],[role="textbox"],[role="searchbox"]') ? el.innerText : '') ||
     el.getAttribute('alt') ||
     el.querySelector?.('img[alt]')?.getAttribute('alt') ||
     el.querySelector?.('svg title')?.textContent);
@@ -854,7 +855,7 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
   const semanticCache = new WeakMap();
   const groupKinds = new Set(['form','search','dialog','alertdialog','article',
     'list','listitem','table','row','cell','grid','group','navigation','main',
-    'region','fieldset','section','menu','tablist','tabpanel']);
+    'region','fieldset','section','menu','tablist','tabpanel','listbox','tree','treeitem','toolbar','radiogroup']);
   const nativeKind = {FORM:'form',DIALOG:'dialog',ARTICLE:'article',UL:'list',
     OL:'list',LI:'listitem',TABLE:'table',TR:'row',TD:'cell',TH:'cell',
     FIELDSET:'fieldset',NAV:'navigation',MAIN:'main',SECTION:'section'};
@@ -949,9 +950,13 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
   const SELECTOR = 'a,button,input,textarea,select,[role="link"],[role="button"],' +
     '[role="combobox"],[role="option"],[role="checkbox"],[role="radio"],' +
     '[role="textbox"],[role="searchbox"],[contenteditable="true"],' +
-    '[role="switch"],[role="slider"],[role="tab"],[role="menuitem"],details > summary:first-of-type';
+    '[role="switch"],[role="slider"],[role="tab"],[role="menuitem"],[role="treeitem"],' +
+    '[role="menuitemcheckbox"],[role="menuitemradio"],[role="listbox"],[role="tree"],' +
+    '[role="menu"],[role="grid"],[role="toolbar"],details > summary:first-of-type';
+  const focusCandidate = el => el.hasAttribute('tabindex') && el.tabIndex >= 0 &&
+    !el.matches(SELECTOR) && !el.matches(sensitiveContent) && !el.querySelector(sensitiveContent);
   const MATCH = el => {
-    try { return el.matches(SELECTOR); } catch (_) { return false; }
+    try { return el.matches(SELECTOR) || focusCandidate(el); } catch (_) { return false; }
   };
   const collected = [];
   const visualCandidates = [];
@@ -1058,6 +1063,10 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
                width: Math.round(r.width), height: Math.round(r.height)},
       checked: ['checkbox','radio'].includes(el.type) ? el.checked : null,
       aria_checked: el.getAttribute('aria-checked'),
+      pressed: el.getAttribute('aria-pressed'),
+      current: el.getAttribute('aria-current'),
+      active_descendant: el.getAttribute('aria-activedescendant'),
+      focus_candidate: focusCandidate(el),
       disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
       readonly: !!el.readOnly || el.getAttribute('aria-readonly') === 'true',
       required: !!el.required || el.getAttribute('aria-required') === 'true',
@@ -2334,6 +2343,16 @@ class BrowserSession:
                 if item["disabled"]:
                     identity["disabled"] = True
                 role = item["role"]
+                widget_state = {}
+                for state, allowed in (("pressed", {"true", "false", "mixed"}),
+                                       ("current", {"true", "false", "page", "step", "location", "date", "time"})):
+                    if item.get(state) in allowed:
+                        widget_state[state] = item[state]
+                active = item.get("active_descendant")
+                if isinstance(active, str) and re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.:-]{0,79}", active):
+                    widget_state["active_descendant"] = active
+                if widget_state:
+                    identity["widget_state"] = widget_state
                 if item["tag"] == "summary":
                     row = {"name": label or "unlabelled", "type": "disclosure",
                            "expanded": item["expanded"] == "true", **identity}
@@ -2345,9 +2364,20 @@ class BrowserSession:
                     links.append({"name": label or "unlabelled",
                                   "url": _safe_url(href) if href.startswith(("http://", "https://")) else "",
                                   **identity})
-                elif item["tag"] == "button" or role in {"button", "combobox", "option", "tab", "menuitem"} or (
+                elif item["tag"] == "button" or role in {
+                        "button", "combobox", "option", "tab", "menuitem", "treeitem",
+                        "menuitemcheckbox", "menuitemradio", "listbox", "tree", "menu", "grid", "toolbar"
+                } or item.get("focus_candidate") or (
                         item["tag"] == "input" and item["type"] in {"submit", "button", "reset", "image"}):
-                    row = {"name": label or "unlabelled", "type": role or item["type"] or "button", **identity}
+                    row = {"name": label or "unlabelled", "type": (
+                        "focus_candidate" if item.get("focus_candidate") else role or item["type"] or "button"
+                    ), **identity}
+                    if item.get("focus_candidate"):
+                        row["interaction_hint"] = "focus_or_navigation_key_only"
+                    elif role in {"combobox", "option", "menuitem", "treeitem", "menuitemcheckbox", "menuitemradio"}:
+                        row["interaction_hint"] = "activate_ref_or_navigation_key"
+                    if item.get("aria_checked") in {"true", "false", "mixed"}:
+                        row["checked"] = item["aria_checked"] if item["aria_checked"] == "mixed" else item["aria_checked"] == "true"
                     for state in ("expanded", "selected"):
                         if item[state] in {"true", "false"}:
                             row[state] = item[state] == "true"
@@ -2834,7 +2864,7 @@ class BrowserSession:
                         Array.from(el.labels || []).map(x => x.innerText || x.textContent).join(' ') ||
                         el.getAttribute('title') || el.getAttribute('placeholder') ||
                         (['submit','button','reset'].includes(el.type) ? el.value : '') ||
-                        (!editable ? el.innerText : '') || el.getAttribute('alt') ||
+                        (!editable && !el.querySelector('input,textarea,select,[contenteditable],[role="textbox"],[role="searchbox"]') ? el.innerText : '') || el.getAttribute('alt') ||
                         el.querySelector?.('img[alt]')?.getAttribute('alt') ||
                         el.querySelector?.('svg title')?.textContent);
                     let shadowPath = '';
@@ -2867,6 +2897,27 @@ class BrowserSession:
             return self._verify_ref(ref)
         return None
 
+    @staticmethod
+    def _read_widget_state(locator) -> dict:
+        raw = locator.evaluate("""el => ({
+            focused: el.getRootNode().activeElement === el,
+            active_descendant: el.getAttribute('aria-activedescendant'),
+            expanded: el.getAttribute('aria-expanded'),
+            selected: el.getAttribute('aria-selected'),
+            checked: el.getAttribute('aria-checked'),
+            pressed: el.getAttribute('aria-pressed')
+        })""", timeout=1000)
+        if not isinstance(raw, dict):
+            return {}
+        result = {"focused": raw["focused"]} if type(raw.get("focused")) is bool else {}
+        active = raw.get("active_descendant")
+        if isinstance(active, str) and re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.:-]{0,79}", active):
+            result["active_descendant"] = active
+        for key in ("expanded", "selected", "checked", "pressed"):
+            if raw.get(key) in ("true", "false", "mixed"):
+                result[key] = raw[key]
+        return result
+
     def _interact_ref(self, interaction: str, target: str) -> dict:
         """Reuse the guarded click dispatch for bounded, explicit ref gestures."""
         ref = self._parse_ref(target)
@@ -2875,10 +2926,21 @@ class BrowserSession:
         frame, locator = self._verify_ref(ref)
         if not locator.is_visible() or not locator.is_enabled():
             raise ValueError("browser_target_not_interactable")
+        state_before = state_after = None
         if interaction == "hover":
             locator.hover(timeout=8000)
         elif interaction == "focus":
             locator.focus(timeout=8000)
+        elif interaction.startswith("key:"):
+            key = interaction.split(":", 1)[1]
+            if key not in {"ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight",
+                           "Home", "End", "Escape", "PageUp", "PageDown"}:
+                raise ValueError("browser_widget_navigation_key_not_allowed")
+            try:
+                state_before = self._read_widget_state(locator)
+            except Exception:
+                pass
+            locator.press(key, timeout=8000)
         elif interaction == "double_click":
             button = self._unique(locator.and_(frame.get_by_role("button")))
             if button is None:
@@ -2898,9 +2960,22 @@ class BrowserSession:
             button.dblclick(timeout=8000)
         else:
             raise ValueError("browser_interaction_invalid")
+        if interaction == "focus" or interaction.startswith("key:"):
+            try:
+                _, fresh = self._verify_ref(ref)
+                state_after = self._read_widget_state(fresh)
+            except Exception:
+                pass
         result = self._snapshot()
         result["interaction"] = interaction
         result["interaction_ref"] = ref
+        if interaction == "focus":
+            result["focus_verified"] = state_after.get("focused") if state_after else None
+        elif interaction.startswith("key:"):
+            result["widget_state_before"] = state_before
+            result["widget_state_after"] = state_after
+            result["widget_state_changed"] = (state_before != state_after
+                                               if state_before and state_after else None)
         return result
 
     def _by_id(self, element_id, frame=None):
@@ -3673,6 +3748,11 @@ class BrowserSession:
             target = args["name"]
             if not isinstance(target, str) or not target.strip() or len(target) > 180:
                 raise ValueError("browser_button_name_invalid")
+            if name == "browser_click_button" and target.startswith("key:"):
+                parts = target.split(":", 2)
+                if len(parts) != 3:
+                    raise ValueError("browser_interaction_invalid")
+                return self._interact_ref("key:" + parts[1], parts[2])
             if name == "browser_click_button" and target.startswith(("hover:", "focus:", "double_click:")):
                 interaction, ref_target = target.split(":", 1)
                 return self._interact_ref(interaction, ref_target)
@@ -3681,7 +3761,22 @@ class BrowserSession:
             if name == "browser_click_button" and target.startswith("tab:"):
                 return self._activate_widget_tab(target)
             role, target_name = "button", target
-            if name == "browser_click_button" and target_name.startswith(("combobox:", "option:")):
+            explicit_widget = name == "browser_click_button" and target.startswith("activate:")
+            if explicit_widget:
+                target_name = target.split(":", 1)[1]
+                ref = self._parse_ref(target_name)
+                if ref is None:
+                    raise ValueError("browser_interaction_requires_ref")
+                _, widget = self._verify_ref(ref)
+                role = widget.get_attribute("role") or ""
+                if role not in {"button", "combobox", "option", "menuitem", "treeitem",
+                                "menuitemcheckbox", "menuitemradio", "switch", "checkbox", "radio"}:
+                    raise ValueError("browser_widget_role_not_supported")
+                # Do not introduce a route around native submission or nested controls.
+                if widget.evaluate("""el => !!el.form || !!el.closest('form') || el.isContentEditable ||
+                    !!el.querySelector('input,textarea,select,[contenteditable],button,a[href],[role=button],[role=link]')"""):
+                    raise ValueError("browser_widget_activation_requires_ordinary_control")
+            elif name == "browser_click_button" and target_name.startswith(("combobox:", "option:")):
                 role, target_name = target_name.split(":", 1)
             # Prefer verified stable ref when the agent addresses by snapshot ref.
             button = None
@@ -3732,7 +3827,7 @@ class BrowserSession:
                         "button": target[:180],
                         "action_target": _safe_url(submit_target),
                     }
-                if submit_method not in SAFE_METHODS:
+                if submit_method not in SAFE_METHODS and not explicit_widget:
                     self._allow_post_origin = _origin(submit_target)
                     self._allow_post_url = (
                         urlsplit(submit_target)._replace(fragment="").geturl()

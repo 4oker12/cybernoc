@@ -238,6 +238,15 @@ CARD_PAGE = b"""<!doctype html><title>Cards</title><main>
 </div></main>"""
 
 
+WIDGET_PAGE = b"""<!doctype html><title>Widgets</title>
+<div role="listbox" aria-label="Choices" tabindex="0" aria-activedescendant="first"
+ onkeydown="if(event.key==='ArrowDown'){this.setAttribute('aria-activedescendant','second');event.preventDefault()}">
+ <div role="option" id="first">First</div><div role="option" id="second">Second</div>
+</div>
+<div role="menuitem" tabindex="0" onclick="document.getElementById('out').textContent='Item opened'">Open item</div>
+<div id="out">Nothing opened</div><span tabindex="0">Custom focusable text</span>"""
+
+
 class _H(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
@@ -245,7 +254,7 @@ class _H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        body = CARD_PAGE if self.path == "/cards" else PAGE
+        body = {"/cards": CARD_PAGE, "/widgets": WIDGET_PAGE}.get(self.path, PAGE)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -278,6 +287,22 @@ class LiveBrowserTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.session.close()
         cls.srv.shutdown()
+
+    def test_live_complex_widget_navigation_and_activation(self):
+        c = lambda n, **a: self.call(n, a, self.session)[0]
+        self.assertTrue(c("browser_navigate", url=self.url + "widgets")["ok"])
+        found = c("browser_find_controls", query="Choices")
+        widget = next(row for row in found["buttons"] if row["type"] == "listbox")
+        result = c("browser_click_button", name="key:ArrowDown:ref:" + widget["ref"])
+        self.assertTrue(result.get("widget_state_changed"), result)
+        self.assertEqual(result["widget_state_after"]["active_descendant"], "second")
+        found = c("browser_find_controls", query="Open item")
+        item = next(row for row in found["buttons"] if row["type"] == "menuitem")
+        self.assertTrue(c("browser_click_button", name="activate:ref:" + item["ref"])["ok"])
+        self.assertTrue(c("browser_verify", expect_text=["Item opened"])["verified"])
+        found = c("browser_find_controls", query="Custom focusable text")
+        custom = next(row for row in found["buttons"] if row["type"] == "focus_candidate")
+        self.assertTrue(c("browser_click_button", name="focus:ref:" + custom["ref"])["focus_verified"])
 
     def test_live_ax_shadow_and_frame_correlation(self):
         c = lambda n, **a: self.call(n, a, self.session)[0]

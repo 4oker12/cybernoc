@@ -79,3 +79,6 @@ Replaced main-document-only selector lookup with bounded CDP search, backend nod
 
 ### V4 continuation — P0.2 visual object evidence
 The collector reports bounded DOM hints for rendered images, SVGs, canvas/video and small icons owned by controls, including rendered aria-hidden decorative icons. It exposes label provenance, geometry and owner_ref only when the owner was observed, never source URLs or new action targets. Targeted search can find hints by owner/card context; screenshot includes main-viewport hints alongside the masked image. Text-only models receive DOM evidence, not fabricated pixel recognition. Native pixel interpretation depends on model vision support. Unit and Chromium fixture added.
+
+### V4 continuation — P0.3 targeted complex widget interactions
+The collector recognizes explicit tree/menu/listbox/grid/toolbar roles and untyped keyboard-focusable text candidates. It reports allowlisted ARIA pressed/current/active-descendant state. Existing click tool accepts ref-scoped non-activating navigation keys, verifies actual focus and records before/after widget state; `activate:ref` is limited to explicit supported widget roles outside forms/nested controls and shares high-impact and network guards. No arbitrary JS, force click, raw keyboard sequences or activation of untyped candidates. Added unit and local Chromium fixtures.
