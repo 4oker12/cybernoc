@@ -82,3 +82,6 @@ The collector reports bounded DOM hints for rendered images, SVGs, canvas/video 
 
 ### V4 continuation — P0.3 targeted complex widget interactions
 The collector recognizes explicit tree/menu/listbox/grid/toolbar roles and untyped keyboard-focusable text candidates. It reports allowlisted ARIA pressed/current/active-descendant state. Existing click tool accepts ref-scoped non-activating navigation keys, verifies actual focus and records before/after widget state; `activate:ref` is limited to explicit supported widget roles outside forms/nested controls and shares high-impact and network guards. No arbitrary JS, force click, raw keyboard sequences or activation of untyped candidates. Added unit and local Chromium fixtures.
+
+### V4 continuation — live fixture gate
+A dedicated PR workflow installs actual Playwright Chromium and runs the browser intelligence unit + localhost integration fixtures. No public target access, account operations or secrets in tests. It is limited to PRs changing the browser runtime/test files and this workflow. Existing full quality gate remains unchanged. Profile updated for widget navigation, semantic activation and read-only visual owner refs.
