@@ -35,6 +35,12 @@ Explicit schema discovery and a rejected-but-registered tool now receive bounded
 ### P0.5 implementation record
 Digest/delta now includes tab, frame count, focus/hit and observed control state; cross-tab comparisons yield no baseline. Partial observation cannot prove no change, and additions/removals are explicitly scoped to observed slices. Action completion is not goal verification. Targeted tests cover focus/frame transitions, incomplete observations and tab switching. Runtime execution pending CI/local checkout.
 
+### P0.5 follow-up: verification coverage
+
+Control pagination, partial collections and reused tab indices can distort state comparisons. Carry coverage from the collector into verification and the delta, compare action baselines only for the same page, and validate typed control identifiers. The regression checks must distinguish a changed slice from a confirmed change and reject empty identifiers. Independent source review informed the design. The coordinator owns implementation and verification.
+
+Implemented and checked in Cloud Linux. Of 78 focused tests, 75 passed and three Chromium integration tests were skipped. Python compilation and the repository artifact guard passed. A delta reports evidence of a page change within the collected scope. Goal completion requires a separate check.
+
 ### P0.6 implementation record
 StrategyTracker now records repeated no-effect actions on the same observed state separately from exceptions. Observed change resets attempts; incomplete coverage is not treated as proven failure. Advice requests verification or changed authorized strategy. Full response mode retains observations while exposing effect; no automatic alternate actions or bypass. Focused tracker tests added; runtime execution pending.
 

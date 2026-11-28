@@ -1097,6 +1097,7 @@ class BrowserSession:
         self._write_approval_handler = None
         self._active_action = None
         self._last_digest = None
+        self._digest_page = None
         self._strategy = StrategyTracker()
         self._observation_memory = ObservationMemory()
         self._response_mode = response_mode(os.environ.get("CYBERNOVA_BROWSER_RESPONSE_MODE"))
@@ -1176,7 +1177,10 @@ class BrowserSession:
                 result["observation_memory"] = memory.observe(result, name)
             if (name in _INTEL_ACTION_TOOLS and "visible_text" in result
                     and result.get("ok") is True):
-                compact, self._last_digest = compact_action_result(name, result, self._last_digest)
+                page = getattr(self, "_page", None)
+                before = self._last_digest if getattr(self, "_digest_page", None) is page else None
+                compact, self._last_digest = compact_action_result(name, result, before)
+                self._digest_page = page
                 effect = compact.get("effect")
                 if self._response_mode == "compact":
                     result = compact
@@ -1194,9 +1198,11 @@ class BrowserSession:
                 self._strategy.record_success(name, args)
                 if "visible_text" in result:
                     self._last_digest = page_digest(result)
+                    self._digest_page = self._page
         except Exception:
             # Intelligence is advisory; it must never break a browser action.
             self._last_digest = None
+            self._digest_page = None
         return result
 
     def note_failure(self, name: str, args: dict, error: str) -> dict:
@@ -2337,7 +2343,7 @@ class BrowserSession:
         def page_slice(items):
             return items[offset:offset + limit]
         total_controls = max(len(links), len(buttons), len(fields))
-        controls_truncated = scan_incomplete or total_controls > offset + limit or any(
+        controls_truncated = offset > 0 or scan_incomplete or total_controls > limit or any(
             len(group) > MAX_CONTROLS for group in (links, buttons, fields)
         )
         result = {
@@ -2373,11 +2379,13 @@ class BrowserSession:
                               or len(scopes) < frames_total)
             shadow_controls = any(row.get("shadow_path") for row in links + buttons + fields)
             result["text_coverage"] = {
-                "scope": "visible main/body text; form values and shadow text excluded",
+                "scope": "visible main/body text excluding navigation, headers, footers, asides, editable fields, SVG and shadow text",
                 "frames_total": frames_total, "frames_scanned": len(scopes),
                 "complete": not text_truncated and all(s == "body" for s in scopes)
                             and not shadow_controls,
             }
+            if not text_truncated and all(s != "none" for s in scopes):
+                result["text_coverage"]["collected_scopes"] = scopes
             visible_text = _redact_text(text) if mode == "full" else ""
             page_type = _classify_page_type(
                 page.url, page.title(), visible_text or " ".join(
@@ -3105,6 +3113,7 @@ class BrowserSession:
                     raise ValueError("browser_verify_arguments_invalid")
             snapshot = self._snapshot()
             self._last_digest = page_digest(snapshot)
+            self._digest_page = self._page
             return verify_expectations(
                 snapshot, expect_text=args.get("expect_text"), absent_text=args.get("absent_text"),
                 url_contains=args.get("url_contains"), control=args.get("control"),
@@ -3754,6 +3763,7 @@ class BrowserSession:
         self._widget_targets.clear()
         self._element_refs.clear()
         self._last_digest = None
+        self._digest_page = None
         self._observation_memory = ObservationMemory()
         diagnostic_event("browser_shutdown", status="ok")
 

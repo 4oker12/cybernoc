@@ -1455,6 +1455,19 @@ class SemanticContextTests(unittest.TestCase):
 
 
 class SpatialContextTests(unittest.TestCase):
+    def test_action_baseline_does_not_follow_a_recycled_tab_index(self):
+        session = BrowserSession.__new__(BrowserSession)
+        session._page = object()
+        session._response_mode = "compact"
+        session._last_digest = None
+        session._strategy = Mock()
+        session._apply_intelligence("browser_snapshot", {}, {"ok": True, "tab": 0, "visible_text": "Before"})
+        session._page = object()
+        result = session._apply_intelligence(
+            "browser_click_button", {}, {"ok": True, "tab": 0, "visible_text": "After"}
+        )
+        self.assertEqual(result["effect"], "unverified_no_baseline")
+
     def test_spatial_coordinate_space_is_explicit(self):
         from console.browser_control import _spatial_context
         raw = {"bounds": {"x": -5, "y": 20, "width": 40, "height": 30},

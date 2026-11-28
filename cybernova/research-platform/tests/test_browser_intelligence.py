@@ -62,6 +62,22 @@ class DeltaTests(unittest.TestCase):
         self.assertFalse(d["baseline"])
         self.assertIsNone(d["changed"])
 
+    def test_partial_slices_do_not_confirm_an_action_effect(self):
+        before = dict(snap("One", [{"name": "First", "ref": "e1"}]),
+                      controls_truncated=True, text_truncated=True)
+        after = dict(before, visible_text="Two", buttons=[{"name": "Second", "ref": "e2"}])
+        result, _ = compact_action_result("browser_click_button", after, page_digest(before))
+        self.assertEqual(result["effect"], "unverified_partial_observation")
+        self.assertEqual(result["delta"]["controls_added_count"], 1)
+        self.assertEqual(result["delta"]["text_added_count"], 1)
+
+    def test_matching_complete_text_scopes_can_confirm_visible_change(self):
+        before = dict(snap("One"), text_coverage={"complete": False, "collected_scopes": ["main"]})
+        after = dict(before, visible_text="Two")
+        self.assertTrue(snapshot_delta(page_digest(before), page_digest(after))["changed"])
+        after["text_coverage"] = {"complete": False, "collected_scopes": ["body"]}
+        self.assertIsNone(snapshot_delta(page_digest(before), page_digest(after))["changed"])
+
     def test_delta_is_bounded(self):
         a = page_digest(snap(""))
         b = page_digest(snap("\n".join(f"line {i}" for i in range(200))))
@@ -128,6 +144,17 @@ class VerifyTests(unittest.TestCase):
         self.assertFalse(r["verified"])
         self.assertEqual(r["unknown"], ["text_absent", "control_present"])
         self.assertEqual(r["failed"], [])
+
+    def test_paginated_control_checks_and_exact_typed_identifiers(self):
+        snapshot = dict(snap("", [{"name": "Unlabelled"},
+                                  {"name": "Panel", "id": "Panel", "ref": "e2"}]), control_offset=2)
+        self.assertFalse(page_digest(snapshot)["coverage"]["controls_complete"])
+        for target in ("id:", "ref:", " "):
+            self.assertEqual(verify_expectations(snapshot, control=target)["failed"], ["control_present"])
+        for target in ("id:panel", "ref:E2", "missing"):
+            self.assertEqual(verify_expectations(snapshot, control=target)["unknown"], ["control_present"])
+        for target in ("id:Panel", "ref:e2"):
+            self.assertTrue(verify_expectations(snapshot, control=target)["verified"])
 
     def test_empty_expectations_rejected(self):
         with self.assertRaises(ValueError):

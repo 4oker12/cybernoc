@@ -51,6 +51,16 @@ def response_mode(raw: str | None) -> str:
     return "full" if str(raw or "").strip().lower() == "full" else "compact"
 
 
+def _observation_coverage(snapshot: dict) -> dict:
+    text = snapshot.get("text_coverage") or {}
+    return {
+        "text_complete": not snapshot.get("text_truncated") and text.get("complete", True),
+        "controls_complete": not snapshot.get("controls_truncated") and
+                             not snapshot.get("control_offset") and
+                             snapshot.get("mode", "full") == "full",
+    }
+
+
 def page_digest(snapshot: dict) -> dict:
     """Fingerprint of a snapshot: url/title, text lines and a keyed control map."""
     lines = [
@@ -78,14 +88,10 @@ def page_digest(snapshot: dict) -> dict:
                                "frame_index": item.get("frame_index", 0), "state": state}
     frames = int(snapshot.get("frame_count") or 0)
     tab = snapshot.get("tab")
-    coverage = {
-        "text_complete": not snapshot.get("text_truncated") and
-                         (snapshot.get("text_coverage") or {}).get("complete", True),
-        "controls_complete": not snapshot.get("controls_truncated") and
-                             snapshot.get("mode", "full") == "full",
-    }
+    coverage = _observation_coverage(snapshot)
+    text_scope = (snapshot.get("text_coverage") or {}).get("collected_scopes")
     material = json.dumps([lines, snapshot.get("url"), snapshot.get("title"),
-                           list(controls.items()), frames, tab, coverage],
+                           list(controls.items()), frames, tab, coverage, text_scope],
                           ensure_ascii=False, sort_keys=True)
     return {
         "url": snapshot.get("url") or "",
@@ -95,6 +101,7 @@ def page_digest(snapshot: dict) -> dict:
         "frame_count": frames,
         "tab": tab,
         "coverage": coverage,
+        "text_scope": text_scope,
         "state_id": hashlib.sha256(material.encode("utf-8", "replace")).hexdigest()[:12],
     }
 
@@ -143,8 +150,12 @@ def snapshot_delta(before: dict | None, after: dict) -> dict:
     url_changed = before["url"] != after["url"]
     title_changed = before["title"] != after["title"]
     frame_changed = before["frame_count"] != after["frame_count"]
-    changed = bool(added or removed or ctrl_added or ctrl_removed or ctrl_state
-                   or ctrl_renamed or url_changed or title_changed or frame_changed)
+    text_comparable = coverage["text_complete"] or (
+        before.get("text_scope") is not None and before["text_scope"] == after.get("text_scope")
+    )
+    changed = bool(ctrl_state or ctrl_renamed or url_changed or title_changed or frame_changed
+                   or (text_comparable and (added or removed))
+                   or (coverage["controls_complete"] and (ctrl_added or ctrl_removed)))
     delta: dict = {"changed": changed if changed or all(coverage.values()) else None,
                    "state_id": after["state_id"], "coverage": coverage}
     if not all(coverage.values()):
@@ -234,10 +245,9 @@ def verify_expectations(snapshot: dict, *, expect_text=None, absent_text=None,
                         url_contains=None, control=None) -> dict:
     """Evaluate read-only expectations. Returns booleans and counts, never page text."""
     haystack = str(snapshot.get("visible_text") or "").casefold()
-    text_complete = not snapshot.get("text_truncated") and (
-        snapshot.get("text_coverage") or {}
-    ).get("complete", True)
-    controls_complete = not snapshot.get("controls_truncated") and snapshot.get("mode", "full") == "full"
+    coverage = _observation_coverage(snapshot)
+    text_complete = coverage["text_complete"]
+    controls_complete = coverage["controls_complete"]
     checks: list[dict] = []
 
     def add(kind, passed, **extra):
@@ -255,16 +265,20 @@ def verify_expectations(snapshot: dict, *, expect_text=None, absent_text=None,
     if url_contains:
         add("url_contains", str(url_contains).casefold() in str(snapshot.get("url") or "").casefold())
     if control:
-        wanted = str(control).casefold()
+        target = str(control).strip()
+        wanted = target.casefold()
         digest = page_digest(snapshot)
-        if wanted.startswith("id:"):
-            matches = [c for c in digest["controls"].values() if wanted[3:] == str(c.get("id") or "").casefold()]
-        elif wanted.startswith("ref:"):
-            matches = [c for c in digest["controls"].values() if wanted[4:] == str(c.get("ref") or "").casefold()]
+        prefix, _, identifier = target.partition(":")
+        if prefix.casefold() in {"id", "ref"} and ":" in target:
+            field = prefix.casefold()
+            matches = [c for c in digest["controls"].values() if identifier and c.get(field) == identifier]
+            valid = bool(identifier.strip())
         else:
-            matches = [c for c in digest["controls"].values() if wanted in c["name"].casefold()
-                       or wanted == str(c.get("id") or "").casefold()]
-        add("control_present", True if matches else (False if controls_complete else None), matches=len(matches))
+            valid = bool(wanted)
+            matches = [c for c in digest["controls"].values() if valid and (
+                wanted in c["name"].casefold() or wanted == str(c.get("id") or "").casefold())]
+        add("control_present", True if matches else (False if not valid or controls_complete else None),
+            matches=len(matches))
     if not checks:
         raise ValueError("browser_verify_no_expectations")
     passed = all(c["passed"] is True for c in checks)
@@ -273,7 +287,8 @@ def verify_expectations(snapshot: dict, *, expect_text=None, absent_text=None,
         "failed": [c["check"] for c in checks if c["passed"] is False],
         "unknown": [c["check"] for c in checks if c["passed"] is None],
         "coverage": {"text_complete": bool(text_complete), "controls_complete": bool(controls_complete),
-                     "text_scope": (snapshot.get("text_coverage") or {}).get("scope", "observed snapshot text")},
+                     "text_scope": (snapshot.get("text_coverage") or {}).get("scope", "observed snapshot text"),
+                     "url_scope": "sanitized URL without query or fragment"},
         "url": snapshot.get("url") or "", "title": _clip(snapshot.get("title"), 160),
         "note": "Checks describe observed scope only; unknown is not proof of absence. No page text or input values are echoed.",
     }
