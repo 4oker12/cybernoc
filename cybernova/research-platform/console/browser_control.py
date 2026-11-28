@@ -2640,13 +2640,14 @@ class BrowserSession:
             result["query"] = _redact_text(control_query)
         return result
 
-    def _ax_node_for_ref(self, cdp, ref: str) -> dict:
-        """Resolve only a previously observed DOM ref, including open shadow roots.
+    def _ax_node_for_ref(self, cdp, ref: str, context_ids=()) -> dict:
+        """Resolve a previously observed DOM ref and verify its collector identity.
 
-        Confirm collector WeakMap identity rather than trusting a page attribute.
+        The collector can run in an isolated JavaScript world. Resolve the same
+        backend node there rather than assuming the main world shares its WeakMap.
         Never expose raw AX names, values, hidden nodes or protocol data.
         """
-        search_id = object_id = None
+        search_id = None
         try:
             search = cdp.send("DOM.performSearch", {
                 "query": '[data-cybernova-ref="' + ref + '"]',
@@ -2661,34 +2662,49 @@ class BrowserSession:
             if len(ids) != 1:
                 return {}
             backend = cdp.send("DOM.describeNode", {"nodeId": ids[0]})["node"]["backendNodeId"]
-            object_id = cdp.send("DOM.resolveNode", {"backendNodeId": backend}).get("object", {}).get("objectId")
-            if not object_id:
-                return {}
-            identity = cdp.send("Runtime.callFunctionOn", {
-                "objectId": object_id,
-                "functionDeclaration": """function(namespace, ref) {
-                    const refs = this.ownerDocument[Symbol.for('cybernova.refs.' + namespace)];
-                    return !!refs && refs.get(this) === ref && this.isConnected;
-                }""",
-                "arguments": [{"value": self._ref_namespace}, {"value": ref}],
-                "returnByValue": True,
-            })
-            if identity.get("result", {}).get("value") is not True:
+            verified = False
+            for context_id in (None, *context_ids):
+                object_id = None
+                try:
+                    params = {"backendNodeId": backend}
+                    if context_id is not None:
+                        params["executionContextId"] = context_id
+                    object_id = cdp.send("DOM.resolveNode", params).get("object", {}).get("objectId")
+                    if not object_id:
+                        continue
+                    identity = cdp.send("Runtime.callFunctionOn", {
+                        "objectId": object_id,
+                        "functionDeclaration": """function(namespace, ref) {
+                            const refs = this.ownerDocument[Symbol.for('cybernova.refs.' + namespace)];
+                            return !!refs && refs.get(this) === ref && this.isConnected;
+                        }""",
+                        "arguments": [{"value": self._ref_namespace}, {"value": ref}],
+                        "returnByValue": True,
+                    })
+                    verified = identity.get("result", {}).get("value") is True
+                except Exception:
+                    # The frame/world may have disappeared since observation.
+                    continue
+                finally:
+                    if object_id:
+                        try:
+                            cdp.send("Runtime.releaseObject", {"objectId": object_id})
+                        except Exception:
+                            pass
+                if verified:
+                    break
+            if not verified:
                 return {}
             nodes = cdp.send("Accessibility.getPartialAXTree", {
                 "backendNodeId": backend, "fetchRelatives": False,
             }).get("nodes", [])
             return _ax_properties(next((n for n in nodes if n.get("backendDOMNodeId") == backend), None))
         finally:
-            for method, args in (
-                ("Runtime.releaseObject", {"objectId": object_id}) if object_id else (None, {}),
-                ("DOM.discardSearchResults", {"searchId": search_id}) if search_id else (None, {}),
-            ):
-                if method:
-                    try:
-                        cdp.send(method, args)
-                    except Exception:
-                        pass
+            if search_id:
+                try:
+                    cdp.send("DOM.discardSearchResults", {"searchId": search_id})
+                except Exception:
+                    pass
 
     def _with_ax_evidence(self, snapshot: dict, limit: int = 10, viewport=None) -> dict:
         """Sample verified refs across frames/open shadow and map top geometry.
@@ -2719,6 +2735,7 @@ class BrowserSession:
                     "shadow_observed": 0}
         snapshot["accessibility_coverage"] = coverage
         sessions = {}
+        worlds = {}
         owned = []
         def session_for(target):
             key = id(target)
@@ -2729,6 +2746,27 @@ class BrowserSession:
                     owned.append(cdp)
                     cdp.send("DOM.enable")
                     cdp.send("DOM.getDocument", {"depth": 0})
+                    contexts = {}
+                    worlds[id(cdp)] = contexts
+
+                    def created(event):
+                        context = event.get("context", {})
+                        cid = context.get("id")
+                        if type(cid) is int:
+                            contexts[cid] = None
+
+                    def destroyed(event):
+                        contexts.pop(event.get("executionContextId"), None)
+
+                    cdp.on("Runtime.executionContextCreated", created)
+                    cdp.on("Runtime.executionContextDestroyed", destroyed)
+                    cdp.on("Runtime.executionContextsCleared", lambda _event: contexts.clear())
+                    try:
+                        # Query existing execution contexts for DOM/AX correlation.
+                        # Do not create worlds, inject scripts or change page state.
+                        cdp.send("Runtime.enable")
+                    except Exception:
+                        pass  # The default world may still provide evidence.
                 except Exception:
                     cdp = None
                 sessions[key] = cdp
@@ -2763,7 +2801,7 @@ class BrowserSession:
                 if cdp is None:
                     continue
                 try:
-                    evidence = self._ax_node_for_ref(cdp, ref)
+                    evidence = self._ax_node_for_ref(cdp, ref, tuple(worlds.get(id(cdp), {}))[-32:])
                     if evidence:
                         row["accessibility"] = evidence
                         coverage["observed"] += 1

@@ -20,6 +20,46 @@ def snap(text, buttons=(), url="https://example.test/", title="T", fields=()):
             "frame_count": 1, "browser": "x", "page_type": "page"}
 
 
+class AXWorldTests(unittest.TestCase):
+    def test_native_ax_requires_verified_identity_in_a_live_world(self):
+        from types import SimpleNamespace
+        from console.browser_control import BrowserSession
+
+        class CDP:
+            def __init__(self, matching):
+                self.matching = matching
+                self.calls = []
+
+            def send(self, method, args):
+                self.calls.append((method, args))
+                if method == "DOM.performSearch":
+                    return {"searchId": "search", "resultCount": 1}
+                if method == "DOM.getSearchResults":
+                    return {"nodeIds": [11]}
+                if method == "DOM.describeNode":
+                    return {"node": {"backendNodeId": 22}}
+                if method == "DOM.resolveNode":
+                    return {"object": {"objectId": str(args.get("executionContextId", 0))}}
+                if method == "Runtime.callFunctionOn":
+                    return {"result": {"value": args["objectId"] == self.matching}}
+                if method == "Accessibility.getPartialAXTree":
+                    return {"nodes": [{"backendDOMNodeId": 22, "role": {"value": "button"},
+                                       "name": {"value": "not exposed"}, "ignored": False}]}
+                return {}
+
+        session = SimpleNamespace(_ref_namespace="test")
+        cdp = CDP("7")
+        result = BrowserSession._ax_node_for_ref(session, cdp, "e1", (6, 7))
+        self.assertEqual(result, {"role": "button", "ignored": False})
+        self.assertEqual([args["objectId"] for method, args in cdp.calls
+                          if method == "Runtime.releaseObject"], ["0", "6", "7"])
+        self.assertEqual(cdp.calls[-1][0], "DOM.discardSearchResults")
+        invalid = CDP("unknown")
+        self.assertEqual(BrowserSession._ax_node_for_ref(session, invalid, "e1", (6, 7)), {})
+        self.assertFalse(any(method == "Accessibility.getPartialAXTree"
+                             for method, _ in invalid.calls))
+
+
 class DeltaTests(unittest.TestCase):
     def test_text_control_url_and_state_changes(self):
         a = page_digest(snap("Hello\nOld", [{"name": "Open", "id": "o", "expanded": False}]))
