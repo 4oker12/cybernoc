@@ -243,7 +243,7 @@ _DEVELOPER_WRITE = ("dev_edit", "dev_move", "dev_delete", "dev_test", "dev_commi
 
 def route_model_tool_rows(
     rows: list[dict], task: str, *, limit: int, selected_groups=None,
-    additional_names=(),
+    additional_names=(), priority_names=(),
 ) -> list[dict]:
     """Prefer task-specific tools and deterministic order; retain manual groups.
 
@@ -292,6 +292,9 @@ def route_model_tool_rows(
     def group_names(group):
         return [name for name in valid if tool_group_for_name(name) == group]
 
+    # Explicitly requested schemas must not be clipped by broad group expansion.
+    # All priority names still pass the same deny/manual group checks.
+    add(priority_names)
     add(exact)
     # Runtime discoveries can widen the next model request without changing
     # task authorization. The same group and explicit-denial checks apply.
@@ -323,7 +326,7 @@ def route_model_tool_rows(
             continue
         if group == "browser":
             add(_BROWSER_READ)
-            if re.search(r"клик|нажм|заполни|форм|выбер|войд|логин|регистрац|вход|submit|click|fill|login|register|interact", task):
+            if re.search(r"клик|нажм|заполни|форм|выбер|войд|логин|регистрац|вход|навед|фокус|двойн.{0,8}клик|submit|click|fill|login|register|interact|\bhover\b|\bfocus\b", task):
                 add(_BROWSER_INTERACT)
             if re.search(r"devtools|console|network|консол|сетев|трафик|завис|ошиб|не работает|stuck|hang|fail|error", task):
                 add(("browser_console", "browser_network_session", "browser_network_capture"))

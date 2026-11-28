@@ -28,3 +28,6 @@ Frame-local bounds, focus and center-point hit evidence now accompany refs in al
 
 ### P0.3 partial implementation record
 Existing browser_click_button dispatch accepts explicit hover/focus/double_click prefixes with a verified ref, preserving the old schema and click path. Double click is limited to ordinary non-form buttons and rejects recognized high-impact/account/payment targets; no forced click or write preauthorization. Existing network policy stays active. Tests added for ref-only gestures and rejecting double click on a form. Arbitrary custom text widgets and richer gestures are not yet covered. Execution pending CI/local checkout.
+
+### P0.4 implementation record
+Explicit schema discovery and a rejected-but-registered tool now receive bounded recent priority over group expansion, with the same manual group and deny rules. Candidate exposure is checked after reserving internal meta-tool slots. Browser hover/focus language routes existing interaction tools; no dispatch or authorization bypass. Targeted routing tests added. Execution pending CI/local checkout.

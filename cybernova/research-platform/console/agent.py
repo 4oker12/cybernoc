@@ -1183,6 +1183,15 @@ class Agent:
         descriptors, tools = {}, []
         registered = []
         requested_expansion = set()
+        priority_expansion = []
+
+        def prioritize_schema(name):
+            # Most recent explicit discovery is guaranteed priority over group expansion.
+            if name in priority_expansion:
+                priority_expansion.remove(name)
+            priority_expansion.insert(0, name)
+            del priority_expansion[8:]
+            requested_expansion.add(name)
         count, gets, executed = 0, 0, 0
         selected_by = "native"
         diagnostic_event("tool_catalog_start", status="started" if tools_enabled else "disabled",
@@ -1346,6 +1355,7 @@ class Agent:
                         registered, route_text, limit=MAX_ADVERTISED,
                         selected_groups=selected_groups,
                         additional_names=sorted(requested_expansion),
+                        priority_names=priority_expansion,
                     )
                     advertised = _append_agent_meta_tools(advertised, registered, selected_groups)
                     descriptors = {row["name"]: row for row in advertised}
@@ -1658,11 +1668,12 @@ class Agent:
                                 candidate = route_model_tool_rows(
                                     registered, route_text, limit=MAX_ADVERTISED,
                                     selected_groups=selected_groups,
-                                    additional_names=(name,),
+                                    priority_names=(name,),
                                 )
+                                candidate = _append_agent_meta_tools(candidate, registered, selected_groups)
                                 if name not in {row["name"] for row in candidate}:
                                     raise BackendError("tool_denied_by_policy")
-                                requested_expansion.add(name)
+                                prioritize_schema(name)
                                 raise BackendError("tool_not_exposed_in_this_round")
                             if name in global_names:
                                 raise BackendError("tool_denied_by_policy")
@@ -1736,11 +1747,12 @@ class Agent:
                             candidate = route_model_tool_rows(
                                 registered, route_text, limit=MAX_ADVERTISED,
                                 selected_groups=selected_groups,
-                                additional_names=(target,),
+                                priority_names=(target,),
                             )
+                            candidate = _append_agent_meta_tools(candidate, registered, selected_groups)
                             if target not in {row["name"] for row in candidate}:
                                 raise BackendError("tool_denied_by_policy")
-                            requested_expansion.add(target)
+                            prioritize_schema(target)
                             dispatched = True
                             executed += 1
                             safe_result = {
