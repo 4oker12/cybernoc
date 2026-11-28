@@ -1551,6 +1551,10 @@ class InferredCardTests(unittest.TestCase):
         self.assertTrue(groups[0]["inferred"])
         self.assertEqual(groups[0]["ordinal"], 2)
         self.assertEqual(groups[0]["evidence"], ["repeated_sibling_structure", "local_control"])
+        single = _semantic_context({"groups": [{"kind": "card_candidate", "inferred": True,
+                                    "evidence": ["distinct_visual_boundary", "visible_title"]}]})
+        self.assertIn("distinct_visual_boundary", single["groups"][0]["evidence"])
+        self.assertNotIn("ordinal", single["groups"][0])
 
 
 class NativeAXEvidenceTests(unittest.TestCase):

@@ -437,7 +437,8 @@ def _semantic_context(raw) -> dict:
             evidence = group.get("evidence")
             if isinstance(evidence, list):
                 item["evidence"] = [x for x in evidence[:4] if x in (
-                    "repeated_sibling_structure", "visible_title", "media", "local_control"
+                    "repeated_sibling_structure", "visible_title", "media", "local_control",
+                    "distinct_visual_boundary"
                 )]
         groups.append(item)
     if groups:
@@ -894,24 +895,44 @@ _COLLECT_ELEMENTS_JS_TEMPLATE = r"""
   };
   const shapeOf = node => node.tagName + ':' + [...node.children].slice(0,8)
     .map(child => child.tagName + '/' + (child.getAttribute('role') || '')).join(',');
+  const genericContainer = node => node.matches('div') || node.localName.includes('-');
+  const visualBoundary = node => {
+    const style = getComputedStyle(node), parent = getComputedStyle(node.parentElement);
+    const rect = node.getBoundingClientRect();
+    if (rect.width < 80 || rect.height < 48 || rect.height > Math.max(innerHeight * 1.5, 400)) return false;
+    const border = ['Top','Right','Bottom','Left'].filter(side =>
+      parseFloat(style['border'+side+'Width']) >= 1 &&
+      !['none','hidden'].includes(style['border'+side+'Style'])).length >= 2;
+    const background = style.backgroundColor !== 'rgba(0, 0, 0, 0)' &&
+      style.backgroundColor !== 'transparent' && style.backgroundColor !== parent.backgroundColor;
+    const padding = ['Top','Right','Bottom','Left'].some(side => parseFloat(style['padding'+side]) >= 8);
+    const shadow = style.boxShadow && style.boxShadow !== 'none';
+    return border || ((background || shadow) && padding);
+  };
   const inferredCard = node => {
     if (cardCache.has(node)) return cardCache.get(node);
     let result = null;
-    if (node.matches('div') && node.parentElement && visible(node) &&
+    if (genericContainer(node) && node.parentElement && visible(node) &&
         node.children.length >= 2 && node.children.length <= 16) {
       const siblings = [...node.parentElement.children].slice(0,48);
       const shape = shapeOf(node);
-      const peers = siblings.filter(sibling => sibling.matches('div') && shapeOf(sibling) === shape && visible(sibling));
+      const peers = siblings.filter(sibling => genericContainer(sibling) && shapeOf(sibling) === shape && visible(sibling));
       const ordinal = peers.indexOf(node) + 1;
-      const localControl = node.querySelector('button,a[href],input,select,[role="button"],[role="link"]');
-      if (ordinal && peers.length >= 2 && localControl && visible(localControl)) {
+      const repeated = ordinal && peers.length >= 2;
+      const localControl = [...node.querySelectorAll('button,a[href],input,select,[role="button"],[role="link"]')]
+        .slice(0,16).find(visible);
+      if (localControl) {
         const label = safeTitle(node);
-        const media = node.querySelector('img,svg,[role="img"]');
-        if (label || (media && visible(media))) {
-          const evidence = ['repeated_sibling_structure','local_control'];
+        const media = [...node.querySelectorAll('img,svg,[role="img"]')].slice(0,12).find(visible);
+        // A single card needs a visible title plus a visual boundary. Do not
+        // infer grouping from a class name, isolated button or large wrapper.
+        const single = !repeated && label && visualBoundary(node);
+        if ((repeated && (label || media)) || single) {
+          const evidence = [repeated ? 'repeated_sibling_structure' : 'distinct_visual_boundary','local_control'];
           if (label) evidence.push('visible_title');
-          if (media && visible(media)) evidence.push('media');
-          result = {kind:'card_candidate',label,inferred:true,ordinal,evidence};
+          if (media) evidence.push('media');
+          result = {kind:'card_candidate',label,inferred:true,evidence};
+          if (repeated) result.ordinal = ordinal;
         }
       }
     }

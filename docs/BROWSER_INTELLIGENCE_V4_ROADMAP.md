@@ -100,3 +100,6 @@ A dedicated PR workflow installs actual Playwright Chromium and runs the browser
 
 ### V4 continuation — visual observations across frame boundaries
 Visual nodes have separate read-only vN IDs and a document WeakMap; IDs cannot resolve via the action ref parser. Searching a declared icon/image label also finds its observed owner. Targeted search and screenshots map sampled nested visual boxes using a verified frame locator; screenshot returns top-viewport intersecting DOM hints, with explicit non-atomic/partial coverage. Pixels still require a vision-capable model. Local fixture covers iframe icon-owner association and standalone diagram geometry.
+
+### V4 continuation — P0.1 singleton card hypotheses
+An otherwise unmarked single div or custom element may be recognized as a card candidate when it has a visible title and local control plus a bounded visual border/background/shadow-and-padding signal. Repeated structural peers remain a separate evidence path. The inference has no action authority and an ordinal is only present for repeated peers. Local Chromium fixture verifies the single-card context; unknown layouts remain unclassified rather than invented.
