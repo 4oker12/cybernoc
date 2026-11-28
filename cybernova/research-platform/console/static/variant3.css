@@ -11,12 +11,12 @@
   --text: #1f2328;
   --muted: #59636e;
   --line: #d8dee4;
-  --hover: #f1faf3;
-  --accent: #1f883d;
-  --accent-strong: #166534;
-  --accent-soft: #eaf6ee;
-  --success: #1f883d;
-  --success-soft: #eaf6ee;
+  --hover: #f3f7ff;
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --accent-soft: #edf4ff;
+  --success: #2563eb;
+  --success-soft: #edf4ff;
 }
 
 :root[data-theme="light"] body,
@@ -37,8 +37,8 @@
   border-right: 1px solid #eaeef2;
 }
 :root[data-theme="light"] .sidebar .sidebar-action {
-  background: #1f883d;
-  border-color: #1f883d;
+  background: #2563eb;
+  border-color: #2563eb;
   color: #ffffff;
   font-weight: 650;
   border-radius: 9px;
@@ -49,15 +49,15 @@
   color: #ffffff;
 }
 :root[data-theme="light"] .sidebar .sidebar-action:hover {
-  background: #1a7f37;
-  border-color: #1a7f37;
+  background: #1d4ed8;
+  border-color: #1d4ed8;
 }
 :root[data-theme="light"] .sidebar .mode-item.selected,
 :root[data-theme="light"] .sidebar .session-item.active,
 :root[data-theme="light"] .sidebar .task-item.selected {
-  background: #eaf6ee;
-  border-color: #cde8d4;
-  color: #166534;
+  background: #edf4ff;
+  border-color: #c7d9f8;
+  color: #1d4ed8;
 }
 :root[data-theme="light"] .sidebar .session-item,
 :root[data-theme="light"] .sidebar .task-item {
@@ -68,7 +68,7 @@
 :root[data-theme="light"] .sidebar .task-item:hover,
 :root[data-theme="light"] .sidebar .session-item:hover {
   background: #f5faf6;
-  border-color: #d5ead9;
+  border-color: #d9dee6;
 }
 
 /* Chat-first hierarchy: white canvas, restrained speaker cards. */
@@ -85,16 +85,16 @@
 }
 :root[data-theme="light"] .chat-msg.from-user .avatar,
 :root[data-theme="light"] .avatar.user {
-  background: #d8efdf;
-  color: #176b39;
+  background: #dee2e9;
+  color: #213a61;
 }
 :root[data-theme="light"] .chat-msg.from-user .message-meta {
-  color: #176b39;
+  color: #213a61;
 }
 :root[data-theme="light"] .chat-msg.from-user .message-body {
   max-width: min(82%, 760px);
-  background: #eaf6ee;
-  border: 1px solid #d3ead9;
+  background: #edf4ff;
+  border: 1px solid #d8dde5;
   color: #1f2328;
   border-radius: 16px;
   padding: 13px 17px;
@@ -104,17 +104,17 @@
 :root[data-theme="light"] .chat-msg.from-chatgpt .message-body {
   max-width: min(100%, 920px);
   background: #f5faf6;
-  border: 1px solid #dfefe5;
+  border: 1px solid #e3e6eb;
   border-radius: 16px;
   padding: 17px 20px;
   color: #1f2328;
   box-shadow: none;
 }
 :root[data-theme="light"] .chat-msg.from-agent .message-meta {
-  color: #1f883d;
+  color: #2563eb;
 }
 :root[data-theme="light"] .chat-msg.from-chatgpt .message-meta {
-  color: #1f883d;
+  color: #2563eb;
 }
 :root[data-theme="light"] .chat-msg.from-agent .md-content,
 :root[data-theme="light"] .chat-msg.from-chatgpt .md-content,
@@ -125,25 +125,25 @@
   color: #1f2328;
 }
 :root[data-theme="light"] .chat-msg .md-content code:not(.md-code code) {
-  background: #eaf6ee;
-  border-color: #cde8d4;
-  color: #166534;
+  background: #edf4ff;
+  border-color: #c7d9f8;
+  color: #1d4ed8;
 }
 
 /* Collaborative conversation follows the same palette. */
 :root[data-theme="light"] .collab-entry.collab-human {
-  background: #eaf6ee;
-  border-color: #d3ead9;
+  background: #edf4ff;
+  border-color: #d8dde5;
 }
 :root[data-theme="light"] .collab-entry.collab-qwen {
   background: #f5faf6;
-  border-color: #dfefe5;
-  border-left: 3px solid #1f883d;
+  border-color: #e3e6eb;
+  border-left: 3px solid #2563eb;
 }
 :root[data-theme="light"] .collab-entry.collab-chatgpt {
   background: #f5fbf7;
-  border-color: #d8ecdf;
-  border-left: 3px solid #1f883d;
+  border-color: #dce1e8;
+  border-left: 3px solid #2563eb;
 }
 
 /* Message composer: roomy white input and green send button. */
@@ -153,13 +153,13 @@
 }
 :root[data-theme="light"] .composer {
   background: #ffffff;
-  border: 1px solid #cde8d4;
+  border: 1px solid #c7d9f8;
   border-radius: 15px;
   padding: 11px 15px 9px;
   box-shadow: 0 3px 14px rgba(31,35,40,.055);
 }
 :root[data-theme="light"] .composer:focus-within {
-  border-color: #1f883d;
+  border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(9,105,218,.13);
 }
 :root[data-theme="light"] .composer textarea#messageInput {
@@ -169,17 +169,17 @@
   color: #1f2328;
 }
 :root[data-theme="light"] .composer .send-button {
-  background: #1f883d;
+  background: #2563eb;
   border-radius: 9px;
   color: #ffffff;
 }
 :root[data-theme="light"] .composer .send-button:hover {
-  background: #1a7f37;
+  background: #1d4ed8;
 }
 :root[data-theme="light"] .composer .tool-picker-toggle {
-  background: #eaf6ee;
-  border-color: #cde8d4;
-  color: #166534;
+  background: #edf4ff;
+  border-color: #c7d9f8;
+  color: #1d4ed8;
 }
 :root[data-theme="light"] .composer-meta {
   color: #6e7781;
@@ -233,20 +233,20 @@ html[data-theme="light"] .inspector {
 /* Final visual tuning from the approved chat mockup:
    white canvas, pale-blue assistant cards, green user/actions. */
 :root[data-theme="light"] .chat-msg.from-user .message-body {
-  background: #edf7ef;
-  border-color: #d5ead9;
+  background: #f0f2f4;
+  border-color: #d9dee6;
 }
 :root[data-theme="light"] .chat-msg.from-agent .message-body,
 :root[data-theme="light"] .chat-msg.from-chatgpt .message-body {
   background: #f5faf6;
-  border-color: #dfefe5;
+  border-color: #e3e6eb;
 }
 :root[data-theme="light"] .composer {
-  border-color: #b8d9c2;
+  border-color: #bbc5d6;
 }
 :root[data-theme="light"] .composer:focus-within {
-  border-color: #1f883d;
-  box-shadow: 0 0 0 3px rgba(31,136,61,.13);
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.13);
 }
 
 /* Per-message usage receipts are redundant; show one bottom summary. */
@@ -301,13 +301,13 @@ html[data-theme="light"] .inspector {
 }
 :root[data-theme="light"] .sidebar #taskList > .task-item:hover {
   background: #f5faf6;
-  border-color: #d5ead9;
+  border-color: #d9dee6;
 }
 :root[data-theme="light"] .sidebar #taskList > .task-item.selected {
-  background: #eaf6ee;
-  border-color: #cde8d4;
-  color: #166534;
-  box-shadow: inset 3px 0 0 #1f883d;
+  background: #edf4ff;
+  border-color: #c7d9f8;
+  color: #1d4ed8;
+  box-shadow: inset 3px 0 0 #2563eb;
 }
 :root[data-theme="light"] .sidebar #taskList .task-title {
   display: block;
@@ -339,15 +339,15 @@ html[data-theme="light"] .inspector {
   white-space: nowrap;
 }
 :root[data-theme="light"] .sidebar #taskList .task-state[data-status="completed"] {
-  background: #eaf6ee;
-  border-color: #cde8d4;
-  color: #1f883d;
+  background: #edf4ff;
+  border-color: #c7d9f8;
+  color: #2563eb;
 }
 :root[data-theme="light"] .sidebar #taskList .task-state[data-status="running"],
 :root[data-theme="light"] .sidebar #taskList .task-state[data-status="in_progress"] {
-  background: #eaf6ee;
-  border-color: #cde8d4;
-  color: #166534;
+  background: #edf4ff;
+  border-color: #c7d9f8;
+  color: #1d4ed8;
 }
 :root[data-theme="light"] .sidebar #taskList .task-state[data-status="failed"],
 :root[data-theme="light"] .sidebar #taskList .task-state[data-status="error"] {
@@ -367,12 +367,12 @@ html[data-theme="light"] .inspector {
 /* DeepSeek quick model controls: compact GitHub-green, not a second toolbar. */
 :root[data-theme="light"] .model-quick-settings {
   display:inline-flex;align-items:center;gap:4px;
-  background:#eaf6ee;color:#1a7f37;border:1px solid #cde8d4;
+  background:#edf4ff;color:#1d4ed8;border:1px solid #c7d9f8;
   border-radius:999px;padding:5px 9px;font-size:11px;font-weight:650;
   white-space:nowrap;cursor:pointer;box-shadow:none;
 }
 :root[data-theme="light"] .model-quick-settings:hover {
-  background:#dafbe1;border-color:#1f883d;
+  background:#dbeafe;border-color:#2563eb;
 }
 .model-quick-settings[hidden] {display:none!important}
 .model-reasoning-note {
@@ -380,11 +380,11 @@ html[data-theme="light"] .inspector {
   border-radius:9px;color:var(--muted);font-size:12px;line-height:1.55;
 }
 :root[data-theme="light"] .model-reasoning-note {
-  border-color:#cde8d4;background:#f2faf4;color:#346b45;
+  border-color:#c7d9f8;background:#f5f6f7;color:#33496c;
 }
 :root[data-theme="dark"] .model-quick-settings {
-  display:inline-flex;align-items:center;background:#173b2a;color:#3fb950;
-  border:1px solid #276b3b;border-radius:999px;padding:5px 9px;
+  display:inline-flex;align-items:center;background:#172c49;color:#60a5fa;
+  border:1px solid #315789;border-radius:999px;padding:5px 9px;
   font-size:11px;font-weight:650;white-space:nowrap;cursor:pointer;
 }
 @media(max-width:680px){.model-quick-settings{padding:4px 7px;font-size:10px}}
@@ -392,14 +392,14 @@ html[data-theme="light"] .inspector {
 /* GitHub green as the primary UI accent. Keep the workspace pure white. */
 :root[data-theme="light"] .chat-msg.from-agent .message-body,
 :root[data-theme="light"] .chat-msg.from-chatgpt .message-body {
-  background:#f5faf6;border-color:#dfefe5;
+  background:#f5faf6;border-color:#e3e6eb;
 }
 :root[data-theme="light"] .composer{
-  background:#fff;border:1px solid #cde8d4;border-radius:16px;
+  background:#fff;border:1px solid #c7d9f8;border-radius:16px;
   box-shadow:0 2px 10px rgba(31,35,40,.045);
 }
 :root[data-theme="light"] .composer:focus-within{
-  border-color:#1f883d;box-shadow:0 2px 10px rgba(31,35,40,.045);
+  border-color:#2563eb;box-shadow:0 2px 10px rgba(31,35,40,.045);
 }
 /* The textarea must not draw a second nested outline on hover or focus. */
 :root .composer textarea#messageInput,
@@ -413,14 +413,14 @@ html[data-theme="light"] .inspector {
   min-height:56px;line-height:1.55;
 }
 :root[data-theme="light"] .composer .send-button{
-  color:#fff;background:#1f883d;border-radius:10px;width:40px;height:38px;
+  color:#fff;background:#2563eb;border-radius:10px;width:40px;height:38px;
 }
-:root[data-theme="light"] .composer .send-button:hover{background:#1a7f37}
+:root[data-theme="light"] .composer .send-button:hover{background:#1d4ed8}
 :root[data-theme="light"] .composer .tool-picker-toggle{
-  color:#166534;border-color:#cde8d4;background:#eaf6ee;
+  color:#1d4ed8;border-color:#c7d9f8;background:#edf4ff;
 }
 :root[data-theme="light"] .composer .tool-picker-toggle:hover{
-  background:#dafbe1;border-color:#1f883d;
+  background:#dbeafe;border-color:#2563eb;
 }
 /* Readable provider usage only in the composer footer. */
 :root .composer-meta{
@@ -430,23 +430,23 @@ html[data-theme="light"] .inspector {
 :root .composer-meta #uploadStatus{display:none!important}
 :root .composer-meta #tokenUsageStatus{
   display:inline-flex!important;max-width:85%;align-items:center;
-  border:1px solid #cde8d4;border-radius:7px;
-  background:#f2faf4;color:#346b45;
+  border:1px solid #c7d9f8;border-radius:7px;
+  background:#f5f6f7;color:#33496c;
   font-size:10.5px;line-height:1.25;padding:5px 8px;
   font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere;
 }
 :root .composer-meta #sendStatus{font-size:10px;white-space:nowrap;color:var(--muted)}
 :root[data-theme="dark"] .composer-meta #tokenUsageStatus{
-  color:#a5edba;border-color:#276b3b;background:#173b2a;
+  color:#bfdbfe;border-color:#315789;background:#172c49;
 }
 /* One green active/focus state for follow-up suggestions. */
 :root[data-theme="light"] .followup-question{
-  color:#166534;background:#f4faf5;border:1px solid #cde8d4;
-  border-left:3px solid #1f883d;border-radius:12px;box-shadow:none;
+  color:#1d4ed8;background:#f6f7f8;border:1px solid #c7d9f8;
+  border-left:3px solid #2563eb;border-radius:12px;box-shadow:none;
 }
 :root[data-theme="light"] .followup-question:hover,
 :root[data-theme="light"] .followup-question:active{
-  color:#166534;background:#eaf6ee;border-color:#1f883d;
+  color:#1d4ed8;background:#edf4ff;border-color:#2563eb;
 }
 :root .followup-question:focus:not(:focus-visible){
   outline:none!important;box-shadow:none!important;
@@ -454,19 +454,19 @@ html[data-theme="light"] .inspector {
 :root .followup-question:focus-visible{
   outline:2px solid var(--accent)!important;outline-offset:2px;
 }
-:root[data-theme="light"] .followup-label{color:#1f883d}
+:root[data-theme="light"] .followup-label{color:#2563eb}
 :root[data-theme="light"] .sidebar .mode-item.selected,
 :root[data-theme="light"] .sidebar .session-item.active,
 :root[data-theme="light"] .sidebar .task-item.selected,
 :root[data-theme="light"] .sidebar #taskList>.task-item.selected{
-  background:#eaf6ee;border-color:#cde8d4;color:#166534;
-  box-shadow:inset 3px 0 0 #1f883d;
+  background:#edf4ff;border-color:#c7d9f8;color:#1d4ed8;
+  box-shadow:inset 3px 0 0 #2563eb;
 }
 :root[data-theme="light"] .sidebar .mode-item:hover,
 :root[data-theme="light"] .sidebar .session-item:hover,
 :root[data-theme="light"] .sidebar .task-item:hover,
 :root[data-theme="light"] .sidebar #taskList>.task-item:hover{
-  background:#f1faf3;border-color:#d5ead9;
+  background:#f3f7ff;border-color:#d9dee6;
 }
 /* Detailed tool events stay in Inspector or an expandable chip, not in the chat. */
 :root .inline-tools{margin:8px 0 4px 35px;display:block}
@@ -492,3 +492,14 @@ html[data-theme="light"] .inspector {
   :root .inline-tools{margin-left:0}
   :root .composer-meta #tokenUsageStatus{font-size:10px;max-width:82%}
 }
+
+/* Runtime activity: one borderless blue-tinted row per observed operation. */
+.chat-activity{display:grid;gap:6px;margin:8px 0 12px 36px;max-height:48vh;overflow:auto;overscroll-behavior:contain}
+.activity-row{display:flex;align-items:center;gap:12px;padding:10px 13px;border:0;border-radius:9px;background:var(--accent-soft);color:var(--text);font-size:13px;line-height:1.45}
+.activity-description{flex:1;min-width:0;overflow-wrap:anywhere}
+.activity-title{font-weight:650;color:var(--text)}
+.activity-detail{color:var(--muted);font-size:12px}
+.activity-state,.activity-time{flex:none;color:var(--accent-strong);font-size:12px;font-variant-numeric:tabular-nums}
+.activity-slow{background:color-mix(in srgb,var(--accent) 20%,var(--surface))}
+.activity-slow .activity-title{color:var(--accent-strong)}
+@media(max-width:680px){.chat-activity{margin-left:0}.activity-row{flex-wrap:wrap;gap:6px}.activity-description{flex-basis:100%}}

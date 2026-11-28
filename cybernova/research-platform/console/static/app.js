@@ -96,7 +96,6 @@ function renderMessage(role,content,pending=false,containerId="messages"){
   const meta=node("div","message-meta");
   meta.append(node("span","avatar "+(role==="user"?"user":""),role==="user"?"U":role==="chatgpt"?"G":"◈"),
               node("span","",author));
-  if(role==="assistant")meta.append(node("span","agent-rank","Grandmaster · NOC / Development"));
   const body=node("div","message-body");
   if(role==="user"){body.textContent=String(content);}
   else{setFormatted(body,content);}
@@ -684,6 +683,92 @@ function chatElapsed(seconds){
   const n=Math.max(0,Math.floor(seconds||0));
   return [Math.floor(n/3600),Math.floor(n/60)%60,n%60].map(v=>String(v).padStart(2,"0")).join(":");
 }
+// Project the durable, sanitized Runtime event stream; no invented reasoning steps.
+function chatActivityRows(job){
+  const rows=[], tools=new Map(), attempts=new Map();
+  let model=null;
+  const now=Number(job.timeline_now)||0;
+  const active=["running","stopping"].includes(job.status);
+  function add(title,e,kind,detail=""){
+    const row={title,kind,detail,at:e.at,end:null,ms:null,status:"running"};
+    rows.push(row);
+    return row;
+  }
+  function finish(row,e,status){
+    row.end=e.at;row.status=status;
+    if(Number.isFinite(e.duration_ms))row.ms=e.duration_ms;
+  }
+  for(const e of job.timeline||[]){
+    switch(e.event){
+      case "model_request_start":
+        model=add("Запрос модели",e,"model","Ожидание ответа API");break;
+      case "provider_tool_response":
+        if(model&&Number.isFinite(e.tool_calls))model.detail=e.finish_reason==="length"?
+          "Исчерпан бюджет генерации":e.tool_calls?"Выбрано инструментов: "+e.tool_calls:"Ответ модели получен";
+        break;
+      case "model_request_complete":
+      case "model_request_failure":
+        if(model)finish(model,e,e.event.endsWith("failure")?"failed":"done");
+        model=null;break;
+      case "agent_tool_requested":
+      case "agent_tool_dispatch_start":{
+        const key=e.call_ref;
+        if(!key)break;
+        if(!tools.has(key)){
+          const count=(attempts.get(e.tool)||0)+1;attempts.set(e.tool,count);
+          tools.set(key,add(e.tool==="tool_capabilities"?"Поиск инструмента":e.tool||"Инструмент",
+            e,"tool",count>1?"Повторный вызов инструмента · "+count:"Запрошен вызов"));
+        }
+        if(e.event==="agent_tool_dispatch_start")tools.get(key).detail+=" · выполнение";
+        break;
+      }
+      case "agent_tool_dispatch_finish":
+      case "agent_tool_not_dispatched":
+      case "agent_tool_observed":{
+        const row=tools.get(e.call_ref);
+        if(!row)break;
+        const status=e.status==="not_executed"||e.event==="agent_tool_not_dispatched"?"not_executed":
+          e.is_error||e.status==="failed"?"failed":"done";
+        finish(row,e,status);
+        if(e.error_code||e.result_code)row.detail+=" · "+(e.error_code||e.result_code);
+        if(e.effect==="unverified_partial_observation")row.detail+=" · Недостаточно данных для проверки";
+        else if(e.effect==="none_observed")row.detail+=" · Изменение не наблюдалось";
+        if(e.change_strategy===true)row.detail+=" · Требуется смена стратегии";
+        if(e.attempts_on_state>1)row.detail+=" · Попыток в этом состоянии: "+e.attempts_on_state;
+        break;
+      }
+      case "agent_tool_selection_failure":{
+        const row=add("Ошибка выбора инструмента",e,"notice",e.error_code||"");finish(row,e,"failed");break;
+      }
+      case "agent_execution_limit":
+      case "agent_execution_failure":{
+        const row=add("Выполнение прервано",e,"notice",e.error_code||"");finish(row,e,"failed");break;
+      }
+    }
+  }
+  return rows.map(row=>{
+    const seconds=Math.max(0,row.ms!==null?row.ms/1000:((row.end??now)-row.at));
+    const slow=row.kind==="model"&&seconds>=30;
+    return {...row,seconds,slow,status:!active&&row.status==="running"?"unknown":row.status};
+  });
+}
+function renderChatActivity(panel,job){
+  const rows=chatActivityRows(job);
+  const wasAtBottom=panel.scrollHeight-panel.scrollTop-panel.clientHeight<40;
+  panel.replaceChildren();
+  for(const row of rows){
+    const item=node("div","activity-row"+(row.slow?" activity-slow":""));
+    const description=node("div","activity-description");
+    description.append(node("strong","activity-title",row.slow?"Длительное ожидание модели":row.title),
+      node("div","activity-detail",row.detail||""));
+    const labels={running:"В работе",done:"Готово",failed:"Ошибка",not_executed:"Не выполнено",unknown:"Не подтверждено"};
+    item.append(description,node("span","activity-state",labels[row.status]||row.status),
+      node("span","activity-time",chatElapsed(row.seconds)));
+    panel.append(item);
+  }
+  panel.hidden=!rows.length;
+  if(wasAtBottom)panel.scrollTop=panel.scrollHeight;
+}
 async function pollChatJob(record,pending,accepted=true){
   let failures=0;
   const stop=node("button","","Остановить задачу");
@@ -695,6 +780,10 @@ async function pollChatJob(record,pending,accepted=true){
       if(r.status==="stopping")stop.textContent="Остановка после текущей операции";
     }catch(_){stop.disabled=false;stop.textContent="Повторить остановку";}
   });
+  const activity=node("div","chat-activity");
+  activity.hidden=true;
+  activity.setAttribute("aria-label","Журнал выполнения");
+  pending.wrap.insertBefore(activity,pending.body);
   pending.wrap.append(stop);
   try{
     // The worker, not the HTTP connection, owns task lifetime.
@@ -714,6 +803,7 @@ async function pollChatJob(record,pending,accepted=true){
         continue;
       }
       accepted=true;failures=0;
+      renderChatActivity(activity,job);
       if(job.session_id)state.sessionId=job.session_id;
       if(job.task_id)state.taskId=job.task_id;
       if(!["running","stopping"].includes(job.status)){
@@ -728,8 +818,8 @@ async function pollChatJob(record,pending,accepted=true){
       const p=job.progress,elapsed=" · "+chatElapsed(job.elapsed_seconds);
       if(job.status==="stopping"){
         stop.disabled=true;pending.body.textContent="Остановка после текущей операции…"+elapsed;
-      }else if(p?.event==="model_request_start")pending.body.textContent="Модель планирует следующий шаг…"+elapsed;
-      else if(p?.event==="tool_call_start"&&p.tool)pending.body.textContent="Выполняется "+p.tool+"…"+elapsed;
+      }else if(p?.event==="model_request_start")pending.body.textContent="Ожидание ответа модели…"+elapsed;
+      else if(["tool_call_start","agent_tool_requested","agent_tool_dispatch_start"].includes(p?.event)&&p.tool)pending.body.textContent="Выполняется "+p.tool+"…"+elapsed;
       else if(p?.event==="agent_plan_checkpoint")pending.body.textContent="Контрольная точка · раунд "+(p.round||0)+elapsed;
       else if(p?.tool)pending.body.textContent=p.tool+" · "+(p.status||"проверка результата")+elapsed;
       else pending.body.textContent="Задание выполняется"+elapsed;

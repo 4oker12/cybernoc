@@ -143,8 +143,9 @@ LOCAL_TOOLS_PROFILE = """
   browser_snapshot, browser_follow_link, browser_back/forward/reload,
   browser_tabs, browser_new_tab, browser_switch_tab, browser_scroll,
   browser_fill/select, browser_console и browser_network_session.
-- Экономь токены: сначала browser_snapshot с mode=orientation, затем
-  mode=compact; mode=full и browser_read_page — только когда нужен полный текст.
+- Самостоятельно выбирай глубину наблюдения, исходя из задачи и недостающих
+  фактов. Используй подходящий режим browser_snapshot, чтение страницы,
+  поиск контролов или другие доступные способы; фиксированного порядка нет.
   Адресуй элементы через ref:eN из снимка; не повторяй snapshot без причины.
 - Строй представление незнакомого интерфейса из наблюдений: цель, область страницы,
   семантические группы и связи (semantic.groups, description, controls, owns),

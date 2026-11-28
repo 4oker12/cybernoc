@@ -1575,8 +1575,15 @@ def _complete_chat_job(payload: ChatJobRequest):
         return
 
     def publish(event):
-        if event["event"] in {"model_request_start","tool_call_start","tool_call_completed",
-                             "tool_call_failed","agent_plan_checkpoint"}:
+        if event["event"] in {
+            "model_request_start", "model_request_complete", "model_request_failure",
+            "provider_tool_response", "agent_tool_selection_failure",
+            "agent_tool_requested", "agent_tool_dispatch_start", "agent_tool_dispatch_finish",
+            "agent_tool_not_dispatched", "agent_tool_observed",
+            "agent_plan_checkpoint", "agent_execution_limit", "agent_execution_failure",
+            # Preserve legacy producers and receipt compatibility.
+            "tool_call_start", "tool_call_completed", "tool_call_failed",
+        }:
             jobs.progress(payload.receipt,event)
 
     token = CHAT_PROGRESS_SINK.set(publish)

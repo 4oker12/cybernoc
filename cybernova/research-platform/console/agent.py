@@ -1573,6 +1573,8 @@ class Agent:
                                 "result": event_result,
                             }
                             events.append(safe_event)
+                            diagnostic_event("agent_tool_observed", tool=name, call_ref=call_ref,
+                                             status="failed" if failed else "success", is_error=failed)
                             if on_tool_event is not None:
                                 on_tool_event(safe_event)
                             context.append({
@@ -1705,6 +1707,16 @@ class Agent:
                             "captured": True, "forwarded_to_model": bool(forwarded),
                             "reason": reason,
                         }
+                    diagnostic_event(
+                        "agent_tool_observed", tool=log_name, call_ref=call_ref,
+                        status="not_executed" if not dispatched else
+                               "failed" if failed or safe_result.get("ok") is False else "success",
+                        is_error=bool(failed or safe_result.get("ok") is False),
+                        result_code=safe_result.get("error_code") or safe_result.get("status"),
+                        effect=safe_result.get("effect"),
+                        change_strategy=safe_result.get("change_strategy") is True,
+                        attempts_on_state=safe_result.get("attempts_on_state"),
+                    )
                     if (name == "browser_request_protected_input"
                             and safe_result.get("status") == "owner_input_required"):
                         events.append({"type": "tool_result", "name": name,
