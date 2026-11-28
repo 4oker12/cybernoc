@@ -12,9 +12,10 @@ from console.agent import (
     Agent, _arguments, _allowed_http, _safe_args, _tool_schema,
     BackendError, MCPClient, OllamaClient, BASE_SYSTEM,
     _extract_dsml_calls, _clean_model_answer, _compact_context,
-    _restore_reasoning_history, MAX_CONTEXT_TOOL_CALLS, MAX_CONTEXT_TOOL_CHARS,
+    _restore_reasoning_history, _serialize_tool_result,
 )
 from console.model_providers import OpenAICompatibleClient, ModelConfigError, _normalize_context
+from console.research_progress import ResearchProgress
 
 TOOLS = [
     {"name": "gateway_status", "description": "Status", "inputSchema": {"type": "object", "properties": {}}},
@@ -86,6 +87,30 @@ class FakeLocalToolRuntime:
 
 
 class AgentTests(unittest.TestCase):
+    def test_inconclusive_browser_check_is_not_reported_as_unmet(self):
+        verify = {"name": "browser_verify", "inputSchema": {
+            "type": "object", "properties": {"control": {"type": "string"}},
+        }}
+        for failed, expected in (
+            ([], "declared_done_with_inconclusive_browser_check"),
+            (["url_contains"], "declared_done_with_unmet_browser_check"),
+        ):
+            with self.subTest(failed=failed):
+                mcp = FakeMCP()
+                progress = ResearchProgress(session_key="fixture")
+                model = FakeOllama([calls(("browser_verify", {"control": "Saved"})), {"content": "Checked"}])
+                result = {"ok": True, "verified": False, "unknown": ["control_present"], "failed": failed}
+                with patch.object(mcp, "initialize", return_value=[verify]), patch.object(
+                    mcp, "call", return_value=(result, False)
+                ) as call:
+                    Agent(model, lambda: mcp).run([], "Check the browser for Saved", research_progress=progress)
+                call.assert_called_once_with("browser_verify", {"control": "Saved"})
+                progress.apply_model_update(phase="done")
+                self.assertEqual(progress.completion_status(), expected)
+                self.assertIs(progress.last_browser_check, False if failed else None)
+                progress.set_goal("Check again")
+                self.assertFalse(progress.last_browser_check_inconclusive)
+
     def test_shared_profile_is_provider_neutral_and_contains_project_background(self):
         self.assertIn("ChatGPT в основном проектном чате пользователя", BASE_SYSTEM)
         self.assertIn("локальный исполнитель Cybernova", BASE_SYSTEM)
@@ -919,82 +944,85 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(answer["review"]["scope"], "routine_read")
         self.assertEqual(answer["events"][0]["result"]["os"], "Windows")
 
-    def test_compact_context_deduplicates_equal_browser_snapshots(self):
+    def test_context_retains_equal_browser_snapshots_as_actual_evidence(self):
         page = {"ok": True, "url": "https://example.com", "title": "Example",
                 "visible_text": "body", "form_fields": [{"label": "Name"}]}
         messages = [{"role": "user", "content": "Read the page"}]
-        for index, result in enumerate((page, {**page, "http_status": 200},
-                                        {**page, "form_fields": [{"label": "Email"}]})):
+        observations = [page, {**page, "http_status": 200},
+                        {**page, "form_fields": [{"label": "Email"}]}]
+        for index, result in enumerate(observations):
             messages.extend([
                 {"role": "assistant", "tool_calls": [{"id": f"call_{index}",
-                  "function": {"name": "browser_snapshot", "arguments": "{}"}}]},
+                 "function": {"name": "browser_snapshot", "arguments": "{}"}}]},
                 {"role": "tool", "tool_name": "browser_snapshot", "content": json.dumps(result)},
             ])
         results = [json.loads(item["content"]) for item in _compact_context(messages)
                    if item["role"] == "tool"]
-        self.assertEqual(results[0], page)
-        self.assertEqual(results[1]["http_status"], 200)
-        self.assertNotIn("visible_text", results[1])
-        self.assertEqual(results[2]["form_fields"], [{"label": "Email"}])
-        self.assertEqual(results[2]["page_content"], "changed_fields_only")
-        self.assertNotIn("visible_text", results[2])
+        self.assertEqual(results, observations)
 
-    def test_large_browser_observation_remains_valid_and_keeps_controls(self):
+    def test_large_browser_observation_preserves_all_fields(self):
         page = {"ok": True, "url": "https://example.com/form", "visible_text": "a" * 6500,
                 "links": [{"name": "Link", "url": "https://example.com/" + "a" * 150}] * 35,
                 "buttons": [{"name": "Continue", "id": "next"}],
                 "form_fields": [{"label": "Name", "id": "name"}]}
+        serialized = _serialize_tool_result("browser_snapshot", page)
+        self.assertEqual(json.loads(serialized), page)
         messages = [
             {"role": "user", "content": "Read the form"},
             {"role": "assistant", "tool_calls": [
-                {"function": {"name": "browser_snapshot", "arguments": "{}"}}
-            ]},
-            {"role": "tool", "tool_name": "browser_snapshot", "content": json.dumps(page)},
+                {"function": {"name": "browser_snapshot", "arguments": "{}"}}]},
+            {"role": "tool", "tool_name": "browser_snapshot", "content": serialized},
         ]
-        content = _compact_context(messages)[-1]["content"]
-        observation = json.loads(content)
-        self.assertLessEqual(len(content), 3500)
-        self.assertTrue(observation["observation_truncated"])
-        self.assertEqual(observation["form_fields"], page["form_fields"])
-        self.assertEqual(observation["buttons"], page["buttons"])
+        self.assertEqual(json.loads(_compact_context(messages)[-1]["content"]), page)
 
-    def test_browser_delta_resends_controls_clipped_from_previous_observation(self):
-        links = [{"name": f"Link {index}", "url": "https://example.org/" + "x" * 135}
-                 for index in range(16)]
-        page = {"ok": True, "url": "https://example.org/", "tab": 0,
-                "visible_text": "Large page " * 400, "links": links}
-        messages = [{"role": "user", "content": "Find a link"}]
-        for observation in (page, {**page, "visible_text": "Short page"}):
-            messages.extend([
-                {"role": "assistant", "tool_calls": [
-                    {"function": {"name": "browser_snapshot", "arguments": "{}"}}
-                ]},
-                {"role": "tool", "tool_name": "browser_snapshot",
-                 "content": json.dumps(observation)},
-            ])
-        first, second = [json.loads(item["content"]) for item in _compact_context(messages)
-                         if item["role"] == "tool"]
-        self.assertLess(len(first["links"]), len(links))
-        self.assertEqual(second["previously_delivered_control_counts"]["links"], len(first["links"]))
-        self.assertEqual(first["links"] + second["links"], links)
-        self.assertNotIn("links", second.get("unchanged_page_fields", []))
-
-    def test_compact_context_keeps_recent_tool_pairs_and_bounds_payloads(self):
-        messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "task"}]
-        for index in range(12):
+    def test_context_keeps_all_history_and_tool_pairs(self):
+        messages = [{"role": "system", "content": "system"}]
+        for index in range(20):
+            messages.append({"role": "user", "content": f"history-{index}:" + "h" * 3000})
+            messages.append({"role": "assistant", "content": f"reply-{index}:" + "r" * 3000})
+        messages.append({"role": "user", "content": "task"})
+        for index in range(50):
             call = {"function": {"name": "tool_" + str(index), "arguments": {"index": index}}}
             messages.append({"role": "assistant", "content": "", "tool_calls": [call]})
-            messages.append({"role": "tool", "tool_name": "tool_" + str(index), "content": "x" * 6000})
+            messages.append({"role": "tool", "tool_name": "tool_" + str(index),
+                             "content": "x" * 6000 + f":evidence-{index}"})
         compact = _compact_context(messages)
-        self.assertEqual(sum(len(item.get("tool_calls", [])) for item in compact), MAX_CONTEXT_TOOL_CALLS)
-        tool_results = [item for item in compact if item.get("role") == "tool"]
-        self.assertEqual(len(tool_results), MAX_CONTEXT_TOOL_CALLS)
-        self.assertTrue(all(len(item["content"]) <= MAX_CONTEXT_TOOL_CHARS for item in tool_results))
+        self.assertEqual(compact, messages)
         normalized = _normalize_context(compact)
-        self.assertEqual(sum(item.get("role") == "tool" for item in normalized), MAX_CONTEXT_TOOL_CALLS)
-        self.assertTrue(any("tool_0" in item.get("content", "") for item in compact if item.get("role") == "assistant"))
-        self.assertTrue(any("tool_11" in call["function"]["name"]
-                            for item in compact for call in item.get("tool_calls", [])))
+        self.assertEqual(sum(item.get("role") == "tool" for item in normalized), 50)
+        self.assertTrue(normalized[-1]["content"].endswith(":evidence-49"))
+
+    def test_interrupted_batch_preserves_only_completed_protocol_pairs(self):
+        messages = [{"role": "user", "content": "task"},
+                    {"role": "assistant", "tool_calls": [
+                        {"function": {"name": "first", "arguments": "{}"}},
+                        {"function": {"name": "second", "arguments": "{}"}}]},
+                    {"role": "tool", "tool_name": "first", "content": "evidence"}]
+        compact = _compact_context(messages)
+        self.assertEqual(len(compact[1]["tool_calls"]), 1)
+        self.assertEqual(_normalize_context(compact)[-1]["content"], "evidence")
+
+    def test_cognitive_profile_toggle_changes_only_optional_guidance(self):
+        from console.agent_profile import COGNITIVE_METHOD
+        for mode in ("0", "1"):
+            lm = FakeOllama([{"role": "assistant", "content": "Ready"}])
+            with patch.dict("os.environ", {"CYBERNOVA_COGNITIVE_METHOD": mode}):
+                Agent(lm, lambda: FakeMCP()).run([], "Hello", force_tools=False)
+            included = any(item.get("content") == COGNITIVE_METHOD
+                           for item in lm.prompts[0][0])
+            self.assertEqual(included, mode == "1")
+
+    def test_default_run_can_finish_beyond_old_round_and_call_limits(self):
+        runtime = FakeLocalToolRuntime()
+        runtime.tools[0]["name"] = "terminal_status"
+        runtime.tool_map = {"terminal_status": runtime.tools[0]}
+        model = FakeOllama([calls(("terminal_status", {})) for _ in range(130)] +
+                           [{"role": "assistant", "content": "Windows"}])
+        answer = Agent(model, lambda: FakeMCP(), local_tool_runtime=runtime).run(
+            [], "Check terminal status", force_tools=False)
+        self.assertEqual(answer["tool_calls"], 130)
+        self.assertEqual(answer["answer"], "Windows")
+        self.assertEqual(sum(item["role"] == "tool" for item in model.prompts[-1][0]), 130)
 
 
 if __name__=="__main__":

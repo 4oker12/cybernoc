@@ -22,6 +22,26 @@ from console.computer_control import (
 
 
 class GPTToolRuntimeTests(unittest.TestCase):
+    def test_explicit_schema_discovery_survives_clipping_and_manual_groups(self):
+        from console.gpt_tool_runtime import route_model_tool_rows
+        rows = [{"name": n} for n in ("browser_snapshot", "browser_find_controls",
+                                      "browser_click_button", "terminal_run")]
+        result = route_model_tool_rows(rows, "browser_snapshot", limit=1,
+                                       priority_names=("browser_click_button",))
+        self.assertEqual([r["name"] for r in result], ["browser_click_button"])
+        result = route_model_tool_rows(rows, "browser_snapshot", limit=1,
+                                       selected_groups=["browser"], priority_names=("terminal_run",))
+        self.assertEqual([r["name"] for r in result], ["browser_snapshot"])
+        result = route_model_tool_rows(rows, "без браузера", limit=3,
+                                       priority_names=("browser_click_button",))
+        self.assertNotIn("browser_click_button", [r["name"] for r in result])
+
+    def test_browser_hover_task_routes_existing_interaction_tool(self):
+        from console.gpt_tool_runtime import route_model_tool_rows
+        rows = [{"name": n} for n in ("browser_snapshot", "browser_click_button")]
+        result = route_model_tool_rows(rows, "browser hover over a control", limit=5)
+        self.assertIn("browser_click_button", [r["name"] for r in result])
+
     def test_browser_sessions_are_isolated_and_retired_per_conversation(self):
         class FakeBrowser:
             def __init__(self, *, profile_dir):

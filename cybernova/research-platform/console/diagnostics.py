@@ -46,16 +46,16 @@ _TIMELINE_STRINGS = frozenset({
     "decision", "action", "component", "result_code", "input_type",
     "call_ref", "finish_reason", "groups", "source_file", "source_function",
     "handler_file", "handler_function", "dispatch_file", "dispatch_function",
-    "args_preview", "result_preview", "result_status",
+    "args_preview", "result_preview", "result_status", "effect",
 })
 _TIMELINE_INTS = frozenset({
     "duration_ms", "http_status", "upstream_http_status", "pid", "exit_code",
     "round", "tool_calls", "input_tokens", "output_tokens",
     "local_count", "remote_count", "filtered_remote_count", "combined_count",
     "discovered_count", "advertised_count", "omitted_count", "raw_tool_calls", "dropped_tool_calls",
-    "source_line",
+    "source_line", "attempts_on_state",
 })
-_TIMELINE_BOOLS = frozenset({"headless", "timed_out", "result_ok", "is_error", "verified", "pagination_verified"})
+_TIMELINE_BOOLS = frozenset({"headless", "timed_out", "result_ok", "is_error", "verified", "pagination_verified", "change_strategy"})
 _SAFE_LABEL = re.compile(r"[A-Za-z0-9_.:-]{1,160}")
 _SAFE_SOURCE_PATH = re.compile(r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]{1,160}")
 

@@ -42,6 +42,26 @@ class ChatJobContractTests(unittest.TestCase):
         self.assertFalse(restored.claim(run.receipt))
         self.assertEqual(restored.start(run),("interrupted",False))
 
+    def test_timeline_preserves_order_and_never_stores_raw_payload(self):
+        run = server.ChatJobRequest(message="test", receipt=uuid4().hex)
+        self.jobs.start(run)
+        self.jobs.progress(run.receipt, {"event":"model_request_start"})
+        self.jobs.progress(run.receipt, {"event":"model_request_complete","duration_ms":34000})
+        self.jobs.progress(run.receipt, {"event":"agent_tool_requested","tool":"browser_verify",
+                                        "call_ref":"a1","arguments":"private"})
+        self.jobs.progress(run.receipt, {"event":"agent_tool_observed","tool":"browser_verify",
+                                        "call_ref":"a1","change_strategy":True,
+                                        "effect":"unverified_partial_observation","reasoning":"private"})
+        self.jobs.finish(run.receipt,"completed")
+        saved = ChatJobStore(self.store).read(run.receipt)["timeline"]
+        self.assertEqual([x["event"] for x in saved], ["model_request_start","model_request_complete",
+                         "agent_tool_requested","agent_tool_observed"])
+        self.assertEqual(saved[1]["duration_ms"],34000)
+        self.assertTrue(saved[-1]["change_strategy"])
+        self.assertNotIn("arguments",saved[2])
+        self.assertNotIn("reasoning",saved[3])
+        self.assertEqual(saved[2]["call_ref"],saved[3]["call_ref"])
+
     def test_completed_answer_survives_cache_loss(self):
         task = self.store.create_task("Long test")["task_id"]
         run = server.ChatJobRequest(message="test",receipt=uuid4().hex,session_id=uuid4().hex)

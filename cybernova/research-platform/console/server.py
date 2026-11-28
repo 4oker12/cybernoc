@@ -71,6 +71,7 @@ try:
     from .siwc import connection as chatgpt_connection, SIWCError
     from .siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from .siwc_chat_store import GPTChatStore, GPTChatError
+    from .research_progress import ResearchProgress
     from .research_scope import ResearchScopeStore, scope_profile
     from .profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
     from .model_settings import ModelSettingsError, apply_model_settings, get_model_settings, test_model_connection
@@ -113,6 +114,7 @@ except ImportError:
     from siwc import connection as chatgpt_connection, SIWCError
     from siwc_inference import models as chatgpt_models, review as chatgpt_review, chat as chatgpt_chat
     from siwc_chat_store import GPTChatStore, GPTChatError
+    from research_progress import ResearchProgress
     from research_scope import ResearchScopeStore, scope_profile
     from profile_settings import ProfileSettingsStore, ProfileSettingsError, user_context_for, mode_instructions_for
     from model_settings import ModelSettingsError, apply_model_settings, get_model_settings, test_model_connection
@@ -146,7 +148,6 @@ def _source_commit() -> str:
 
 MAX_SESSIONS = 24
 SESSION_TTL_SECONDS = 7200
-MAX_HISTORY = 16
 sessions: OrderedDict[str, dict] = OrderedDict()
 sessions_lock = RLock()
 run_usage_progress: OrderedDict[str, dict] = OrderedDict()
@@ -439,7 +440,8 @@ def _session(session_id: str | None) -> tuple[str, dict]:
         session = {"last": now, "history": [], "lock": RLock(), "turns": 0,
                    "followups_turn": None, "followups": [], "followups_answer": None,
                    "followups_source": None, "pending_approvals": {},
-                   "traffic_artifacts": {}, "scope": scope_profile([]), "task_id": None}
+                   "traffic_artifacts": {}, "scope": scope_profile([]), "task_id": None,
+                   "research_progress": ResearchProgress(session_key="deepseek:" + key)}
         sessions[key] = session
         while len(sessions) > MAX_SESSIONS:
             sessions.popitem(last=False)
@@ -1305,7 +1307,6 @@ def import_artifact(payload: ImportRequest):
             "content": "Импорт обработан офлайн. Сохраняются только извлечённые "
                        "метаданные и гипотезы; сырые данные удалены. Жду задачу.",
         })
-        state["history"] = state["history"][-MAX_HISTORY:]
         communication_store().append(
             state["task_id"], "controller", "system",
             "Артефакт импортирован офлайн: " + json.dumps(summary, ensure_ascii=False),
@@ -1443,11 +1444,11 @@ def chat(payload: ChatRequest):
         diagnostic_event("task_turn_started", kind="session", status="running")
         # Include ChatGPT feedback and background Qwen results which arrived
         # while the browser was open, instead of using stale in-memory history.
-        previous = store.read_dialog(task_id, limit=100)["messages"]
+        previous = store.read_all_dialog(task_id)["messages"]
         persisted_history = []
         for message in previous:
             if message["actor"] == "controller" and message["kind"] == "system":
-                persisted_history.append({"role": "user", "content": message["body"][:1500]})
+                persisted_history.append({"role": "user", "content": message["body"]})
             elif message["actor"] in {"human", "chatgpt"} and message["kind"] in {
                     "instruction", "feedback"}:
                 persisted_history.append({"role": "user", "content":
@@ -1459,7 +1460,7 @@ def chat(payload: ChatRequest):
                 ))
         if persisted_history:
             state["history"] = _restore_reasoning_history(
-                persisted_history[-MAX_HISTORY:], state["history"],
+                persisted_history, state["history"],
                 provider_identity=_provider_identity(agent.ollama),
             )
         store.append(task_id, "human", "instruction", payload.message,
@@ -1491,6 +1492,7 @@ def chat(payload: ChatRequest):
                 tool_groups=selected_tool_groups,
                 tools_enabled=payload.tools_enabled,
                 session_id=sid,
+                research_progress=state["research_progress"],
                 on_usage=lambda usage: _update_usage_progress(payload.run_id, usage),
                 on_tool_event=persist_tool_event,
                 should_stop=(lambda: jobs.should_stop(receipt)) if jobs else None,
@@ -1521,13 +1523,12 @@ def chat(payload: ChatRequest):
             state["pending_approvals"][item["request_id"]] = {
                 **item, "turn": state["turns"] + 1,
             }
-        state["history"].append({"role": "user", "content": payload.message[:10000]})
-        assistant_history = {"role": "assistant", "content": outcome["answer"][:16000]}
+        state["history"].append({"role": "user", "content": payload.message})
+        assistant_history = {"role": "assistant", "content": outcome["answer"]}
         if isinstance(history_reasoning_content, str):
             assistant_history["reasoning_content"] = history_reasoning_content
             assistant_history["_provider_identity"] = _provider_identity(agent.ollama)
         state["history"].append(assistant_history)
-        state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
         current_status = store.get_task(task_id)["status"]
         incomplete = requests or outcome.get("protected_input") or outcome.get("stop_reason") or outcome.get("error_code")
@@ -1538,7 +1539,7 @@ def chat(payload: ChatRequest):
         final_status = ("blocked" if incomplete else
                         "needs_review" if current_status == "needs_review" else "completed")
         event = store.append(
-            task_id, "qwen", "result", outcome["answer"][:12000],
+            task_id, "qwen", "result", outcome["answer"],
             status=final_status,
             provider_state=_provider_state_payload(agent.ollama, history_reasoning_content),
         )
@@ -1574,8 +1575,15 @@ def _complete_chat_job(payload: ChatJobRequest):
         return
 
     def publish(event):
-        if event["event"] in {"model_request_start","tool_call_start","tool_call_completed",
-                             "tool_call_failed","agent_plan_checkpoint"}:
+        if event["event"] in {
+            "model_request_start", "model_request_complete", "model_request_failure",
+            "provider_tool_response", "agent_tool_selection_failure",
+            "agent_tool_requested", "agent_tool_dispatch_start", "agent_tool_dispatch_finish",
+            "agent_tool_not_dispatched", "agent_tool_observed",
+            "agent_plan_checkpoint", "agent_execution_limit", "agent_execution_failure",
+            # Preserve legacy producers and receipt compatibility.
+            "tool_call_start", "tool_call_completed", "tool_call_failed",
+        }:
             jobs.progress(payload.receipt,event)
 
     token = CHAT_PROGRESS_SINK.set(publish)
@@ -1699,12 +1707,11 @@ def approve(payload: ApprovalRequest):
         state["history"].append({
             "role": "user", "content": "Разрешаю один вызов MCP-инструмента: " + item["tool"],
         })
-        assistant_history = {"role": "assistant", "content": result["answer"][:16000]}
+        assistant_history = {"role": "assistant", "content": result["answer"]}
         if isinstance(history_reasoning_content, str):
             assistant_history["reasoning_content"] = history_reasoning_content
             assistant_history["_provider_identity"] = _provider_identity(agent.ollama)
         state["history"].append(assistant_history)
-        state["history"] = state["history"][-MAX_HISTORY:]
         state["turns"] += 1
         state["pending_approvals"].clear()
         communication_store().append(state["task_id"], "human", "decision",
@@ -1713,7 +1720,7 @@ def approve(payload: ApprovalRequest):
             state["task_id"], result.get("events") or [],
         )
         communication_store().append(
-            state["task_id"], "qwen", "result", str(result["answer"])[:12000],
+            state["task_id"], "qwen", "result", str(result["answer"]),
             status="completed",
             provider_state=_provider_state_payload(agent.ollama, history_reasoning_content),
         )
@@ -1820,7 +1827,7 @@ def communication_resume(payload: ResumeTaskRequest):
     store = communication_store()
     try:
         task = store.get_task(payload.task_id)
-        dialog = store.read_dialog(payload.task_id, limit=100)
+        dialog = store.read_all_dialog(payload.task_id)
     except CommunicationError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if chat_job_store().active_task(payload.task_id):
@@ -1837,12 +1844,12 @@ def communication_resume(payload: ResumeTaskRequest):
                 continue
             history_item = {
                 "role": "assistant" if row["actor"] == "qwen" else "user",
-                "content": row["body"][:10000],
+                "content": row["body"],
             }
             restored_history.append(_attach_provider_state(
                 store, payload.task_id, row, history_item, agent.ollama,
             ))
-        state["history"] = restored_history[-MAX_HISTORY:]
+        state["history"] = restored_history
         state["turns"] = len([x for x in state["history"] if x["role"] == "assistant"])
     with diagnostic_context(session_id=sid, task_id=payload.task_id,
                             agent="owner", mode="session"):

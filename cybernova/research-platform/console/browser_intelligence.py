@@ -51,6 +51,16 @@ def response_mode(raw: str | None) -> str:
     return "full" if str(raw or "").strip().lower() == "full" else "compact"
 
 
+def _observation_coverage(snapshot: dict) -> dict:
+    text = snapshot.get("text_coverage") or {}
+    return {
+        "text_complete": not snapshot.get("text_truncated") and text.get("complete", True),
+        "controls_complete": not snapshot.get("controls_truncated") and
+                             not snapshot.get("control_offset") and
+                             snapshot.get("mode", "full") == "full",
+    }
+
+
 def page_digest(snapshot: dict) -> dict:
     """Fingerprint of a snapshot: url/title, text lines and a keyed control map."""
     lines = [
@@ -66,19 +76,32 @@ def page_digest(snapshot: dict) -> dict:
                          or item.get("placeholder") or "", 120)
             ident = (kind, item.get("frame_index", 0), item.get("ref") or item.get("id") or name,
                      item.get("type") or "")
-            state = {k: item[k] for k in ("expanded", "checked", "selected", "disabled")
-                     if k in item}
+            state = {k: item[k] for k in ("expanded", "checked", "selected", "disabled",
+                                            "readonly", "required", "in_viewport", "widget_state") if k in item}
+            spatial = item.get("spatial")
+            if isinstance(spatial, dict):
+                for key in ("focused", "center_hit"):
+                    if key in spatial:
+                        state[key] = spatial[key]
             controls[ident] = {"kind": kind, "name": name, "id": item.get("id"),
                                "ref": item.get("ref"),
                                "frame_index": item.get("frame_index", 0), "state": state}
+    frames = int(snapshot.get("frame_count") or 0)
+    tab = snapshot.get("tab")
+    coverage = _observation_coverage(snapshot)
+    text_scope = (snapshot.get("text_coverage") or {}).get("collected_scopes")
     material = json.dumps([lines, snapshot.get("url"), snapshot.get("title"),
-                           list(controls.items())], ensure_ascii=False, sort_keys=True)
+                           list(controls.items()), frames, tab, coverage, text_scope],
+                          ensure_ascii=False, sort_keys=True)
     return {
         "url": snapshot.get("url") or "",
         "title": _clip(snapshot.get("title"), 160),
         "lines": lines,
         "controls": controls,
-        "frame_count": int(snapshot.get("frame_count") or 0),
+        "frame_count": frames,
+        "tab": tab,
+        "coverage": coverage,
+        "text_scope": text_scope,
         "state_id": hashlib.sha256(material.encode("utf-8", "replace")).hexdigest()[:12],
     }
 
@@ -100,6 +123,12 @@ def snapshot_delta(before: dict | None, after: dict) -> dict:
     """Describe the observable difference between two digests (bounded size)."""
     if before is None:
         return {"baseline": False, "note": "no_previous_state", "changed": None}
+    if before.get("tab") != after.get("tab"):
+        return {"baseline": False, "note": "different_tab", "changed": None,
+                "state_id": after["state_id"]}
+    coverage = {k: bool(before.get("coverage", {}).get(k, True)
+                        and after.get("coverage", {}).get(k, True))
+                for k in ("text_complete", "controls_complete")}
     matcher = difflib.SequenceMatcher(a=before["lines"], b=after["lines"], autojunk=False)
     added: list[str] = []
     removed: list[str] = []
@@ -120,9 +149,19 @@ def snapshot_delta(before: dict | None, after: dict) -> dict:
     ]
     url_changed = before["url"] != after["url"]
     title_changed = before["title"] != after["title"]
-    changed = bool(added or removed or ctrl_added or ctrl_removed or ctrl_state
-                   or ctrl_renamed or url_changed or title_changed)
-    delta: dict = {"changed": changed, "state_id": after["state_id"]}
+    frame_changed = before["frame_count"] != after["frame_count"]
+    text_comparable = coverage["text_complete"] or (
+        before.get("text_scope") is not None and before["text_scope"] == after.get("text_scope")
+    )
+    changed = bool(ctrl_state or ctrl_renamed or url_changed or title_changed or frame_changed
+                   or (text_comparable and (added or removed))
+                   or (coverage["controls_complete"] and (ctrl_added or ctrl_removed)))
+    delta: dict = {"changed": changed if changed or all(coverage.values()) else None,
+                   "state_id": after["state_id"], "coverage": coverage}
+    if not all(coverage.values()):
+        delta["note"] = "partial_observation; additions/removals describe observed slices only"
+    if frame_changed:
+        delta["frame_count_changed"] = {"was": before["frame_count"], "now": after["frame_count"]}
     if url_changed:
         delta["url_changed"] = True
         delta["url"] = after["url"]
@@ -159,6 +198,7 @@ _BULK_KEYS = (
     "links", "buttons", "form_fields", "visible_text", "headings", "landmarks",
     "tables", "content_scopes", "content_stats", "focused_elements", "note",
     "browser", "browser_backend", "controls_truncated", "text_truncated", "page_type",
+    "visual_objects", "visual_coverage",
 )
 
 
@@ -177,12 +217,14 @@ def compact_action_result(tool: str, result: dict, before: dict | None) -> tuple
     compact = {k: v for k, v in result.items() if k not in _BULK_KEYS}
     compact["snapshot_mode"] = "delta"
     compact["delta"] = delta
-    if before is None:
+    if before is None or delta.get("baseline") is False:
         compact["effect"] = "unverified_no_baseline"
-    elif delta.get("changed"):
+    elif delta.get("changed") is True:
         compact["effect"] = "observed"
     elif tool in INPUT_TOOLS:
         compact["effect"] = "input_applied_value_not_echoed"
+    elif delta.get("changed") is None:
+        compact["effect"] = "unverified_partial_observation"
     elif tool in {"browser_wait", "browser_scroll"}:
         compact["effect"] = "none_observed"
     else:
@@ -193,7 +235,7 @@ def compact_action_result(tool: str, result: dict, before: dict | None) -> tuple
         "text_truncated": bool(result.get("text_truncated")),
         "controls_truncated": bool(result.get("controls_truncated"))
     }
-    if delta.get("changed") is False and tool in {"browser_click_button", "browser_press"}:
+    if delta.get("changed") is not True and tool in {"browser_click_button", "browser_press"}:
         compact["recovery"] = recovery_for("no_visible_change", tool)
     compact["hint"] = ("Compact delta: call browser_snapshot for the full page, "
                        "browser_find_controls to locate a control.")
@@ -204,10 +246,9 @@ def verify_expectations(snapshot: dict, *, expect_text=None, absent_text=None,
                         url_contains=None, control=None) -> dict:
     """Evaluate read-only expectations. Returns booleans and counts, never page text."""
     haystack = str(snapshot.get("visible_text") or "").casefold()
-    text_complete = not snapshot.get("text_truncated") and (
-        snapshot.get("text_coverage") or {}
-    ).get("complete", True)
-    controls_complete = not snapshot.get("controls_truncated") and snapshot.get("mode", "full") == "full"
+    coverage = _observation_coverage(snapshot)
+    text_complete = coverage["text_complete"]
+    controls_complete = coverage["controls_complete"]
     checks: list[dict] = []
 
     def add(kind, passed, **extra):
@@ -225,16 +266,20 @@ def verify_expectations(snapshot: dict, *, expect_text=None, absent_text=None,
     if url_contains:
         add("url_contains", str(url_contains).casefold() in str(snapshot.get("url") or "").casefold())
     if control:
-        wanted = str(control).casefold()
+        target = str(control).strip()
+        wanted = target.casefold()
         digest = page_digest(snapshot)
-        if wanted.startswith("id:"):
-            matches = [c for c in digest["controls"].values() if wanted[3:] == str(c.get("id") or "").casefold()]
-        elif wanted.startswith("ref:"):
-            matches = [c for c in digest["controls"].values() if wanted[4:] == str(c.get("ref") or "").casefold()]
+        prefix, _, identifier = target.partition(":")
+        if prefix.casefold() in {"id", "ref"} and ":" in target:
+            field = prefix.casefold()
+            matches = [c for c in digest["controls"].values() if identifier and c.get(field) == identifier]
+            valid = bool(identifier.strip())
         else:
-            matches = [c for c in digest["controls"].values() if wanted in c["name"].casefold()
-                       or wanted == str(c.get("id") or "").casefold()]
-        add("control_present", True if matches else (False if controls_complete else None), matches=len(matches))
+            valid = bool(wanted)
+            matches = [c for c in digest["controls"].values() if valid and (
+                wanted in c["name"].casefold() or wanted == str(c.get("id") or "").casefold())]
+        add("control_present", True if matches else (False if not valid or controls_complete else None),
+            matches=len(matches))
     if not checks:
         raise ValueError("browser_verify_no_expectations")
     passed = all(c["passed"] is True for c in checks)
@@ -243,7 +288,8 @@ def verify_expectations(snapshot: dict, *, expect_text=None, absent_text=None,
         "failed": [c["check"] for c in checks if c["passed"] is False],
         "unknown": [c["check"] for c in checks if c["passed"] is None],
         "coverage": {"text_complete": bool(text_complete), "controls_complete": bool(controls_complete),
-                     "text_scope": (snapshot.get("text_coverage") or {}).get("scope", "observed snapshot text")},
+                     "text_scope": (snapshot.get("text_coverage") or {}).get("scope", "observed snapshot text"),
+                     "url_scope": "sanitized URL without query or fragment"},
         "url": snapshot.get("url") or "", "title": _clip(snapshot.get("title"), 160),
         "note": "Checks describe observed scope only; unknown is not proof of absence. No page text or input values are echoed.",
     }
@@ -263,6 +309,11 @@ _RECOVERY = (
     ("no_visible_change", ["Verify with browser_verify instead of repeating the same click.",
                            "Wait 500-1500 ms (browser_wait) in case the update is asynchronous.",
                            "Check browser_network_session for a pending/failed request, then change strategy."]),
+    ("inconclusive_observation", [
+        "Refresh with browser_snapshot and inspect the relevant page scope.",
+        "Use browser_find_controls or paginated reads to obtain complete evidence.",
+        "Do not infer action success or failure from a partial observation.",
+    ]),
     ("timeout", ["Page may still be loading: browser_wait, then browser_snapshot.",
                  "Check browser_network_session for pending or failed requests."]),
     ("access_limited", ["Do not retry the same URL unchanged; report the status code.",
@@ -275,6 +326,8 @@ def recovery_for(error: str, tool: str = "") -> list[str]:
     code = str(error or "").lower()
     if re.search(r"not_unique:0\b", code):
         return list(dict(_RECOVERY)["not_found"])
+    if "inconclusive_observation" in code:
+        return list(dict(_RECOVERY)["inconclusive_observation"])
     if "no_visible_change" in code:
         return list(dict(_RECOVERY)["no_visible_change"])
     if "not_unique" in code or "ambiguous" in code or "multiple" in code:
@@ -294,6 +347,71 @@ def recovery_for(error: str, tool: str = "") -> list[str]:
     return ["Re-run browser_snapshot to refresh the page state, then choose a different locator or tool."]
 
 
+class ObservationMemory:
+    """Bounded in-memory structural observations, scoped to one browser session.
+
+    No raw text, URLs, labels, input values, screenshot or credentials retained.
+    Historical entries never provide a locator or authorize interaction.
+    """
+    def __init__(self, window: int = 12, max_refs: int = 80):
+        self._history = deque(maxlen=window)
+        self._refs = {}
+        self._max_refs = max_refs
+        self._generation = 0
+        self._sequence = 0
+        self._tab = None
+
+    def invalidate(self):
+        self._generation += 1
+        self._refs.clear()
+
+    def observe(self, snapshot: dict, tool: str) -> dict:
+        tab = snapshot.get("tab")
+        if self._tab is not None and tab != self._tab:
+            self.invalidate()
+        self._tab = tab
+        self._sequence += 1
+        sequence = self._sequence
+        seen = set()
+        repeated = []
+        changed = []
+        for key, kind in _CONTROL_LISTS:
+            for row in snapshot.get(key) or ():
+                if not isinstance(row, dict):
+                    continue
+                ref = row.get("ref")
+                if not isinstance(ref, str) or not re.fullmatch(r"e\d{1,12}", ref):
+                    continue
+                seen.add(ref)
+                semantic = row.get("semantic") or {}
+                groups = tuple(group.get("kind") for group in semantic.get("groups", [])
+                               if isinstance(group, dict) and isinstance(group.get("kind"), str))
+                spatial = row.get("spatial") or {}
+                structure = (kind, row.get("frame_index", 0), groups,
+                             tuple((k, row[k]) for k in ("expanded", "selected", "checked", "disabled")
+                                   if k in row and type(row[k]) is bool),
+                             spatial.get("focused") is True)
+                if ref in self._refs:
+                    repeated.append(ref)
+                    if self._refs[ref][0] != structure:
+                        changed.append(ref)
+                self._refs.pop(ref, None)
+                self._refs[ref] = (structure, sequence)
+        while len(self._refs) > self._max_refs:
+            self._refs.pop(next(iter(self._refs)))
+        state = page_digest(snapshot)["state_id"]
+        self._history.append({"observation_id": sequence, "generation": self._generation,
+                              "state_id": state, "tool": tool, "observed_refs": len(seen)})
+        return {
+            "observation_id": sequence, "generation": self._generation,
+            "state_id": state, "current_refs": len(seen),
+            "known_refs": len(self._refs), "reobserved_refs": repeated[:8],
+            "changed_refs": changed[:8],
+            "recent": list(self._history)[-3:],
+            "note": "Historical facts only; a ref absent from the current observation may be stale. Reobserve before acting.",
+        }
+
+
 class StrategyTracker:
     """Detects repeated identical failures and escalates the advice.
 
@@ -303,6 +421,8 @@ class StrategyTracker:
 
     def __init__(self, window: int = 12):
         self._recent: deque[tuple[str, str, str]] = deque(maxlen=window)
+        self._no_effect: deque[tuple[str, str, str]] = deque(maxlen=window)
+        self._inconclusive: deque[tuple[str, str, str]] = deque(maxlen=window)
 
     @staticmethod
     def _target_hash(args: dict) -> str:
@@ -314,6 +434,40 @@ class StrategyTracker:
     def record_success(self, tool: str, args: dict) -> None:
         key = (tool, self._target_hash(args))
         self._recent = deque((e for e in self._recent if e[:2] != key), maxlen=self._recent.maxlen)
+        self._no_effect = deque((e for e in self._no_effect if e[:2] != key),
+                                maxlen=self._no_effect.maxlen)
+        self._inconclusive = deque((e for e in self._inconclusive if e[:2] != key),
+                                   maxlen=self._inconclusive.maxlen)
+
+    def record_no_effect(self, tool: str, args: dict, state_id: str) -> dict:
+        """Repeated successful dispatch without observed effect is not success."""
+        entry = (tool, self._target_hash(args), str(state_id or "")[:32])
+        self._no_effect.append(entry)
+        repeats = self._no_effect.count(entry)
+        result = {"attempts_on_state": repeats,
+                  "recovery": recovery_for("no_visible_change", tool)}
+        if repeats >= 2:
+            result.update(change_strategy=True, escalation=(
+                "Same action on the same observed state had no effect. Verify the goal, "
+                "inspect state/network or choose a different authorized target; do not loop."
+            ))
+        return result
+
+    def record_inconclusive(self, tool: str, args: dict, state_id: str) -> dict:
+        """Track incomplete observations separately from confirmed no-effect."""
+        entry = (tool, self._target_hash(args), str(state_id or "")[:32])
+        self._inconclusive.append(entry)
+        repeats = self._inconclusive.count(entry)
+        result = {
+            "attempts_on_state": repeats,
+            "recovery": recovery_for("inconclusive_observation", tool),
+        }
+        if repeats >= 2:
+            result.update(change_strategy=True, escalation=(
+                "Repeated observations of this target remain incomplete. Refresh the page "
+                "snapshot or use targeted/paginated reads; do not infer success or failure."
+            ))
+        return result
 
     def record_failure(self, tool: str, args: dict, error: str) -> dict:
         match = re.search(r"browser_[a-z0-9_]+(?::\d+)?", str(error or ""))

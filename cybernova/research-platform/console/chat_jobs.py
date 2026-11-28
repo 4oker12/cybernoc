@@ -24,6 +24,14 @@ class ChatJobStore:
                     updated_at REAL NOT NULL, started_at REAL,
                     progress TEXT, result_meta TEXT, detail TEXT
                 );
+                CREATE TABLE IF NOT EXISTS console_chat_job_events (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    receipt TEXT NOT NULL,
+                    recorded_at REAL NOT NULL,
+                    event_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS console_chat_job_events_receipt
+                    ON console_chat_job_events(receipt,seq);
                 CREATE INDEX IF NOT EXISTS console_chat_jobs_session
                     ON console_chat_jobs(session_id,status);
                 CREATE INDEX IF NOT EXISTS console_chat_jobs_task
@@ -80,9 +88,20 @@ class ChatJobStore:
         # The diagnostics sink already sanitizes metadata. Never save raw
         # commands, arguments, screenshots, credentials or model reasoning.
         safe = {k:event[k] for k in ("event","tool","status","round","tool_calls") if k in event}
+        timeline = dict(safe)
+        for key in ("call_ref", "source", "error_code", "result_code", "duration_ms",
+                    "effect", "change_strategy", "attempts_on_state", "is_error", "finish_reason"):
+            if key in event:
+                timeline[key] = event[key]
+        now = time.time()
         with self.store._connection() as db:
-            db.execute("UPDATE console_chat_jobs SET progress=?,updated_at=? WHERE receipt=? AND status IN (?,?)",
-                       (json.dumps(safe),time.time(),receipt,*ACTIVE))
+            changed = db.execute(
+                "UPDATE console_chat_jobs SET progress=?,updated_at=? WHERE receipt=? AND status IN (?,?)",
+                (json.dumps(safe),now,receipt,*ACTIVE)).rowcount
+            if changed:
+                db.execute(
+                    "INSERT INTO console_chat_job_events(receipt,recorded_at,event_json) VALUES(?,?,?)",
+                    (receipt,now,json.dumps(timeline,ensure_ascii=False)))
 
     def request_stop(self, receipt):
         with self.store._connection() as db:
@@ -114,10 +133,18 @@ class ChatJobStore:
     def read(self, receipt):
         with self.store._connection() as db:
             row = db.execute("SELECT * FROM console_chat_jobs WHERE receipt=?", (receipt,)).fetchone()
+            events = db.execute(
+                "SELECT seq,recorded_at,event_json FROM console_chat_job_events WHERE receipt=? ORDER BY seq",
+                (receipt,)).fetchall()
         if not row:
             return None
         result = {k:row[k] for k in ("status","run_id","session_id","task_id","created_at","updated_at")}
         result["elapsed_seconds"] = max(0,int((time.time() if row["status"] in ACTIVE else row["updated_at"])-row["created_at"]))
+        result["timeline"] = [
+            {**json.loads(item["event_json"]), "seq": item["seq"], "at": item["recorded_at"]}
+            for item in events
+        ]
+        result["timeline_now"] = time.time() if row["status"] in ACTIVE else row["updated_at"]
         if row["progress"]:
             result["progress"] = json.loads(row["progress"])
         if row["detail"]:

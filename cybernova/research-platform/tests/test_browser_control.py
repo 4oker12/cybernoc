@@ -1398,6 +1398,7 @@ class BrowserControlTests(unittest.TestCase):
         self.assertEqual(session._parse_ref("ref:e3"), "e3")
         self.assertEqual(session._parse_ref("data-cybernova-ref:e9"), "e9")
         self.assertIsNone(session._parse_ref("Submit"))
+        self.assertIsNone(session._parse_ref("v12"))
         self.assertIsNone(session._parse_ref("id:foo"))
         # No stored meta -> stale
         with self.assertRaisesRegex(ValueError, "browser_target_stale"):
@@ -1424,6 +1425,248 @@ class BrowserControlTests(unittest.TestCase):
         self.assertIn("shadowRoot", js)
         self.assertIn("data-cybernova-ref", js)
         self.assertIn("fingerprint", js)
+
+
+class SemanticContextTests(unittest.TestCase):
+    def test_semantic_context_is_bounded_and_redacted(self):
+        from console.browser_control import _semantic_context
+        result = _semantic_context({
+            "groups": [{"kind": "form", "label": "Search products"},
+                       {"kind": "invalid", "label": "do not expose"},
+                       {"kind": "article", "label": "person@example.com"}],
+            "description": "password=example-secret",
+            "controls": ["results", "not a valid id"],
+            "has_popup": "listbox",
+            "value": "do not expose",
+        })
+        self.assertEqual(result["groups"][0], {"kind": "form", "label": "Search products"})
+        self.assertEqual(result["groups"][1]["label"], "[REDACTED EMAIL]")
+        self.assertEqual(result["description"], "[REDACTED SECRET]")
+        self.assertEqual(result["controls"], ["results"])
+        self.assertEqual(result["has_popup"], "listbox")
+        self.assertNotIn("value", result)
+
+    def test_collector_searches_group_context(self):
+        from console.browser_control import _collect_elements_js
+        js = _collect_elements_js()
+        self.assertIn("semanticOf(el).groups", js)
+        self.assertIn("semantic: semanticOf(el)", js)
+        self.assertIn("aria-controls", js)
+        self.assertIn("el.form", js)
+
+    def test_widget_snapshot_keeps_passive_role_and_active_id_evidence(self):
+        row = {
+            "text": "Focusable grid cell", "tag": "div", "type": "", "role": "gridcell",
+            "ref": "e1", "in_viewport": True, "focus_candidate": True, "disabled": False,
+            "bounds": {"x": 0, "y": 0, "width": 50, "height": 30},
+            "expanded": None, "selected": None, "active_descendant": "local-item",
+            "active_descendant_local_visible": True,
+            "semantic": {"groups": [{"kind": "row"}, {"kind": "treegrid", "label": "Products"}]},
+        }
+        page = Mock(url="https://example.test/")
+        page.is_closed.return_value = False
+        page.title.return_value = "Widgets"
+        page.evaluate.return_value = {
+            "rows": [
+                row,
+                {**row, "ref": "e2", "role": "application", "active_descendant": "missing-item",
+                 "active_descendant_local_visible": False},
+                {**row, "ref": "e3", "active_descendant": "not a valid id"},
+            ],
+            "total": 3,
+            "next_ref": 4,
+        }
+        session = BrowserSession()
+        try:
+            session._page = page
+            session._frame_contexts = Mock(return_value=[page])
+            local, missing, invalid = session._snapshot(control_query="widget")["buttons"]
+        finally:
+            session.close()
+        self.assertEqual(local["type"], "focus_candidate")
+        self.assertEqual(local["declared_role"], "gridcell")
+        self.assertEqual(local["interaction_hint"], "focus_or_navigation_key_only")
+        self.assertEqual(local["semantic"]["groups"], row["semantic"]["groups"])
+        self.assertEqual(local["widget_state"], {
+            "active_descendant": "local-item",
+            "active_descendant_evidence": "local_visible_id_match",
+        })
+        self.assertNotIn("declared_role", missing)
+        self.assertEqual(missing["widget_state"]["active_descendant_evidence"], "declared_only")
+        self.assertNotIn("widget_state", invalid)
+
+
+class SpatialContextTests(unittest.TestCase):
+    def test_screenshot_requests_the_same_units_as_top_bounds(self):
+        session = BrowserSession.__new__(BrowserSession)
+        session._ensure = Mock()
+        session._page = Mock(viewport_size={"width": 320, "height": 240})
+        session._page.screenshot.return_value = b"fixture"
+        session._frame_contexts = Mock(return_value=[])
+        session._snapshot = Mock(return_value={"url": "https://example.test/", "title": "Fixture",
+                                               "tab": 0, "links": [], "buttons": [], "form_fields": []})
+
+        def add_coverage(result, **_):
+            result["accessibility_coverage"] = {"complete": False}
+
+        session._with_ax_evidence = Mock(side_effect=add_coverage)
+        result = session._dispatch("browser_screenshot", {})
+        self.assertEqual(session._page.screenshot.call_args.kwargs["scale"], "css")
+        self.assertEqual(result["correlation"]["coordinate_units"], "css_pixels")
+        self.assertFalse(result["correlation"]["atomic"])
+
+    def test_action_baseline_does_not_follow_a_recycled_tab_index(self):
+        session = BrowserSession.__new__(BrowserSession)
+        session._page = object()
+        session._response_mode = "compact"
+        session._last_digest = None
+        session._strategy = Mock()
+        session._apply_intelligence("browser_snapshot", {}, {"ok": True, "tab": 0, "visible_text": "Before"})
+        session._page = object()
+        result = session._apply_intelligence(
+            "browser_click_button", {}, {"ok": True, "tab": 0, "visible_text": "After"}
+        )
+        self.assertEqual(result["effect"], "unverified_no_baseline")
+
+    def test_spatial_coordinate_space_is_explicit(self):
+        from console.browser_control import _spatial_context
+        raw = {"bounds": {"x": -5, "y": 20, "width": 40, "height": 30},
+               "center_hit": "other", "focused": False}
+        self.assertEqual(_spatial_context(raw, 0)["space"], "top_viewport")
+        self.assertEqual(_spatial_context(raw, 2)["space"], "frame_viewport")
+        self.assertEqual(_spatial_context(raw, 2)["center_hit"], "other")
+        self.assertFalse(_spatial_context(raw, 0)["focused"])
+        self.assertEqual(_spatial_context({"bounds": {"x": "unsafe"}}, 0), {})
+
+
+class RefInteractionTests(unittest.TestCase):
+    def test_hover_and_focus_use_verified_ref(self):
+        session = BrowserSession.__new__(BrowserSession)
+        locator = Mock()
+        session._verify_ref = Mock(return_value=(Mock(), locator))
+        session._snapshot = Mock(return_value={"ok": True})
+        for interaction in ("hover", "focus"):
+            result = session._interact_ref(interaction, "ref:e12")
+            self.assertEqual(result["interaction"], interaction)
+            self.assertEqual(result["interaction_ref"], "e12")
+        locator.hover.assert_called_once_with(timeout=8000)
+        locator.focus.assert_called_once_with(timeout=8000)
+        with self.assertRaisesRegex(ValueError, "browser_interaction_requires_ref"):
+            session._interact_ref("hover", "arbitrary CSS")
+
+    def test_widget_navigation_keys_are_targeted_and_activation_keys_rejected(self):
+        session = BrowserSession.__new__(BrowserSession)
+        locator = Mock()
+        locator.evaluate.side_effect = [{"focused": True, "active_descendant": "first"},
+                                        {"focused": True, "active_descendant": "second"}]
+        frame = Mock()
+        page = Mock()
+        session._page = page
+        session._verify_ref = Mock(return_value=(frame, locator))
+        session._snapshot = Mock(return_value={"ok": True})
+        result = session._interact_ref("key:ArrowDown", "ref:e12")
+        self.assertTrue(result["widget_state_changed"])
+        self.assertEqual(result["widget_state_after"]["active_descendant"], "second")
+        self.assertTrue(result["focus_before_dispatch"])
+        self.assertTrue(result["focus_after_dispatch"])
+        self.assertTrue(result["focus_after_dispatch_observed"])
+        page.keyboard.press.assert_called_once_with("ArrowDown")
+        locator.press.assert_not_called()
+        for key in ("Enter", "Space", "Control+A"):
+            with self.assertRaisesRegex(ValueError, "browser_widget_navigation_key_not_allowed"):
+                session._interact_ref("key:" + key, "ref:e12")
+        page.keyboard.press.assert_called_once()
+
+    def test_double_click_rejects_form_controls(self):
+        session = BrowserSession.__new__(BrowserSession)
+        session._page = Mock(url="https://example.test/")
+        locator = Mock()
+        button = Mock()
+        button.evaluate.return_value = {"form": True, "submit": False, "text": "Continue"}
+        session._verify_ref = Mock(return_value=(Mock(), locator))
+        session._unique = Mock(return_value=button)
+        with self.assertRaisesRegex(ValueError, "browser_double_click_requires_ordinary_button"):
+            session._interact_ref("double_click", "ref:e12")
+        button.dblclick.assert_not_called()
+
+
+class VisualObjectTests(unittest.TestCase):
+    def test_visual_hints_never_expose_source_or_action_target(self):
+        from console.browser_control import _visual_object
+        raw = {"kind": "icon", "dom_kind": "svg", "label": "person@example.com", "label_source": "aria-labelledby",
+               "owner_ref": "e4", "visual_ref": "v8", "bounds": {"x": 2, "y": 3, "width": 18, "height": 18},
+               "src": "private", "action_target": "not-allowed", "small": True}
+        result = _visual_object(raw, 2)
+        self.assertEqual(result["owner_ref"], "e4")
+        self.assertEqual(result["visual_ref"], "v8")
+        self.assertEqual(result["dom_kind"], "svg")
+        self.assertEqual(result["label_source"], "aria-labelledby")
+        self.assertEqual(result["label"], "[REDACTED EMAIL]")
+        self.assertEqual(result["spatial"]["space"], "frame_viewport")
+        self.assertNotIn("src", result)
+        self.assertNotIn("action_target", result)
+
+
+class InferredCardTests(unittest.TestCase):
+    def test_card_is_explicitly_inferred_and_sanitized(self):
+        from console.browser_control import _semantic_context
+        data = {"groups": [{"kind": "card_candidate", "label": "Example card",
+                            "inferred": True, "ordinal": 2,
+                            "evidence": ["repeated_sibling_structure", "local_control", "untrusted"]},
+                           {"kind": "card_candidate", "label": "Unmarked"}]}
+        groups = _semantic_context(data)["groups"]
+        self.assertEqual(len(groups), 1)
+        self.assertTrue(groups[0]["inferred"])
+        self.assertEqual(groups[0]["ordinal"], 2)
+        self.assertEqual(groups[0]["evidence"], ["repeated_sibling_structure", "local_control"])
+        single = _semantic_context({"groups": [{"kind": "card_candidate", "inferred": True,
+                                    "evidence": ["distinct_visual_boundary", "visible_title"]}]})
+        self.assertIn("distinct_visual_boundary", single["groups"][0]["evidence"])
+        self.assertNotIn("ordinal", single["groups"][0])
+
+
+class NativeAXEvidenceTests(unittest.TestCase):
+    def test_ax_properties_never_echo_name_or_value(self):
+        from console.browser_control import _ax_properties
+        raw = {"role": {"value": "textbox"}, "ignored": False,
+               "name": {"value": "secret name"}, "value": {"value": "secret value"},
+               "properties": [{"name": "focused", "value": {"value": True}},
+                              {"name": "description", "value": {"value": "secret description"}}]}
+        evidence = _ax_properties(raw)
+        self.assertEqual(evidence, {"role": "textbox", "ignored": False, "state": {"focused": True}})
+        self.assertNotIn("secret", repr(evidence))
+
+    def test_native_ax_sample_matches_backend_node_and_detaches(self):
+        session = BrowserSession.__new__(BrowserSession)
+        session._context = Mock()
+        session._page = Mock()
+        session._ref_namespace = "fixture"
+        locator = Mock()
+        locator.bounding_box.return_value = {"x": 10, "y": 20, "width": 30, "height": 40}
+        session._verify_ref = Mock(return_value=(session._page, locator))
+        cdp = session._context.new_cdp_session.return_value
+        responses = {"DOM.performSearch": {"searchId": "s", "resultCount": 1},
+                     "DOM.getSearchResults": {"nodeIds": [2]},
+                     "DOM.describeNode": {"node": {"backendNodeId": 3}},
+                     "DOM.resolveNode": {"object": {"objectId": "o"}},
+                     "Runtime.callFunctionOn": {"result": {"value": True}},
+                     "Accessibility.getPartialAXTree": {"nodes": [
+                         {"backendDOMNodeId": 99, "role": {"value": "wrong"}},
+                         {"backendDOMNodeId": 3, "role": {"value": "button"}, "ignored": False}]}}
+        cdp.send.side_effect = lambda method, args=None: responses.get(method, {})
+        snap = {"buttons": [{"ref": "e1", "frame_index": 0},
+                            {"ref": "e2", "frame_index": 1, "shadow_path": "custom-host"}]}
+        result = session._with_ax_evidence(snap, viewport={"width": 100, "height": 100})
+        for row in result["buttons"]:
+            self.assertEqual(row["accessibility"]["role"], "button")
+            self.assertTrue(row["spatial"]["top_viewport_intersection"])
+        self.assertEqual(result["accessibility_coverage"]["observed_frames"], [0, 1])
+        self.assertEqual(result["accessibility_coverage"]["shadow_observed"], 1)
+        self.assertFalse(result["accessibility_coverage"]["complete"])
+        cdp.detach.assert_called_once()
+        self.assertEqual(sum(c.args[0] == "DOM.discardSearchResults" for c in cdp.send.call_args_list), 2)
+        responses["Runtime.callFunctionOn"] = {"result": {"value": False}}
+        self.assertEqual(session._ax_node_for_ref(cdp, "e1"), {})
 
 
 if __name__ == "__main__":

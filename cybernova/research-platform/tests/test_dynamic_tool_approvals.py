@@ -76,6 +76,20 @@ class DynamicToolPolicyTests(unittest.TestCase):
         found = discovered_tools([NEW, NEW, {"name": "x;rm -rf", "inputSchema": {}}])
         self.assertEqual(len(found), 1)
 
+    def test_missing_or_non_object_schema_never_becomes_callable(self):
+        zero_arg = {"name": "fixture_status", "inputSchema": {"type": "object", "properties": {}}}
+        rows = [{"name": "fixture_undefined"},
+                {"name": "fixture_array", "inputSchema": {"type": "array"}}, zero_arg]
+        mcp = FakeMCP(rows)
+        model = FakeQwen([tool_call("fixture_undefined", {}),
+                          tool_call("fixture_status", {}),
+                          {"content": "Status checked"}])
+        Agent(model, lambda: mcp).run([], "Check fixture_undefined and fixture_status")
+        names = {tool["function"]["name"] for tool in model.inputs[0]["tools"]}
+        self.assertIn("fixture_status", names)
+        self.assertFalse(names & {"fixture_undefined", "fixture_array"})
+        self.assertEqual(mcp.calls, [("fixture_status", {})])
+
     def test_catalog_overflow_is_explicit_not_silently_truncated(self):
         rows = [{
             "name": f"dynamic_tool_{index:03d}",
@@ -107,7 +121,7 @@ class DynamicToolPolicyTests(unittest.TestCase):
         ready = [call.kwargs for call in log.call_args_list if call.args == ("tool_catalog_ready",)]
         self.assertEqual(ready[0]["discovered_count"], 160)
         self.assertEqual(ready[0]["omitted_count"], 160 - len([
-            item for item in offered if item["function"]["name"] != "tool_capabilities"
+            item for item in offered if item["function"]["name"] not in {"tool_capabilities", "research_state_update"}
         ]))
 
     def test_weather_task_does_not_advertise_terminal_or_computer_tools(self):
@@ -301,6 +315,13 @@ class DynamicToolPolicyTests(unittest.TestCase):
             validate_dynamic_arguments(deep, schema)
         with self.assertRaises(ToolPolicyError):
             validate_dynamic_arguments({"value": {"data": "x" * 5000}}, schema)
+
+    def test_rejects_nonfinite_numbers_before_dispatch(self):
+        schema = {"type": "object", "properties": {"value": {"type": "object"}}}
+        for raw in ('{"value": {"reading": NaN}}', '{"value": {"reading": 1e999}}',
+                    {"value": {"reading": float("-inf")}}):
+            with self.assertRaisesRegex(ToolPolicyError, "tool_arguments_non_json_value"):
+                validate_dynamic_arguments(raw, schema)
 
     def test_secret_values_redacted_from_approval_card(self):
         args = {"domain": "example.test", "api_token": "NOT-TO-BE-SHOWN",
