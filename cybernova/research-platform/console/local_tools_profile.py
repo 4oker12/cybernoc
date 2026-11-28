@@ -156,7 +156,10 @@ LOCAL_TOOLS_PROFILE = """
   center_hit=other — возможное перекрытие, unknown — недостаток данных.
   Screenshot — только если модель действительно поддерживает изображения;
   сверяй его с DOM, учитывай неатомарность capture и маскирование полей.
-  Полное AX-дерево и распознавание скрытых объектов не гарантированы.
+  browser_find_controls и browser_screenshot могут возвращать native AX role,
+  ignored и state для ограниченной выборки main-document ref. Смотри
+  accessibility_coverage: полное AX-дерево, iframe/shadow AX и скрытые объекты
+  не гарантированы; не выдумывай отсутствующее свидетельство.
 - Для наблюдаемого ref доступны жесты через browser_click_button:
   name="hover:ref:eN", "focus:ref:eN", "double_click:ref:eN".
   Double click только для обычной кнопки вне формы; не применяй его как замену

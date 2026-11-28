@@ -107,7 +107,7 @@ class DynamicToolPolicyTests(unittest.TestCase):
         ready = [call.kwargs for call in log.call_args_list if call.args == ("tool_catalog_ready",)]
         self.assertEqual(ready[0]["discovered_count"], 160)
         self.assertEqual(ready[0]["omitted_count"], 160 - len([
-            item for item in offered if item["function"]["name"] != "tool_capabilities"
+            item for item in offered if item["function"]["name"] not in {"tool_capabilities", "research_state_update"}
         ]))
 
     def test_weather_task_does_not_advertise_terminal_or_computer_tools(self):

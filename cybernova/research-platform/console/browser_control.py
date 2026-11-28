@@ -2360,6 +2360,8 @@ class BrowserSession:
         Unsupported backends, iframe/shadow targets and stale refs remain explicit
         coverage gaps. This never adds action capability or returns AX text/values.
         """
+        if not any(key in snapshot for key in ("form_fields", "buttons", "links")):
+            return snapshot
         rows = [row for key in ("form_fields", "buttons", "links")
                 for row in snapshot.get(key, []) if isinstance(row, dict)]
         candidates = [row for row in rows if row.get("frame_index", 0) == 0

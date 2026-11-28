@@ -49,3 +49,6 @@ The active local tool profile is expanded with semantics, spatial evidence, ref 
 
 ### P0.2 refinement: native AX evidence
 Targeted control search and screenshot observations now request up to six native Chromium AX nodes for verified main-document DOM refs, correlate via backendDOMNodeId and expose only role, ignored and allowlisted boolean/enumerated states. No AX names, values, descriptions or raw nodes returned. Coverage explicitly partial; iframe/shadow mapping and full visual recognition remain outstanding. Tests mock CDP node correlation and redaction; live backend verification remains required.
+
+### CI baseline correction
+The v3 HEAD quality gate (run 46128600459) already failed test_large_catalog_routes_exact_tool_without_exceeding_provider_budget: expected 158 omitted vs actual 159. Production correctly excludes both internal meta-tools from discovered/omitted external counts. The test now excludes both rather than changing routing or weakening its assertions. V4 run 46136671085: Python compilation and repo guard passed; 661 tests run, one inherited assertion failure, three skipped. New HEAD must be checked independently.
