@@ -778,6 +778,48 @@ class BrowserControlTests(unittest.TestCase):
             "browser_press", "browser_scroll", "browser_console", "browser_network_session",
         }.issubset(names))
 
+    def test_find_text_zero_scan_does_not_claim_absence(self):
+        browser = BrowserSession()
+        try:
+            browser._page = SimpleNamespace(
+                url="https://example.test/", title=lambda: "Test",
+                frames=[object(), object()],
+            )
+            browser._find_text = lambda *_: {"matches": [], "scanned_blocks": 0,
+                                             "candidate_blocks": 0, "root_scope": "body"}
+            with patch.object(browser, "_ensure"):
+                result = browser._dispatch("browser_find_text", {"query": "missing",
+                                                                 "max_matches": 3})
+            self.assertEqual(result["status"], "not_covered")
+            self.assertFalse(result["coverage"]["complete"])
+            self.assertEqual(result["coverage"]["frames_skipped"], 1)
+            self.assertIn("no_visible_text_blocks", result["coverage"]["skip_reasons"])
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+
+    def test_console_degradation_and_network_window_report_coverage(self):
+        browser = BrowserSession()
+        try:
+            browser._backend = "patchright"
+            browser._console_events = []
+            with patch.object(browser, "_ensure"):
+                console = browser._dispatch("browser_console", {})
+                self.assertEqual(console["status"], "partial")
+                self.assertTrue(console["degraded"])
+                self.assertFalse(console["console_api_available"])
+                self.assertTrue(console["pageerror_available"])
+                self.assertFalse(console["coverage"]["complete"])
+
+                browser._network_events = [{"state": "completed"} for _ in range(65)]
+                browser._network_total_observed = 68
+                network = browser._dispatch("browser_network_session", {})
+            self.assertEqual(network["status"], "truncated")
+            self.assertEqual(network["coverage"]["omitted_events"], 5)
+            self.assertEqual(network["coverage"]["dropped_events"], 3)
+            self.assertFalse(network["coverage"]["complete"])
+        finally:
+            browser._executor.shutdown(wait=False, cancel_futures=True)
+
     def test_high_impact_labels_require_manual_user_action(self):
         for label in (
             "Pay now", "Confirm booking", "Оплатить", "Оформить заказ",
