@@ -1286,9 +1286,11 @@ class BrowserSession:
                     )
                     try:
                         context = browser.new_context(
-                            accept_downloads=False, service_workers="block",
+                            # Keep Service Workers enabled for ordinary site compatibility. Their outbound
+                            # fetches still pass through the context route below.
+                            accept_downloads=False, service_workers="allow",
                             ignore_https_errors=False, java_script_enabled=True,
-                            viewport={"width": 1440, "height": 1000},
+                            no_viewport=True,
                         )
                     except Exception:
                         browser.close()
@@ -1298,9 +1300,11 @@ class BrowserSession:
                     user_data_dir=str(profile_dir),
                     headless=self._headless,
                     args=launch_args,
-                    accept_downloads=False, service_workers="block",
+                    # Keep Service Workers enabled for ordinary site compatibility. Their outbound
+                    # fetches still pass through the context route below.
+                    accept_downloads=False, service_workers="allow",
                     ignore_https_errors=False, java_script_enabled=True,
-                    viewport={"width": 1440, "height": 1000},
+                    no_viewport=True,
                 )
                 return None, context
 
@@ -1324,13 +1328,9 @@ class BrowserSession:
                     reason=fallback_reason,
                 )
             self._context.route("**/*", self._route)
-            # WebSockets bypass the ordinary HTTP route handler; block them
-            # explicitly so a page cannot open an uninspected socket.
-            self._context.route_web_socket(
-                "**/*", lambda websocket: websocket.close(
-                    code=1008, reason="Cybernova browser policy",
-                ),
-            )
+            # WebSockets have their own route API. Allow ordinary secure
+            # connections only after applying the same public/private host policy.
+            self._context.route_web_socket("**/*", self._route_web_socket)
             diagnostic_event(
                 "browser_launch_ready",
                 headless=self._headless,
@@ -1471,6 +1471,44 @@ class BrowserSession:
                                   else "http_error")
         finally:
             response.dispose()
+
+    def _route_web_socket(self, websocket):
+        raw = str(getattr(websocket, "url", "") or "")
+        try:
+            parsed = urlsplit(raw)
+            if parsed.scheme not in {"ws", "wss"} or not parsed.hostname:
+                raise ValueError("browser_websocket_url_invalid")
+            host = parsed.hostname.lower().rstrip(".")
+            # Public sites must use secure WebSockets. Plain ws:// is permitted
+            # only for an exact host explicitly scoped by the owner for this task.
+            if parsed.scheme == "ws" and host not in self._authorized_hosts:
+                raise ValueError("browser_websocket_requires_tls")
+            network_url = parsed._replace(
+                scheme="https" if parsed.scheme == "wss" else "http"
+            ).geturl()
+            validate_public_url(network_url, self._authorized_hosts)
+        except (ValueError, OSError):
+            self._blocked.append({
+                "url": _safe_url(raw),
+                "reason": "websocket_target_not_allowed",
+            })
+            try:
+                websocket.close(code=1008, reason="Cybernova browser policy")
+            except Exception:
+                pass
+            return
+        try:
+            websocket.connect_to_server()
+        except Exception as exc:
+            self._blocked.append({
+                "url": _safe_url(raw),
+                "reason": "websocket_connect_failed",
+                "error_type": type(exc).__name__,
+            })
+            try:
+                websocket.close(code=1011, reason="WebSocket connection failed")
+            except Exception:
+                pass
 
     def _route(self, route):
         req = route.request
