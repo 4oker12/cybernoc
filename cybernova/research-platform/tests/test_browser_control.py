@@ -620,9 +620,25 @@ class BrowserControlTests(unittest.TestCase):
                 self.assertEqual(browser._blocked[-1]["reason"], "owner_declined_or_expired")
 
                 browser._active_action = None
-                no_action = FakeRoute("https://example.test/api/settings", "POST")
-                browser._route(no_action)
-                self.assertTrue(no_action.aborted)
+                background_approvals = []
+                browser.set_write_approval_handler(
+                    lambda details: background_approvals.append(details) or True
+                )
+                background = FakeRoute("https://example.test/api/settings", "POST")
+                browser._route(background)
+                self.assertFalse(background.aborted)
+                self.assertEqual(len(background_approvals), 1)
+                self.assertEqual(background_approvals[0]["action_label"],
+                                 "background page request")
+
+                browser.set_write_approval_handler(lambda _details: False)
+                declined_background = FakeRoute(
+                    "https://example.test/api/settings", "POST"
+                )
+                browser._route(declined_background)
+                self.assertTrue(declined_background.aborted)
+                self.assertEqual(browser._blocked[-1]["reason"],
+                                 "owner_declined_or_expired")
 
                 safe = FakeRoute("https://example.test/api/settings", "GET")
                 browser._route(safe)
